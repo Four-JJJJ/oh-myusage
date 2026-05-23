@@ -19,6 +19,7 @@ final class WallpaperAppearanceService {
         luminanceResolver: @escaping (NSImage, Double) -> Double? = { image, horizontalCenterRatio in
             StatusBarAppearanceResolver.wallpaperTopStripLuminance(
                 from: image,
+                sampleHeight: 256,
                 horizontalCenterRatio: horizontalCenterRatio
             )
         }
@@ -42,9 +43,13 @@ final class WallpaperAppearanceService {
 
         let luminance = wallpaperLuminance(for: probe)
         if luminance != nil {
-            return StatusBarAppearanceResolver.resolvedForegroundStyle(
+            let wallpaperStyle = StatusBarAppearanceResolver.resolvedForegroundStyle(
                 mode: .followWallpaper,
                 wallpaperLuminance: luminance
+            )
+            return reconciledForegroundStyle(
+                wallpaperStyle: wallpaperStyle,
+                fallbackStyle: fallbackStyle
             )
         }
         if let fallbackStyle {
@@ -54,6 +59,18 @@ final class WallpaperAppearanceService {
             mode: .followWallpaper,
             wallpaperLuminance: nil
         )
+    }
+
+    private func reconciledForegroundStyle(
+        wallpaperStyle: StatusBarForegroundStyle,
+        fallbackStyle: StatusBarForegroundStyle?
+    ) -> StatusBarForegroundStyle {
+        // Full-screen spaces can expose a dark menu bar over a bright desktop wallpaper.
+        // When AppKit reports that dark bar, keep the light foreground for readability.
+        if fallbackStyle == .light {
+            return .light
+        }
+        return wallpaperStyle
     }
 
     func clearCache() {
