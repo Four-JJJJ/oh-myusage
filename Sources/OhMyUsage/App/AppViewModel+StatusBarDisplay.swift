@@ -120,6 +120,22 @@ extension AppViewModel {
         applyStatusBarPreferencesMutation(outcome)
     }
 
+    func showExpirationTimeInMenuBar(providerID: String) -> Bool {
+        guard let provider = config.providers.first(where: { $0.id == providerID }) else {
+            return true
+        }
+        return provider.showsExpirationTimeInMenuBar
+    }
+
+    func setShowExpirationTimeInMenuBar(_ enabled: Bool, providerID: String) {
+        let outcome = statusBarPreferencesCoordinator.setShowExpirationTimeInMenuBar(
+            enabled,
+            providerID: providerID,
+            config: &config
+        )
+        applyStatusBarPreferencesMutation(outcome)
+    }
+
     func claudeStatusBarResolvedDisplaySlotID() -> CodexSlotID? {
         resolvedClaudeStatusBarDisplaySlotID()
     }

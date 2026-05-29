@@ -296,11 +296,13 @@ final class LocalSessionCompletionSignalMonitorTests: XCTestCase {
         try setModificationDate(try fixedDate("2026-04-20T10:01:00Z"), forFile: olderFile.path)
         try setModificationDate(try fixedDate("2026-04-20T10:02:00Z"), forFile: newerFile.path)
 
+        let scanNow = try fixedDate("2026-04-20T10:05:00Z")
         let monitor = LocalSessionCompletionSignalMonitor(
             codexLogsPath: temporaryDirectory.appendingPathComponent("missing.sqlite").path,
             claudeProjectsRoot: projectsRoot.path,
             claudeRecentFileWindow: 30 * 24 * 60 * 60,
-            claudeMaxTrackedFiles: 1
+            claudeMaxTrackedFiles: 1,
+            nowProvider: { scanNow }
         )
 
         XCTAssertEqual(monitor.latestClaudeCompletionAt(), try fixedDate("2026-04-20T10:00:00Z"))
@@ -356,11 +358,13 @@ final class LocalSessionCompletionSignalMonitorTests: XCTestCase {
         )
         try setModificationDate(try fixedDate("2026-04-20T10:00:00Z"), forFile: oldestFile.path)
 
+        let scanNow = try fixedDate("2026-04-20T10:05:00Z")
         let monitor = LocalSessionCompletionSignalMonitor(
             codexLogsPath: temporaryDirectory.appendingPathComponent("missing.sqlite").path,
             claudeProjectsRoot: projectsRoot.path,
             claudeRecentFileWindow: 30 * 24 * 60 * 60,
-            claudeMaxTrackedFiles: 2
+            claudeMaxTrackedFiles: 2,
+            nowProvider: { scanNow }
         )
 
         XCTAssertEqual(monitor.latestClaudeCompletionAt(), try fixedDate("2026-04-20T10:04:00Z"))

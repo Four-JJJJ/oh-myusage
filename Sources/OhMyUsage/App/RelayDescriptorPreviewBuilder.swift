@@ -35,6 +35,7 @@ struct RelayDescriptorPreviewBuilder {
         relayConfig.balanceChannelEnabled = draft.accountEnabled
         relayConfig.balanceCredentialMode = draft.balanceCredentialMode
         relayConfig.quotaDisplayMode = draft.quotaDisplayMode
+        relayConfig.showExpirationTimeInMenuBar = draft.showExpirationTimeInMenuBar
 
         let templateRequest = matchedManifest.balanceRequest
         let templateExtract = matchedManifest.extract

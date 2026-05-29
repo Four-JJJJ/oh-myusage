@@ -28,7 +28,6 @@ struct AppRelayProviderSettingsCoordinator {
         providers: inout [ProviderDescriptor]
     ) -> AppProviderSettingsMutationOutcome {
         guard let idx = providers.firstIndex(where: { $0.id == providerID }),
-              providers[idx].family == .thirdParty,
               providers[idx].isRelay,
               var relayConfig = providers[idx].relayConfig else {
             return .none

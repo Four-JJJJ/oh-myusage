@@ -20,6 +20,7 @@ final class RelayProviderTests: XCTestCase {
 
         let decoded = try JSONDecoder().decode(RelayProviderConfig.self, from: Data(json.utf8))
         XCTAssertEqual(decoded.quotaDisplayMode, .remaining)
+        XCTAssertTrue(decoded.showExpirationTimeInMenuBar)
     }
 
     func testLegacyOpenConfigNormalizesToRelayAdapter() {
@@ -1034,7 +1035,7 @@ final class RelayProviderTests: XCTestCase {
             case "/api/v1/tokenPlan/usage":
                 return (
                     response,
-                    Data(#"{"code":0,"message":"","data":{"monthUsage":{"percent":0,"items":[{"name":"month_total_token","used":0,"limit":200000000,"percent":0}]},"usage":{"percent":0.0,"items":[{"name":"plan_total_token","used":0,"limit":200000000,"percent":0.0},{"name":"compensation_total_token","used":0,"limit":0,"percent":0}]}}}"#.utf8)
+                    Data(#"{"code":0,"message":"","data":{"usage":{"percent":0.0,"items":[{"name":"plan_total_token","used":0,"limit":11000000000,"percent":0.0},{"name":"compensation_total_token","used":48014368,"limit":3285714286,"percent":1.0}]}}}"#.utf8)
                 )
             default:
                 XCTFail("Unexpected path \(request.url?.path ?? "nil")")
@@ -1070,16 +1071,23 @@ final class RelayProviderTests: XCTestCase {
         )
 
         let snapshot = try await provider.fetch()
+        let expectedUsedPercent = (48_014_368.0 / 14_285_714_286.0) * 100
+        let expectedRemainingPercent = 100 - expectedUsedPercent
+
         XCTAssertEqual(snapshot.unit, "%")
-        XCTAssertEqual(snapshot.remaining ?? -1, 100, accuracy: 0.001)
-        XCTAssertEqual(snapshot.used ?? -1, 0, accuracy: 0.001)
+        XCTAssertEqual(snapshot.remaining ?? -1, expectedRemainingPercent, accuracy: 0.000001)
+        XCTAssertEqual(snapshot.used ?? -1, expectedUsedPercent, accuracy: 0.000001)
         XCTAssertEqual(snapshot.limit ?? -1, 100, accuracy: 0.001)
         XCTAssertEqual(snapshot.extras["planType"], "Standard")
         XCTAssertEqual(snapshot.rawMeta["account.tokenPlanCurrentPeriodEnd"], "2026-05-28 23:59:59")
-        XCTAssertEqual(snapshot.rawMeta["account.quotaValueText.token-plan-current"], "0 / 200,000,000")
+        XCTAssertEqual(snapshot.rawMeta["account.quotaValueText.token-plan-total"], "48,014,368 / 14,285,714,286")
+        XCTAssertEqual(snapshot.rawMeta["account.tokenPlanUsageName"], "plan_total_token,compensation_total_token")
+        XCTAssertEqual(snapshot.rawMeta["account.tokenPlanUsageItemCount"], "2")
+        XCTAssertEqual(snapshot.rawMeta["account.tokenPlanRemaining"], "14237699918")
         XCTAssertEqual(snapshot.quotaWindows.count, 1)
-        XCTAssertEqual(snapshot.quotaWindows.first?.title, "Current Plan")
-        XCTAssertEqual(snapshot.quotaWindows.first?.usedPercent ?? -1, 0, accuracy: 0.001)
+        XCTAssertEqual(snapshot.quotaWindows.first?.title, "Total Usage")
+        XCTAssertEqual(snapshot.quotaWindows.first?.usedPercent ?? -1, expectedUsedPercent, accuracy: 0.000001)
+        XCTAssertEqual(snapshot.quotaWindows.first?.remainingPercent ?? -1, expectedRemainingPercent, accuracy: 0.000001)
     }
 
     func testXiaomimimoTokenPlanUsesDerivedPercentWhenItemPercentIsZero() async throws {
@@ -1138,7 +1146,7 @@ final class RelayProviderTests: XCTestCase {
         XCTAssertEqual(snapshot.remaining ?? -1, expectedRemainingPercent, accuracy: 0.000001)
         XCTAssertEqual(snapshot.quotaWindows.first?.usedPercent ?? -1, expectedUsedPercent, accuracy: 0.000001)
         XCTAssertEqual(snapshot.quotaWindows.first?.remainingPercent ?? -1, expectedRemainingPercent, accuracy: 0.000001)
-        XCTAssertEqual(snapshot.rawMeta["account.quotaValueText.token-plan-current"], "7,804,244 / 200,000,000")
+        XCTAssertEqual(snapshot.rawMeta["account.quotaValueText.token-plan-total"], "7,804,244 / 200,000,000")
         XCTAssertEqual(snapshot.rawMeta["account.tokenPlanUsedPercentSource"], "usedLimitDerived")
         XCTAssertEqual(Double(snapshot.rawMeta["account.tokenPlanUsedPercentRaw"] ?? "") ?? -1, 0, accuracy: 0.000001)
         XCTAssertEqual(Double(snapshot.rawMeta["account.tokenPlanUsedPercentDerived"] ?? "") ?? -1, expectedUsedPercent, accuracy: 0.000001)
@@ -1256,7 +1264,7 @@ final class RelayProviderTests: XCTestCase {
         XCTAssertEqual(snapshot.used ?? -1, expectedUsedPercent, accuracy: 0.000001)
         XCTAssertEqual(snapshot.quotaWindows.first?.usedPercent ?? -1, expectedUsedPercent, accuracy: 0.000001)
         XCTAssertEqual(snapshot.rawMeta["account.tokenPlanUsageName"], "mystery_package")
-        XCTAssertEqual(snapshot.rawMeta["account.quotaValueText.token-plan-current"], "7,804,244 / 200,000,000")
+        XCTAssertEqual(snapshot.rawMeta["account.quotaValueText.token-plan-total"], "7,804,244 / 200,000,000")
     }
 
     func testXiaomimimoCookieAutoDetectionFallsBackToParentDomain() async throws {

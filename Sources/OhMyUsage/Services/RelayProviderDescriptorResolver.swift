@@ -91,6 +91,7 @@ struct RelayProviderDescriptorResolver {
                 )
             ),
             balanceCredentialMode: .manualPreferred,
+            quotaDisplayMode: defaultRelayQuotaDisplayMode(adapterID: manifest.id),
             manualOverrides: manualOverrides(from: legacyOpenConfig)
         )
     }
@@ -182,5 +183,9 @@ struct RelayProviderDescriptorResolver {
             }
         }
         return manifest(for: baseURL).id
+    }
+
+    private func defaultRelayQuotaDisplayMode(adapterID: String) -> OfficialQuotaDisplayMode {
+        adapterID == "xiaomimimo-token-plan" ? .used : .remaining
     }
 }

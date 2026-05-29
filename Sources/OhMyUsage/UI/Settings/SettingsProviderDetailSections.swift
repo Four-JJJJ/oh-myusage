@@ -47,6 +47,9 @@ extension SettingsView {
 
             if provider.isRelay {
                 thirdPartyUsagePreferenceRow(provider)
+                if shouldShowExpirationTimeToggle(for: provider) {
+                    relayExpirationTimeToggleRow(provider)
+                }
                 openRelayConfigSection(provider)
             }
         }
@@ -122,6 +125,42 @@ extension SettingsView {
             }
             thirdPartyHintText(viewModel.text(.claudeQuotaDisplayHint))
         }
+    }
+
+    func relayExpirationTimeToggleRow(_ provider: ProviderDescriptor) -> some View {
+        SettingsToggleRowView(
+            title: relayExpirationTimeTitle,
+            labelFont: settingsLabelFont,
+            bodyColor: settingsBodyColor,
+            labelWidth: thirdPartyConfigLabelWidth,
+            spacing: thirdPartyConfigLabelSpacing,
+            isOn: relayExpirationTimeBinding(provider)
+        )
+    }
+
+    func relayExpirationTimeBinding(
+        _ provider: ProviderDescriptor,
+        providerConfiguration: SettingsProviderConfigurationFacade? = nil
+    ) -> Binding<Bool> {
+        let providerConfiguration = providerConfiguration ?? providerConfigurationFacade
+        return Binding(
+            get: {
+                relayEditorDraft.relayShowExpirationTimeInputs[provider.id]
+                    ?? providerConfiguration.showExpirationTimeInMenuBar(providerID: provider.id)
+            },
+            set: { newValue in
+                relayEditorDraft.relayShowExpirationTimeInputs[provider.id] = newValue
+                providerConfiguration.setShowExpirationTimeInMenuBar(newValue, providerID: provider.id)
+            }
+        )
+    }
+
+    func shouldShowExpirationTimeToggle(for provider: ProviderDescriptor) -> Bool {
+        provider.supportsExpirationTimeDisplay(snapshot: viewModel.snapshots[provider.id])
+    }
+
+    var relayExpirationTimeTitle: String {
+        viewModel.localizedText("显示到期时间", "Show Expiration")
     }
 
     func providerNameToggleRow(

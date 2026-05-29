@@ -28,7 +28,8 @@ final class RelayDescriptorPreviewBuilderTests: XCTestCase {
             limitJSONPath: "",
             successJSONPath: "",
             unit: "USD",
-            quotaDisplayMode: .remaining
+            quotaDisplayMode: .remaining,
+            showExpirationTimeInMenuBar: false
         )
 
         let preview = builder.build(draft: draft, providers: providers)
@@ -37,5 +38,6 @@ final class RelayDescriptorPreviewBuilderTests: XCTestCase {
         XCTAssertEqual(preview?.baseURL, "https://relay-preview.example.com")
         XCTAssertEqual(preview?.relayConfig?.baseURL, "https://relay-preview.example.com")
         XCTAssertEqual(preview?.relayConfig?.adapterID, "generic-newapi")
+        XCTAssertEqual(preview?.relayConfig?.showExpirationTimeInMenuBar, false)
     }
 }

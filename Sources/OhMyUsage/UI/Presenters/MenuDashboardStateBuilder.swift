@@ -182,7 +182,13 @@ enum MenuDashboardStateBuilder {
                     planType: MenuCardStatusPresenter.planType(for: provider, snapshot: snapshot),
                     iconName: iconName(for: provider),
                     iconFallback: fallbackIcon(for: provider),
-                    subtitle: provider.family == .official
+                    subtitle: provider.isRelay
+                        ? MenuSubtitlePresenter.relayQuotaSubtitle(
+                            snapshot: snapshot,
+                            language: language,
+                            showExpirationTime: provider.showsExpirationTimeInMenuBar
+                        )
+                        : provider.family == .official
                         ? MenuSubtitlePresenter.officialAccountSubtitle(
                             providerType: provider.type,
                             snapshot: snapshot,
@@ -191,7 +197,8 @@ enum MenuDashboardStateBuilder {
                         )
                         : MenuSubtitlePresenter.relayQuotaSubtitle(
                             snapshot: snapshot,
-                            language: language
+                            language: language,
+                            showExpirationTime: provider.showsExpirationTimeInMenuBar
                         ),
                     status: visual.status,
                     metrics: metricDisplays,

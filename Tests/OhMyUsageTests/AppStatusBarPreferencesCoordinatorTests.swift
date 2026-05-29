@@ -130,6 +130,29 @@ final class AppStatusBarPreferencesCoordinatorTests: XCTestCase {
         )
     }
 
+    func testSetShowExpirationTimeInMenuBarMutatesOfficialRelayConfigAndNotifies() {
+        var provider = ProviderDescriptor.defaultOfficialXiaomiMIMO()
+        provider.enabled = false
+        var config = AppConfig(providers: [provider])
+        let coordinator = AppStatusBarPreferencesCoordinator()
+
+        let outcome = coordinator.setShowExpirationTimeInMenuBar(
+            false,
+            providerID: provider.id,
+            config: &config
+        )
+
+        XCTAssertFalse(config.providers[0].relayConfig?.showExpirationTimeInMenuBar ?? true)
+        XCTAssertEqual(
+            outcome,
+            StatusBarPreferencesMutationOutcome(
+                shouldPersist: true,
+                shouldNotifyDisplayConfigChange: true,
+                shouldRefreshDisplayedProviders: false
+            )
+        )
+    }
+
     private func makeProvider(id: String) -> ProviderDescriptor {
         var provider = ProviderDescriptor.makeOpenRelay(
             name: id.capitalized,

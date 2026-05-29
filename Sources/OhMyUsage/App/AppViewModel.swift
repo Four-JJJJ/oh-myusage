@@ -616,6 +616,7 @@ final class AppViewModel {
                 session: localizedText("会话", "Session"),
                 monthly: localizedText("月度", "Monthly"),
                 currentPlan: localizedText("当前套餐", "Current Plan"),
+                totalUsage: localizedText("总用量", "Total Usage"),
                 autocomplete: localizedText("自动补全", "Autocomplete"),
                 dollarBalance: localizedText("美元余额", "Dollar Balance")
             ),

@@ -43,6 +43,25 @@ final class AppViewModelQuotaDisplayPreferenceTests: XCTestCase {
         XCTAssertEqual(viewModel.config.providers.first?.relayConfig?.quotaDisplayMode, .used)
     }
 
+    func testUpdateOfficialRelayQuotaDisplayModePostsStatusBarDisplayConfigNotification() {
+        var mimo = ProviderDescriptor.defaultOfficialXiaomiMIMO()
+        mimo.enabled = false
+        mimo.relayConfig?.quotaDisplayMode = .used
+        let viewModel = makeViewModel(providers: [mimo])
+
+        assertPostsStatusBarDisplayConfigNotification(
+            description: "Changing official relay usage preference should trigger status bar refresh notification"
+        ) {
+            viewModel.updateThirdPartyQuotaDisplayMode(
+                providerID: mimo.id,
+                quotaDisplayMode: .remaining
+            )
+        }
+
+        XCTAssertEqual(viewModel.config.providers.first?.relayConfig?.quotaDisplayMode, .remaining)
+        XCTAssertFalse(viewModel.config.providers.first?.displaysUsedQuota ?? true)
+    }
+
     func testUpdateOfficialTraeValueDisplayModePostsStatusBarDisplayConfigNotification() {
         var trae = ProviderDescriptor.defaultOfficialTrae()
         trae.enabled = false
@@ -89,6 +108,21 @@ final class AppViewModelQuotaDisplayPreferenceTests: XCTestCase {
         }
 
         XCTAssertFalse(viewModel.showOfficialPlanTypeInMenuBar(providerID: codex.id))
+    }
+
+    func testSetShowExpirationTimePostsStatusBarDisplayConfigNotification() {
+        var mimo = ProviderDescriptor.defaultOfficialXiaomiMIMO()
+        mimo.enabled = false
+        let viewModel = makeViewModel(providers: [mimo])
+
+        assertPostsStatusBarDisplayConfigNotification(
+            description: "Changing expiration time toggle should trigger display config notification"
+        ) {
+            viewModel.setShowExpirationTimeInMenuBar(false, providerID: mimo.id)
+        }
+
+        XCTAssertFalse(viewModel.showExpirationTimeInMenuBar(providerID: mimo.id))
+        XCTAssertFalse(viewModel.config.providers.first?.relayConfig?.showExpirationTimeInMenuBar ?? true)
     }
 
     func testUpdateOfficialQuotaDisplayModeDoesNotPostWhenValueUnchanged() {
@@ -147,6 +181,18 @@ final class AppViewModelQuotaDisplayPreferenceTests: XCTestCase {
             description: "Unchanged show plan type toggle should not trigger status bar refresh notification"
         ) {
             viewModel.setShowOfficialPlanTypeInMenuBar(true, providerID: codex.id)
+        }
+    }
+
+    func testSetShowExpirationTimeDoesNotPostWhenValueUnchanged() {
+        var mimo = ProviderDescriptor.defaultOfficialXiaomiMIMO()
+        mimo.enabled = false
+        let viewModel = makeViewModel(providers: [mimo])
+
+        assertDoesNotPostStatusBarDisplayConfigNotification(
+            description: "Unchanged expiration time toggle should not trigger display config notification"
+        ) {
+            viewModel.setShowExpirationTimeInMenuBar(true, providerID: mimo.id)
         }
     }
 

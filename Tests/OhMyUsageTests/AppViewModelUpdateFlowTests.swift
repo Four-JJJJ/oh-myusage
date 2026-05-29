@@ -7,8 +7,8 @@ final class AppViewModelUpdateFlowTests: XCTestCase {
     func testDownloadSuccessTransitionsToBufferingThenAttemptsInstall() async {
         let service = StubAppUpdateService()
         let releaseNotesStore = StubPostUpdateReleaseNotesStore()
-        await service.enqueueFetch(.success(makeUpdate(version: "2.2.1")))
-        await service.enqueuePrepare(.success(makePrepared(version: "2.2.1")))
+        await service.enqueueFetch(.success(makeUpdate(version: "2.2.3")))
+        await service.enqueuePrepare(.success(makePrepared(version: "2.2.3")))
         await service.enqueueInstall(.failure(StubUpdateError.installFailed))
 
         let viewModel = AppViewModel(
@@ -20,7 +20,7 @@ final class AppViewModelUpdateFlowTests: XCTestCase {
 
         viewModel.checkForAppUpdate(force: true)
         await assertEventually("should detect update availability") {
-            viewModel.availableUpdate?.latestVersion == "2.2.1"
+            viewModel.availableUpdate?.latestVersion == "2.2.3"
         }
 
         viewModel.openLatestReleaseDownload()
@@ -34,7 +34,7 @@ final class AppViewModelUpdateFlowTests: XCTestCase {
         await assertEventually("should attempt install after buffering delay") {
             await service.installCallCount() == 1
         }
-        XCTAssertEqual(releaseNotesStore.scheduledVersions, ["2.2.1"])
+        XCTAssertEqual(releaseNotesStore.scheduledVersions, ["2.2.3"])
         await assertEventually("failed install should expose retry state") {
             if case .failed = viewModel.menuUpdateDisplayState.kind {
                 return viewModel.updateInstallErrorMessage != nil
@@ -45,9 +45,9 @@ final class AppViewModelUpdateFlowTests: XCTestCase {
 
     func testBufferingCancelsWhenVersionChangesDuringDelay() async {
         let service = StubAppUpdateService()
-        await service.enqueueFetch(.success(makeUpdate(version: "2.2.1")))
+        await service.enqueueFetch(.success(makeUpdate(version: "2.2.3")))
         await service.enqueueFetch(.success(makeUpdate(version: "3.0.0")))
-        await service.enqueuePrepare(.success(makePrepared(version: "2.2.1")))
+        await service.enqueuePrepare(.success(makePrepared(version: "2.2.3")))
 
         let viewModel = AppViewModel(
             testingCurrentAppVersion: "1.0.0",
@@ -57,7 +57,7 @@ final class AppViewModelUpdateFlowTests: XCTestCase {
 
         viewModel.checkForAppUpdate(force: true)
         await assertEventually("should load first available update") {
-            viewModel.availableUpdate?.latestVersion == "2.2.1"
+            viewModel.availableUpdate?.latestVersion == "2.2.3"
         }
 
         viewModel.openLatestReleaseDownload()
@@ -79,9 +79,9 @@ final class AppViewModelUpdateFlowTests: XCTestCase {
 
     func testRetryAfterFailureReentersUpdateFlow() async {
         let service = StubAppUpdateService()
-        await service.enqueueFetch(.success(makeUpdate(version: "2.2.1")))
+        await service.enqueueFetch(.success(makeUpdate(version: "2.2.3")))
         await service.enqueuePrepare(.failure(StubUpdateError.prepareFailed))
-        await service.enqueuePrepare(.success(makePrepared(version: "2.2.1")))
+        await service.enqueuePrepare(.success(makePrepared(version: "2.2.3")))
         await service.enqueueInstall(.failure(StubUpdateError.installFailed))
 
         let viewModel = AppViewModel(
@@ -92,7 +92,7 @@ final class AppViewModelUpdateFlowTests: XCTestCase {
 
         viewModel.checkForAppUpdate(force: true)
         await assertEventually("should load update before starting install flow") {
-            viewModel.availableUpdate?.latestVersion == "2.2.1"
+            viewModel.availableUpdate?.latestVersion == "2.2.3"
         }
 
         viewModel.openLatestReleaseDownload()
@@ -138,7 +138,7 @@ final class AppViewModelUpdateFlowTests: XCTestCase {
         let localizedText: (String, String) -> String = { zhHans, _ in zhHans }
 
         var state = UpdateStore()
-        state.availableUpdate = makeUpdate(version: "2.2.1")
+        state.availableUpdate = makeUpdate(version: "2.2.3")
         XCTAssertEqual(
             coordinator.updateActionTitle(for: state, localizedText: localizedText),
             "更新版本"

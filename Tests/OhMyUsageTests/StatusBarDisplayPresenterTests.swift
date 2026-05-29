@@ -195,6 +195,68 @@ final class StatusBarDisplayPresenterTests: XCTestCase {
         assertPercent(item.percent, equals: 72)
     }
 
+    func testMimoTokenPlanStatusBarUsesRemainingPercentWhenPreferenceIsRemaining() {
+        var provider = ProviderDescriptor.defaultOfficialXiaomiMIMO()
+        provider.relayConfig?.quotaDisplayMode = .remaining
+        let snapshot = UsageSnapshot(
+            source: provider.id,
+            status: .ok,
+            remaining: 99.66389942402705,
+            used: 0.336100575972948,
+            limit: 100,
+            unit: "%",
+            updatedAt: Date(timeIntervalSince1970: 1),
+            note: "test",
+            quotaWindows: [
+                UsageQuotaWindow(
+                    id: "token-plan-total",
+                    title: "Total Usage",
+                    remainingPercent: 99.66389942402705,
+                    usedPercent: 0.336100575972948,
+                    kind: .custom
+                )
+            ],
+            sourceLabel: "Xiaomi MIMO"
+        )
+        let source = StatusBarDisplaySource(provider: provider, snapshot: snapshot, thirdPartyBarPercent: nil)
+
+        let item = StatusBarDisplayPresenter.displayItem(for: source, style: .iconPercent)
+
+        XCTAssertEqual(item.valueText, "100%")
+        assertPercent(item.percent, equals: 99.66389942402705)
+    }
+
+    func testMimoTokenPlanStatusBarUsesUsedPercentWhenPreferenceIsUsed() {
+        var provider = ProviderDescriptor.defaultOfficialXiaomiMIMO()
+        provider.relayConfig?.quotaDisplayMode = .used
+        let snapshot = UsageSnapshot(
+            source: provider.id,
+            status: .ok,
+            remaining: 99.66389942402705,
+            used: 0.336100575972948,
+            limit: 100,
+            unit: "%",
+            updatedAt: Date(timeIntervalSince1970: 1),
+            note: "test",
+            quotaWindows: [
+                UsageQuotaWindow(
+                    id: "token-plan-total",
+                    title: "Total Usage",
+                    remainingPercent: 99.66389942402705,
+                    usedPercent: 0.336100575972948,
+                    kind: .custom
+                )
+            ],
+            sourceLabel: "Xiaomi MIMO"
+        )
+        let source = StatusBarDisplaySource(provider: provider, snapshot: snapshot, thirdPartyBarPercent: nil)
+
+        let item = StatusBarDisplayPresenter.displayItem(for: source, style: .iconPercent)
+
+        XCTAssertEqual(item.valueText, "0%")
+        assertPercent(item.percent, equals: 0.336100575972948)
+    }
+
     private func makeProvider(
         name: String,
         family: ProviderFamily,

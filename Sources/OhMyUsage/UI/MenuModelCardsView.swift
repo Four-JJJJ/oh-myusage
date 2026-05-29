@@ -231,6 +231,14 @@ private struct PercentageMetricView: View {
                 }
                 .frame(height: SettingsVisualTokens.Menu.progressTrackHeight)
             }
+
+            if let detailText = metric.detailText, !detailText.isEmpty {
+                Text(detailText)
+                    .font(.system(size: 10, weight: .regular))
+                    .foregroundStyle(SettingsVisualTokens.Text.tertiary)
+                    .lineSpacing(0)
+                    .lineLimit(1)
+            }
         }
     }
 }

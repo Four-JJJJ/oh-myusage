@@ -109,7 +109,7 @@ extension SettingsView {
 
         if provider.relayDisplayMode == .quotaPercent {
             let metrics = relayQuotaMetricDisplays(provider: provider, snapshot: snapshot)
-            let subtitle = relayTokenPlanSubtitle(snapshot: snapshot)
+            let subtitle = relayTokenPlanSubtitle(provider: provider, snapshot: snapshot)
             let planType = settingsProviderPlanType(provider: provider, snapshot: snapshot)
 
             return AnyView(
@@ -290,8 +290,8 @@ extension SettingsView {
         )
         let windows = snapshot?.quotaWindows ?? [
             UsageQuotaWindow(
-                id: "\(provider.id)-placeholder-current-plan",
-                title: "Current Plan",
+                id: "\(provider.id)-placeholder-token-plan-total",
+                title: "Total Usage",
                 remainingPercent: 0,
                 usedPercent: 100,
                 resetAt: nil,
@@ -303,7 +303,11 @@ extension SettingsView {
             let displayPercent = provider.displaysUsedQuota
                 ? min(100, max(0, window.usedPercent))
                 : min(100, max(0, window.remainingPercent))
-            let valueText = relayMetadata.quotaValueText(for: window.id)
+            let valueText = relayQuotaValueTextOverride(
+                window: window,
+                provider: provider,
+                relayMetadata: relayMetadata
+            )
                 ?? codexQuotaValueText(
                     window: window,
                     provider: provider,
@@ -315,7 +319,14 @@ extension SettingsView {
                 id: window.id,
                 title: codexQuotaDisplayTitle(window, provider: provider),
                 valueText: valueText,
-                resetText: codexResetCountdownText(for: window, snapshot: snapshot),
+                resetText: provider.showsExpirationTimeInMenuBar
+                    ? codexResetCountdownText(for: window, snapshot: snapshot)
+                    : "-",
+                detailText: relayQuotaDetailTextOverride(
+                    window: window,
+                    provider: provider,
+                    relayMetadata: relayMetadata
+                ),
                 percent: displayPercent > 0 ? displayPercent : 0,
                 barColor: codexQuotaBarColor(remainingPercent: healthPercent),
                 isAvailable: snapshot != nil
@@ -323,7 +334,61 @@ extension SettingsView {
         }
     }
 
-    func relayTokenPlanSubtitle(snapshot: UsageSnapshot?) -> String? {
+    func relayQuotaValueTextOverride(
+        window: UsageQuotaWindow,
+        provider: ProviderDescriptor,
+        relayMetadata: RelaySnapshotDisplayMetadata
+    ) -> String? {
+        guard !provider.usesXiaomimimoTokenPlanQuota else {
+            return nil
+        }
+        return relayMetadata.quotaValueText(for: window.id)
+    }
+
+    func relayQuotaDetailTextOverride(
+        window: UsageQuotaWindow,
+        provider: ProviderDescriptor,
+        relayMetadata: RelaySnapshotDisplayMetadata
+    ) -> String? {
+        guard provider.usesXiaomimimoTokenPlanQuota,
+              window.id == "token-plan-total",
+              let remainingTokens = relayTokenPlanRemainingTokens(from: relayMetadata) else {
+            return nil
+        }
+        let formatted = formattedSettingsWholeNumber(remainingTokens)
+        switch viewModel.language {
+        case .zhHans:
+            return "剩余 \(formatted) tokens"
+        case .en:
+            return "\(formatted) tokens remaining"
+        }
+    }
+
+    func relayTokenPlanRemainingTokens(from relayMetadata: RelaySnapshotDisplayMetadata) -> Double? {
+        if let remaining = relayMetadata.tokenPlanRemainingTokens {
+            return remaining
+        }
+        guard let used = relayMetadata.tokenPlanUsedTokens,
+              let limit = relayMetadata.tokenPlanLimitTokens else {
+            return nil
+        }
+        return max(0, limit - used)
+    }
+
+    func formattedSettingsWholeNumber(_ value: Double) -> String {
+        let formatter = NumberFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.numberStyle = .decimal
+        formatter.usesGroupingSeparator = true
+        formatter.maximumFractionDigits = 0
+        formatter.minimumFractionDigits = 0
+        return formatter.string(from: NSNumber(value: value)) ?? String(Int(value.rounded()))
+    }
+
+    func relayTokenPlanSubtitle(provider: ProviderDescriptor, snapshot: UsageSnapshot?) -> String? {
+        guard provider.showsExpirationTimeInMenuBar else {
+            return nil
+        }
         let relayMetadata = RelaySnapshotDisplayMetadata(snapshot: snapshot)
         guard let raw = relayMetadata.tokenPlanCurrentPeriodEnd else {
             return nil

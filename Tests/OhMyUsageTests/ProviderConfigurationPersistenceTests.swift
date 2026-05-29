@@ -75,6 +75,7 @@ final class ProviderConfigurationPersistenceTests: XCTestCase {
         XCTAssertEqual(configuration.settings.officialConfig?.oauthAccountImportEnabled, true)
         XCTAssertEqual(configuration.settings.officialConfig?.quotaDisplayMode, .used)
         XCTAssertEqual(configuration.settings.officialConfig?.showPlanTypeInMenuBar, false)
+        XCTAssertEqual(configuration.settings.officialConfig?.showExpirationTimeInMenuBar, true)
     }
 
     func testKimiLegacyConfigIsNotCoveredByDomainProviderConfigurationYet() throws {

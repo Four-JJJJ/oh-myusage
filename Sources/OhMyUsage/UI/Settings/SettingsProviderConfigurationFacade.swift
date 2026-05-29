@@ -11,6 +11,8 @@ struct SettingsProviderConfigurationFacade {
     var setShowOfficialAccountEmailInMenuBarHandler: (Bool) -> Void = { _ in }
     var showOfficialPlanTypeInMenuBarHandler: (String) -> Bool = { _ in true }
     var setShowOfficialPlanTypeInMenuBarHandler: (Bool, String) -> Void = { _, _ in }
+    var showExpirationTimeInMenuBarHandler: (String) -> Bool = { _ in true }
+    var setShowExpirationTimeInMenuBarHandler: (Bool, String) -> Void = { _, _ in }
     var hasTokenForProviderHandler: (ProviderDescriptor) -> Bool = { _ in false }
     var savedTokenLengthForProviderHandler: (ProviderDescriptor) -> Int? = { _ in nil }
     var hasTokenForAuthHandler: (AuthConfig) -> Bool = { _ in false }
@@ -65,6 +67,8 @@ struct SettingsProviderConfigurationFacade {
         setShowOfficialAccountEmailInMenuBar: @escaping (Bool) -> Void = { _ in },
         showOfficialPlanTypeInMenuBar: @escaping (String) -> Bool = { _ in true },
         setShowOfficialPlanTypeInMenuBar: @escaping (Bool, String) -> Void = { _, _ in },
+        showExpirationTimeInMenuBar: @escaping (String) -> Bool = { _ in true },
+        setShowExpirationTimeInMenuBar: @escaping (Bool, String) -> Void = { _, _ in },
         hasTokenForProvider: @escaping (ProviderDescriptor) -> Bool = { _ in false },
         savedTokenLengthForProvider: @escaping (ProviderDescriptor) -> Int? = { _ in nil },
         hasTokenForAuth: @escaping (AuthConfig) -> Bool = { _ in false },
@@ -114,6 +118,8 @@ struct SettingsProviderConfigurationFacade {
         setShowOfficialAccountEmailInMenuBarHandler = setShowOfficialAccountEmailInMenuBar
         showOfficialPlanTypeInMenuBarHandler = showOfficialPlanTypeInMenuBar
         setShowOfficialPlanTypeInMenuBarHandler = setShowOfficialPlanTypeInMenuBar
+        showExpirationTimeInMenuBarHandler = showExpirationTimeInMenuBar
+        setShowExpirationTimeInMenuBarHandler = setShowExpirationTimeInMenuBar
         hasTokenForProviderHandler = hasTokenForProvider
         savedTokenLengthForProviderHandler = savedTokenLengthForProvider
         hasTokenForAuthHandler = hasTokenForAuth
@@ -142,6 +148,8 @@ struct SettingsProviderConfigurationFacade {
             setShowOfficialAccountEmailInMenuBar: { viewModel.setShowOfficialAccountEmailInMenuBar($0) },
             showOfficialPlanTypeInMenuBar: { viewModel.showOfficialPlanTypeInMenuBar(providerID: $0) },
             setShowOfficialPlanTypeInMenuBar: { viewModel.setShowOfficialPlanTypeInMenuBar($0, providerID: $1) },
+            showExpirationTimeInMenuBar: { viewModel.showExpirationTimeInMenuBar(providerID: $0) },
+            setShowExpirationTimeInMenuBar: { viewModel.setShowExpirationTimeInMenuBar($0, providerID: $1) },
             hasTokenForProvider: { viewModel.hasToken(for: $0) },
             savedTokenLengthForProvider: { viewModel.savedTokenLength(for: $0) },
             hasTokenForAuth: { viewModel.hasToken(auth: $0) },
@@ -196,6 +204,14 @@ struct SettingsProviderConfigurationFacade {
 
     func setShowOfficialPlanTypeInMenuBar(_ enabled: Bool, providerID: String) {
         setShowOfficialPlanTypeInMenuBarHandler(enabled, providerID)
+    }
+
+    func showExpirationTimeInMenuBar(providerID: String) -> Bool {
+        showExpirationTimeInMenuBarHandler(providerID)
+    }
+
+    func setShowExpirationTimeInMenuBar(_ enabled: Bool, providerID: String) {
+        setShowExpirationTimeInMenuBarHandler(enabled, providerID)
     }
 
     func hasToken(for provider: ProviderDescriptor) -> Bool {

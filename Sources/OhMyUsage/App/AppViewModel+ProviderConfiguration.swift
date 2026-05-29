@@ -287,9 +287,11 @@ extension AppViewModel {
         unit: String,
         quotaDisplayMode: OfficialQuotaDisplayMode? = nil
     ) {
+        let existingRelayConfig = config.providers.first(where: { $0.id == providerID })?.relayConfig
         let resolvedQuotaDisplayMode = config.providers.first(where: { $0.id == providerID })?.relayConfig?.quotaDisplayMode
             ?? quotaDisplayMode
             ?? .remaining
+        let resolvedShowExpirationTime = existingRelayConfig?.showExpirationTimeInMenuBar ?? true
         let outcome = relayProviderSettingsCoordinator.updateOpenProviderSettings(
             draft: RelaySettingsDraft(
                 providerID: providerID,
@@ -309,7 +311,8 @@ extension AppViewModel {
                 limitJSONPath: limitJSONPath,
                 successJSONPath: successJSONPath,
                 unit: unit,
-                quotaDisplayMode: resolvedQuotaDisplayMode
+                quotaDisplayMode: resolvedQuotaDisplayMode,
+                showExpirationTimeInMenuBar: resolvedShowExpirationTime
             ),
             providers: &config.providers,
             previewBuilder: relayDescriptorPreviewBuilder
@@ -346,9 +349,11 @@ extension AppViewModel {
         unit: String,
         quotaDisplayMode: OfficialQuotaDisplayMode? = nil
     ) -> ProviderDescriptor? {
+        let existingRelayConfig = config.providers.first(where: { $0.id == providerID })?.relayConfig
         let resolvedQuotaDisplayMode = config.providers.first(where: { $0.id == providerID })?.relayConfig?.quotaDisplayMode
             ?? quotaDisplayMode
             ?? .remaining
+        let resolvedShowExpirationTime = existingRelayConfig?.showExpirationTimeInMenuBar ?? true
         return relayDescriptorPreviewBuilder.build(
             draft: RelaySettingsDraft(
                 providerID: providerID,
@@ -368,7 +373,8 @@ extension AppViewModel {
                 limitJSONPath: limitJSONPath,
                 successJSONPath: successJSONPath,
                 unit: unit,
-                quotaDisplayMode: resolvedQuotaDisplayMode
+                quotaDisplayMode: resolvedQuotaDisplayMode,
+                showExpirationTimeInMenuBar: resolvedShowExpirationTime
             ),
             providers: config.providers
         )

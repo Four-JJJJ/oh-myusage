@@ -148,6 +148,7 @@ final class SettingsDraftModelsTests: XCTestCase {
         XCTAssertEqual(draft.endpointPath, "/api/user/self")
         XCTAssertEqual(draft.remainingJSONPath, "data.quota")
         XCTAssertEqual(draft.unit, "quota")
+        XCTAssertTrue(draft.showExpirationTimeInMenuBar)
     }
 
     func testRelaySettingsDraftSeedPreservesGenericNewAPIDefaults() {
@@ -321,6 +322,7 @@ final class SettingsDraftModelsTests: XCTestCase {
         XCTAssertEqual(state.baseURLInputs[provider.id], "https://relay.example.com")
         XCTAssertEqual(state.relayCredentialModeInputs[provider.id], .manualPreferred)
         XCTAssertEqual(state.thirdPartyQuotaDisplayModeInputs[provider.id], .remaining)
+        XCTAssertEqual(state.relayShowExpirationTimeInputs[provider.id], true)
     }
 
     func testOfficialDraftNormalizesUnsupportedModes() {

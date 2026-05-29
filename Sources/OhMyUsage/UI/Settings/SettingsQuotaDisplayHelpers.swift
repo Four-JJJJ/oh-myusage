@@ -104,6 +104,14 @@ extension SettingsView {
                 }
                 .frame(height: SettingsVisualTokens.Menu.progressTrackHeight)
             }
+
+            if let detailText = metric.detailText, !detailText.isEmpty {
+                Text(detailText)
+                    .font(.system(size: 10, weight: .regular))
+                    .foregroundStyle(settingsMutedHintColor)
+                    .lineSpacing(0)
+                    .lineLimit(1)
+            }
         }
     }
 
@@ -368,7 +376,9 @@ extension SettingsView {
                     snapshot: snapshot,
                     displayPercent: percents.displayPercent
                 ),
-                resetText: codexResetCountdownText(for: window, snapshot: snapshot),
+                resetText: provider.showsExpirationTimeInMenuBar
+                    ? codexResetCountdownText(for: window, snapshot: snapshot)
+                    : "-",
                 percent: percents.displayPercent,
                 barColor: codexQuotaBarColor(remainingPercent: percents.healthPercent),
                 healthPercent: percents.healthPercent,
@@ -505,7 +515,9 @@ extension SettingsView {
                 snapshot: snapshot,
                 displayPercent: percents.displayPercent
             ),
-            resetText: codexResetCountdownText(for: window, snapshot: snapshot),
+            resetText: provider.showsExpirationTimeInMenuBar
+                ? codexResetCountdownText(for: window, snapshot: snapshot)
+                : "-",
             percent: percents.displayPercent,
             barColor: codexQuotaBarColor(remainingPercent: percents.healthPercent),
             isAvailable: true,
@@ -566,8 +578,8 @@ extension SettingsView {
         let normalizedAdapterID = provider.relayConfig?.adapterID?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
         let normalizedTitle = rawTitle.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard normalizedAdapterID == "xiaomimimo-token-plan" else { return rawTitle }
-        if normalizedTitle == "current plan" {
-            return viewModel.localizedText("当前套餐", "Current Plan")
+        if normalizedTitle == "current plan" || normalizedTitle == "total usage" {
+            return viewModel.localizedText("总用量", "Total Usage")
         }
         return rawTitle
     }

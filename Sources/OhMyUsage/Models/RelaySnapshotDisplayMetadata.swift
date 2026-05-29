@@ -10,6 +10,9 @@ struct RelaySnapshotDisplayMetadata: Equatable {
     var resolvedAdapterID: String
     var requestCount: Int?
     var tokenPlanCurrentPeriodEnd: String?
+    var tokenPlanRemainingTokens: Double?
+    var tokenPlanUsedTokens: Double?
+    var tokenPlanLimitTokens: Double?
     var authSource: String?
     var recovery: RelayRecoveryDisplayMetadata?
 
@@ -33,6 +36,15 @@ struct RelaySnapshotDisplayMetadata: Equatable {
 
         tokenPlanCurrentPeriodEnd = OfficialValueParser.nonPlaceholderString(
             rawMeta["account.tokenPlanCurrentPeriodEnd"] ?? rawMeta["tokenPlanCurrentPeriodEnd"]
+        )
+        tokenPlanRemainingTokens = Self.doubleValue(
+            rawMeta["account.tokenPlanRemaining"] ?? rawMeta["tokenPlanRemaining"]
+        )
+        tokenPlanUsedTokens = Self.doubleValue(
+            rawMeta["account.tokenPlanUsed"] ?? rawMeta["tokenPlanUsed"]
+        )
+        tokenPlanLimitTokens = Self.doubleValue(
+            rawMeta["account.tokenPlanLimit"] ?? rawMeta["tokenPlanLimit"]
         )
         authSource = snapshot?.authSourceLabel
             ?? OfficialValueParser.nonPlaceholderString(rawMeta["account.authSource"])
@@ -64,5 +76,10 @@ struct RelaySnapshotDisplayMetadata: Equatable {
 
     func quotaValueText(for windowID: String) -> String? {
         quotaValueTextByWindowID[windowID]
+    }
+
+    private static func doubleValue(_ raw: String?) -> Double? {
+        guard let resolved = OfficialValueParser.nonPlaceholderString(raw) else { return nil }
+        return Double(resolved)
     }
 }

@@ -129,7 +129,8 @@ extension SettingsView {
 
     func settingsConfigSecureField(
         _ placeholder: String,
-        text: Binding<String>
+        text: Binding<String>,
+        width: CGFloat? = nil
     ) -> some View {
         SecureField("", text: text, prompt: Text(placeholder)
             .font(.system(size: 12, weight: .regular))
@@ -138,7 +139,7 @@ extension SettingsView {
             .font(.system(size: 12, weight: .regular))
             .foregroundStyle(SettingsVisualTokens.Text.primary)
             .padding(.horizontal, 8)
-            .frame(width: thirdPartyConfigControlWidth, height: 24)
+            .frame(width: width ?? thirdPartyConfigControlWidth, height: 24)
             .background(
                 SettingsSmoothedRoundedRectangle(cornerRadius: SettingsVisualTokens.Radius.control)
                     .fill(SettingsVisualTokens.Fill.control)

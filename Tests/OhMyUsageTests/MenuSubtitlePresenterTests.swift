@@ -90,6 +90,13 @@ final class MenuSubtitlePresenterTests: XCTestCase {
             MenuSubtitlePresenter.relayQuotaSubtitle(snapshot: snapshot, language: .zhHans),
             "有效期至 2026-05-09T00:00:00Z (UTC)"
         )
+        XCTAssertNil(
+            MenuSubtitlePresenter.relayQuotaSubtitle(
+                snapshot: snapshot,
+                language: .zhHans,
+                showExpirationTime: false
+            )
+        )
     }
 
     private func codexSnapshot(email: String, teamID: String) -> UsageSnapshot {

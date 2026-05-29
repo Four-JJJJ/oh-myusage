@@ -40,6 +40,7 @@ public struct OfficialProviderConfig: Codable, Equatable, Sendable {
     public var quotaDisplayMode: OfficialQuotaDisplayMode
     public var traeValueDisplayMode: OfficialTraeValueDisplayMode?
     public var showPlanTypeInMenuBar: Bool
+    public var showExpirationTimeInMenuBar: Bool
 
     public init(
         sourceMode: OfficialSourceMode = .auto,
@@ -49,7 +50,8 @@ public struct OfficialProviderConfig: Codable, Equatable, Sendable {
         autoDiscoveryEnabled: Bool = true,
         quotaDisplayMode: OfficialQuotaDisplayMode = .remaining,
         traeValueDisplayMode: OfficialTraeValueDisplayMode? = nil,
-        showPlanTypeInMenuBar: Bool = true
+        showPlanTypeInMenuBar: Bool = true,
+        showExpirationTimeInMenuBar: Bool = true
     ) {
         self.sourceMode = sourceMode
         self.webMode = webMode
@@ -59,6 +61,7 @@ public struct OfficialProviderConfig: Codable, Equatable, Sendable {
         self.quotaDisplayMode = quotaDisplayMode
         self.traeValueDisplayMode = traeValueDisplayMode
         self.showPlanTypeInMenuBar = showPlanTypeInMenuBar
+        self.showExpirationTimeInMenuBar = showExpirationTimeInMenuBar
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -70,6 +73,7 @@ public struct OfficialProviderConfig: Codable, Equatable, Sendable {
         case quotaDisplayMode
         case traeValueDisplayMode
         case showPlanTypeInMenuBar
+        case showExpirationTimeInMenuBar
     }
 
     public init(from decoder: Decoder) throws {
@@ -82,6 +86,7 @@ public struct OfficialProviderConfig: Codable, Equatable, Sendable {
         self.quotaDisplayMode = try container.decodeIfPresent(OfficialQuotaDisplayMode.self, forKey: .quotaDisplayMode) ?? .remaining
         self.traeValueDisplayMode = try container.decodeIfPresent(OfficialTraeValueDisplayMode.self, forKey: .traeValueDisplayMode)
         self.showPlanTypeInMenuBar = try container.decodeIfPresent(Bool.self, forKey: .showPlanTypeInMenuBar) ?? true
+        self.showExpirationTimeInMenuBar = try container.decodeIfPresent(Bool.self, forKey: .showExpirationTimeInMenuBar) ?? true
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -94,5 +99,6 @@ public struct OfficialProviderConfig: Codable, Equatable, Sendable {
         try container.encode(quotaDisplayMode, forKey: .quotaDisplayMode)
         try container.encodeIfPresent(traeValueDisplayMode, forKey: .traeValueDisplayMode)
         try container.encode(showPlanTypeInMenuBar, forKey: .showPlanTypeInMenuBar)
+        try container.encode(showExpirationTimeInMenuBar, forKey: .showExpirationTimeInMenuBar)
     }
 }

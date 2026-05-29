@@ -20,6 +20,7 @@ struct RelaySettingsDraftSeed: Equatable {
     var successJSONPath: String
     var unit: String
     var quotaDisplayMode: OfficialQuotaDisplayMode
+    var showExpirationTimeInMenuBar: Bool
 
     init(
         provider: ProviderDescriptor,
@@ -58,6 +59,7 @@ struct RelaySettingsDraftSeed: Equatable {
         self.successJSONPath = account?.successJSONPath ?? manifest.extract.success ?? ""
         self.unit = account?.unit ?? manifest.extract.unit ?? "quota"
         self.quotaDisplayMode = provider.relayConfig?.quotaDisplayMode ?? .remaining
+        self.showExpirationTimeInMenuBar = provider.relayConfig?.showExpirationTimeInMenuBar ?? true
     }
 
     var draft: RelaySettingsDraft {
@@ -79,7 +81,8 @@ struct RelaySettingsDraftSeed: Equatable {
             limitJSONPath: limitJSONPath,
             successJSONPath: successJSONPath,
             unit: unit,
-            quotaDisplayMode: quotaDisplayMode
+            quotaDisplayMode: quotaDisplayMode,
+            showExpirationTimeInMenuBar: showExpirationTimeInMenuBar
         )
     }
 }

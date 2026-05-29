@@ -125,6 +125,7 @@ final class ProviderConfigurationDomainBoundaryTests: XCTestCase {
         XCTAssertEqual(config.quotaDisplayMode, .remaining)
         XCTAssertNil(config.traeValueDisplayMode)
         XCTAssertTrue(config.showPlanTypeInMenuBar)
+        XCTAssertTrue(config.showExpirationTimeInMenuBar)
     }
 
     func testRelayProviderConfigKeepsStageOneDecodeDefaultsInDomain() throws {
@@ -151,6 +152,7 @@ final class ProviderConfigurationDomainBoundaryTests: XCTestCase {
         XCTAssertEqual(config.balanceAuth.kind, .bearer)
         XCTAssertNil(config.balanceCredentialMode)
         XCTAssertEqual(config.quotaDisplayMode, .remaining)
+        XCTAssertTrue(config.showExpirationTimeInMenuBar)
         XCTAssertNil(config.manualOverrides)
     }
 

@@ -203,6 +203,7 @@ final class AppConfigTests: XCTestCase {
         XCTAssertEqual(xiaomiMIMO?.family, .official)
         XCTAssertEqual(xiaomiMIMO?.type, .relay)
         XCTAssertEqual(xiaomiMIMO?.relayConfig?.adapterID, "xiaomimimo-token-plan")
+        XCTAssertEqual(xiaomiMIMO?.relayConfig?.quotaDisplayMode, .used)
         XCTAssertEqual(xiaomiMIMO?.baseURL, "https://platform.xiaomimimo.com")
         XCTAssertNil(xiaomiMIMO?.officialConfig)
     }
@@ -210,6 +211,68 @@ final class AppConfigTests: XCTestCase {
     func testDefaultProvidersDoNotIncludePresetThirdPartyRelays() {
         let thirdPartyRelays = AppConfig.default.providers.filter { $0.family == .thirdParty && $0.isRelay }
         XCTAssertTrue(thirdPartyRelays.isEmpty)
+    }
+
+    func testMigrationUpgradesOfficialXiaomiMIMOToTokenPlanAdapter() {
+        var legacyMIMO = ProviderDescriptor.defaultOfficialXiaomiMIMO()
+        legacyMIMO.relayConfig?.adapterID = "xiaomimimo"
+        legacyMIMO.relayConfig?.quotaDisplayMode = .remaining
+        legacyMIMO.relayConfig?.tokenChannelEnabled = true
+        legacyMIMO.enabled = true
+
+        let config = AppConfig(language: .zhHans, providers: [legacyMIMO])
+        let migrated = config.migratedWithSiteDefaults()
+        let provider = try! XCTUnwrap(migrated.providers.first(where: { $0.id == "xiaomi-mimo-official" }))
+
+        XCTAssertEqual(provider.type, .relay)
+        XCTAssertEqual(provider.family, .official)
+        XCTAssertEqual(provider.relayConfig?.adapterID, "xiaomimimo-token-plan")
+        XCTAssertEqual(provider.relayConfig?.quotaDisplayMode, .used)
+        XCTAssertEqual(provider.relayConfig?.tokenChannelEnabled, false)
+        XCTAssertEqual(provider.relayConfig?.balanceChannelEnabled, true)
+        XCTAssertTrue(provider.displaysUsedQuota)
+    }
+
+    func testMigrationPreservesOfficialXiaomiMIMOTokenPlanQuotaPreference() {
+        var mimo = ProviderDescriptor.defaultOfficialXiaomiMIMO()
+        mimo.relayConfig?.quotaDisplayMode = .remaining
+
+        let config = AppConfig(language: .zhHans, providers: [mimo])
+        let migrated = config.migratedWithSiteDefaults()
+        let provider = try! XCTUnwrap(migrated.providers.first(where: { $0.id == "xiaomi-mimo-official" }))
+
+        XCTAssertEqual(provider.relayConfig?.adapterID, "xiaomimimo-token-plan")
+        XCTAssertEqual(provider.relayConfig?.quotaDisplayMode, .remaining)
+        XCTAssertFalse(provider.displaysUsedQuota)
+    }
+
+    func testMigrationRepairsOfficialRelayProviderStoredWithWrongType() {
+        var staleMIMO = ProviderDescriptor.defaultOfficialCodex()
+        staleMIMO.id = "xiaomi-mimo-official"
+        staleMIMO.name = "Xiaomi MIMO"
+        staleMIMO.baseURL = "https://platform.xiaomimimo.com"
+        staleMIMO.relayConfig = RelayProviderConfig(
+            adapterID: "xiaomimimo",
+            baseURL: "https://platform.xiaomimimo.com",
+            tokenChannelEnabled: false,
+            balanceChannelEnabled: true,
+            balanceAuth: AuthConfig(
+                kind: .bearer,
+                keychainService: KeychainService.defaultServiceName,
+                keychainAccount: "platform.xiaomimimo.com/session-cookie"
+            ),
+            quotaDisplayMode: .remaining
+        )
+
+        let config = AppConfig(language: .zhHans, providers: [staleMIMO])
+        let migrated = config.migratedWithSiteDefaults()
+        let provider = try! XCTUnwrap(migrated.providers.first(where: { $0.id == "xiaomi-mimo-official" }))
+
+        XCTAssertEqual(provider.name, "Xiaomi MIMO")
+        XCTAssertEqual(provider.type, .relay)
+        XCTAssertNil(provider.officialConfig)
+        XCTAssertEqual(provider.relayConfig?.adapterID, "xiaomimimo-token-plan")
+        XCTAssertEqual(provider.relayDisplayMode, .quotaPercent)
     }
 
     func testDefaultProvidersIncludeMicrosoftCopilotOfficialDescriptor() {
@@ -347,6 +410,7 @@ final class AppConfigTests: XCTestCase {
         """#
         let config = try JSONDecoder().decode(AppConfig.self, from: Data(json.utf8))
         XCTAssertEqual(config.providers.first?.officialConfig?.showPlanTypeInMenuBar, true)
+        XCTAssertEqual(config.providers.first?.officialConfig?.showExpirationTimeInMenuBar, true)
     }
 
     func testDecodeOfficialConfigPlanTypeDisplayWhenPresent() throws {
@@ -370,7 +434,8 @@ final class AppConfigTests: XCTestCase {
                 "manualCookieAccount":"official/codex/cookie-header",
                 "autoDiscoveryEnabled":true,
                 "quotaDisplayMode":"remaining",
-                "showPlanTypeInMenuBar":false
+                "showPlanTypeInMenuBar":false,
+                "showExpirationTimeInMenuBar":false
               }
             }
           ]
@@ -378,6 +443,7 @@ final class AppConfigTests: XCTestCase {
         """#
         let config = try JSONDecoder().decode(AppConfig.self, from: Data(json.utf8))
         XCTAssertEqual(config.providers.first?.officialConfig?.showPlanTypeInMenuBar, false)
+        XCTAssertEqual(config.providers.first?.officialConfig?.showExpirationTimeInMenuBar, false)
     }
 
     func testDecodeMissingStatusBarProviderFallsBackToDefault() throws {

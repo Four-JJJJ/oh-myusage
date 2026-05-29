@@ -60,6 +60,7 @@ struct SettingsView: View {
         var title: String
         var valueText: String
         var resetText: String
+        var detailText: String? = nil
         var percent: Double?
         var barColor: Color
         var isAvailable: Bool = true

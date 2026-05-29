@@ -3,6 +3,37 @@ import XCTest
 @testable import OhMyUsage
 
 final class MenuCardStatePresenterTests: XCTestCase {
+    func testPercentageVisualPresentationTreatsLowMimoUsedPercentAsSufficient() {
+        let snapshot = UsageSnapshot(
+            source: "xiaomi-mimo-official",
+            status: .ok,
+            fetchHealth: .ok,
+            valueFreshness: .live,
+            remaining: 99.66389942402705,
+            used: 0.336100575972948,
+            limit: 100,
+            unit: "%",
+            updatedAt: Date(),
+            note: "ok",
+            sourceLabel: "Xiaomi MIMO"
+        )
+
+        let presentation = MenuCardStatePresenter.percentageVisualPresentation(
+            snapshot: snapshot,
+            errorText: nil,
+            healthPercents: [99.66389942402705],
+            language: .zhHans,
+            tightText: "紧张",
+            sufficientText: "充足",
+            exhaustedText: "耗尽",
+            disconnectedText: "失联"
+        )
+
+        XCTAssertEqual(presentation.status.text, "充足")
+        XCTAssertEqual(presentation.status.tone, .normal)
+        XCTAssertFalse(presentation.isDisconnected)
+    }
+
     func testPercentageVisualPresentationTreatsCachedFallbackAsHighlightedButNotDisconnected() {
         let snapshot = UsageSnapshot(
             source: "relay",

@@ -140,13 +140,14 @@ enum RelayResponseInterpreter {
         usageRoot: Any,
         candidate: RelayCredentialCandidate
     ) throws -> AccountChannelResult {
-        guard let usageItem = extractXiaomimimoTokenPlanUsageItem(from: usageRoot) else {
+        guard let usageAggregate = extractXiaomimimoTokenPlanUsageAggregate(from: usageRoot) else {
             throw ProviderError.invalidResponse("missing xiaomimimo token plan usage item")
         }
 
-        let usedTokens = RelayJSONExpressionEvaluator.coerceDouble(usageItem["used"] ?? 0) ?? 0
-        let limitTokens = RelayJSONExpressionEvaluator.coerceDouble(usageItem["limit"] ?? 0) ?? 0
-        let rawItemPercent = RelayJSONExpressionEvaluator.coerceDouble(usageItem["percent"] ?? 0)
+        let usedTokens = usageAggregate.used
+        let limitTokens = usageAggregate.limit
+        let remainingTokens = max(0, limitTokens - usedTokens)
+        let rawItemPercent = usageAggregate.rawPercent
         let rawRootPercent = RelayJSONExpressionEvaluator.numericValue(
             for: "coalesce(data.usage.percent,usage.percent,data.monthUsage.percent,monthUsage.percent)",
             in: usageRoot
@@ -164,8 +165,8 @@ enum RelayResponseInterpreter {
         let periodEndDate = periodEndRaw.flatMap(parseXiaomimimoTokenPlanDate(_:))
         let autoRenew = RelayJSONExpressionEvaluator.boolValue(for: "coalesce(data.enableAutoRenew,enableAutoRenew)", in: detailRoot) ?? false
         let valueText = "\(formattedWholeNumber(usedTokens)) / \(formattedWholeNumber(limitTokens))"
-        let windowID = "token-plan-current"
-        let title = "Current Plan"
+        let windowID = "token-plan-total"
+        let title = "Total Usage"
 
         var noteParts: [String] = []
         if let planType {
@@ -188,8 +189,10 @@ enum RelayResponseInterpreter {
             "limitPath": "data.usage.items.*.limit",
             "authSource": candidate.source,
             "quotaValueText.\(windowID)": valueText,
-            "tokenPlanUsageName": (usageItem["name"] as? String) ?? "plan_total_token",
+            "tokenPlanUsageName": usageAggregate.names.joined(separator: ","),
+            "tokenPlanUsageItemCount": String(usageAggregate.itemCount),
             "tokenPlanUsed": String(Int(usedTokens.rounded())),
+            "tokenPlanRemaining": String(Int(remainingTokens.rounded())),
             "tokenPlanLimit": String(Int(limitTokens.rounded())),
             "tokenPlanUsedPercent": String(normalizedUsedPercent),
             "tokenPlanUsedPercentSource": derivedUsedPercent != nil ? "usedLimitDerived" : "percentFallback",
@@ -471,7 +474,15 @@ enum RelayResponseInterpreter {
         )
     }
 
-    private static func extractXiaomimimoTokenPlanUsageItem(from root: Any) -> [String: Any]? {
+    private struct XiaomimimoTokenPlanUsageAggregate {
+        let used: Double
+        let limit: Double
+        let rawPercent: Double?
+        let names: [String]
+        let itemCount: Int
+    }
+
+    private static func extractXiaomimimoTokenPlanUsageAggregate(from root: Any) -> XiaomimimoTokenPlanUsageAggregate? {
         let candidates = [
             RelayJSONExpressionEvaluator.value(at: "data.usage.items", in: root),
             RelayJSONExpressionEvaluator.value(at: "usage.items", in: root),
@@ -482,20 +493,30 @@ enum RelayResponseInterpreter {
         for candidate in candidates {
             guard let items = candidate as? [Any], !items.isEmpty else { continue }
             let dictionaries = items.compactMap { $0 as? [String: Any] }
-            if let planTotal = dictionaries.first(where: { (($0["name"] as? String)?.lowercased() ?? "") == "plan_total_token" }) {
-                return planTotal
+            let positiveLimitItems = dictionaries.compactMap { item -> (name: String, used: Double, limit: Double, rawPercent: Double?)? in
+                let limit = RelayJSONExpressionEvaluator.coerceDouble(item["limit"] ?? 0) ?? 0
+                guard limit > 0 else { return nil }
+                let used = RelayJSONExpressionEvaluator.coerceDouble(item["used"] ?? 0) ?? 0
+                let name = (item["name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+                return (
+                    name: name?.isEmpty == false ? name! : "token_plan_item",
+                    used: max(0, used),
+                    limit: limit,
+                    rawPercent: RelayJSONExpressionEvaluator.coerceDouble(item["percent"] ?? 0)
+                )
             }
-            if let monthTotal = dictionaries.first(where: { (($0["name"] as? String)?.lowercased() ?? "") == "month_total_token" }) {
-                return monthTotal
-            }
-            if let positiveLimit = dictionaries.first(where: {
-                (RelayJSONExpressionEvaluator.coerceDouble($0["limit"] ?? 0) ?? 0) > 0
-            }) {
-                return positiveLimit
-            }
-            if let first = dictionaries.first {
-                return first
-            }
+
+            guard !positiveLimitItems.isEmpty else { continue }
+            let totalUsed = positiveLimitItems.reduce(0) { $0 + $1.used }
+            let totalLimit = positiveLimitItems.reduce(0) { $0 + $1.limit }
+            guard totalLimit > 0 else { continue }
+            return XiaomimimoTokenPlanUsageAggregate(
+                used: totalUsed,
+                limit: totalLimit,
+                rawPercent: positiveLimitItems.count == 1 ? positiveLimitItems[0].rawPercent : nil,
+                names: positiveLimitItems.map(\.name),
+                itemCount: positiveLimitItems.count
+            )
         }
         return nil
     }

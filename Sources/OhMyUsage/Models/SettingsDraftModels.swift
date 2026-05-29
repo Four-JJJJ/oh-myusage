@@ -222,6 +222,7 @@ struct RelayProviderEditorDraft: Equatable {
     var relayAdvancedExpanded: [String: Bool] = [:]
     var selectedRelayTemplateInputs: [String: String] = [:]
     var relayCredentialModeInputs: [String: RelayCredentialMode] = [:]
+    var relayShowExpirationTimeInputs: [String: Bool] = [:]
 
     mutating func seed(from provider: ProviderDescriptor) {
         guard provider.isRelay else { return }
@@ -279,6 +280,9 @@ struct RelayProviderEditorDraft: Equatable {
         }
         if thirdPartyQuotaDisplayModeInputs[provider.id] == nil {
             thirdPartyQuotaDisplayModeInputs[provider.id] = seed.quotaDisplayMode
+        }
+        if relayShowExpirationTimeInputs[provider.id] == nil {
+            relayShowExpirationTimeInputs[provider.id] = seed.showExpirationTimeInMenuBar
         }
     }
 }
@@ -344,6 +348,7 @@ struct RelaySettingsDraft: Equatable {
     var successJSONPath: String
     var unit: String
     var quotaDisplayMode: OfficialQuotaDisplayMode
+    var showExpirationTimeInMenuBar: Bool
 
     init(
         providerID: String,
@@ -363,7 +368,8 @@ struct RelaySettingsDraft: Equatable {
         limitJSONPath: String,
         successJSONPath: String,
         unit: String,
-        quotaDisplayMode: OfficialQuotaDisplayMode
+        quotaDisplayMode: OfficialQuotaDisplayMode,
+        showExpirationTimeInMenuBar: Bool = true
     ) {
         self.providerID = providerID
         self.name = name
@@ -383,6 +389,7 @@ struct RelaySettingsDraft: Equatable {
         self.successJSONPath = successJSONPath
         self.unit = unit
         self.quotaDisplayMode = quotaDisplayMode
+        self.showExpirationTimeInMenuBar = showExpirationTimeInMenuBar
     }
 
     init(provider: ProviderDescriptor, preferredAdapterID: String? = nil) {

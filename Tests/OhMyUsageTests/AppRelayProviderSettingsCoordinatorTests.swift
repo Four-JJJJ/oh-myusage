@@ -65,4 +65,27 @@ final class AppRelayProviderSettingsCoordinatorTests: XCTestCase {
             )
         )
     }
+
+    func testUpdateQuotaDisplayModeSupportsOfficialRelayProviders() {
+        let coordinator = AppRelayProviderSettingsCoordinator()
+        var provider = ProviderDescriptor.defaultOfficialXiaomiMIMO()
+        provider.relayConfig?.quotaDisplayMode = .used
+        var providers = [provider]
+
+        let outcome = coordinator.updateThirdPartyQuotaDisplayMode(
+            providerID: provider.id,
+            quotaDisplayMode: .remaining,
+            providers: &providers
+        )
+
+        XCTAssertEqual(providers[0].relayConfig?.quotaDisplayMode, .remaining)
+        XCTAssertFalse(providers[0].displaysUsedQuota)
+        XCTAssertEqual(
+            outcome,
+            AppProviderSettingsMutationOutcome(
+                shouldPersistAndRestart: true,
+                shouldNotifyDisplayConfigChange: true
+            )
+        )
+    }
 }

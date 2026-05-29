@@ -1,4 +1,5 @@
 import Foundation
+import OhMyUsageDomain
 
 enum AppConfigSiteDefaultsMigrator {
     static func migrated(_ config: AppConfig) -> AppConfig {
@@ -184,6 +185,11 @@ enum AppConfigSiteDefaultsMigrator {
         var copy = provider
 
         copy.family = defaults.family
+        if defaults.isRelay,
+           ProviderDescriptor.officialRelayDefaultProviderIDs.contains(copy.id) {
+            copy.type = defaults.type
+            copy.officialConfig = nil
+        }
 
         if (copy.baseURL ?? "").isEmpty {
             copy.baseURL = defaults.baseURL
@@ -250,6 +256,7 @@ enum AppConfigSiteDefaultsMigrator {
         if relay.manualOverrides == nil {
             relay.manualOverrides = defaultRelay.manualOverrides
         }
+        relay = migratedOfficialRelayAdapterDefaults(relay, providerID: copy.id, defaults: defaultRelay)
         copy.relayConfig = relay
         return copy.normalized()
     }
@@ -288,7 +295,28 @@ enum AppConfigSiteDefaultsMigrator {
         if relay.manualOverrides == nil {
             relay.manualOverrides = defaultRelay.manualOverrides
         }
+        relay = migratedOfficialRelayAdapterDefaults(relay, providerID: copy.id, defaults: defaultRelay)
         copy.relayConfig = relay
         return copy.normalized()
+    }
+
+    private static func migratedOfficialRelayAdapterDefaults(
+        _ relay: RelayProviderConfig,
+        providerID: String,
+        defaults: RelayProviderConfig
+    ) -> RelayProviderConfig {
+        var copy = relay
+        guard providerID == "xiaomi-mimo-official",
+              defaults.adapterID == "xiaomimimo-token-plan" else {
+            return copy
+        }
+        let isMigratingLegacyAdapter = copy.adapterID != defaults.adapterID
+        copy.adapterID = defaults.adapterID
+        if isMigratingLegacyAdapter {
+            copy.tokenChannelEnabled = defaults.tokenChannelEnabled
+            copy.balanceChannelEnabled = defaults.balanceChannelEnabled
+            copy.quotaDisplayMode = .used
+        }
+        return copy
     }
 }

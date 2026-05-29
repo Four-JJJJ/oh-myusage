@@ -8,6 +8,7 @@ public struct RelayProviderConfig: Codable, Equatable, Sendable {
     public var balanceAuth: AuthConfig
     public var balanceCredentialMode: RelayCredentialMode?
     public var quotaDisplayMode: OfficialQuotaDisplayMode
+    public var showExpirationTimeInMenuBar: Bool
     public var manualOverrides: RelayManualOverride?
 
     public init(
@@ -18,6 +19,7 @@ public struct RelayProviderConfig: Codable, Equatable, Sendable {
         balanceAuth: AuthConfig,
         balanceCredentialMode: RelayCredentialMode? = nil,
         quotaDisplayMode: OfficialQuotaDisplayMode = .remaining,
+        showExpirationTimeInMenuBar: Bool = true,
         manualOverrides: RelayManualOverride? = nil
     ) {
         self.adapterID = adapterID
@@ -27,6 +29,7 @@ public struct RelayProviderConfig: Codable, Equatable, Sendable {
         self.balanceAuth = balanceAuth
         self.balanceCredentialMode = balanceCredentialMode
         self.quotaDisplayMode = quotaDisplayMode
+        self.showExpirationTimeInMenuBar = showExpirationTimeInMenuBar
         self.manualOverrides = manualOverrides
     }
 
@@ -38,6 +41,7 @@ public struct RelayProviderConfig: Codable, Equatable, Sendable {
         case balanceAuth
         case balanceCredentialMode
         case quotaDisplayMode
+        case showExpirationTimeInMenuBar
         case manualOverrides
     }
 
@@ -50,6 +54,7 @@ public struct RelayProviderConfig: Codable, Equatable, Sendable {
         self.balanceAuth = try container.decode(AuthConfig.self, forKey: .balanceAuth)
         self.balanceCredentialMode = try container.decodeIfPresent(RelayCredentialMode.self, forKey: .balanceCredentialMode)
         self.quotaDisplayMode = try container.decodeIfPresent(OfficialQuotaDisplayMode.self, forKey: .quotaDisplayMode) ?? .remaining
+        self.showExpirationTimeInMenuBar = try container.decodeIfPresent(Bool.self, forKey: .showExpirationTimeInMenuBar) ?? true
         self.manualOverrides = try container.decodeIfPresent(RelayManualOverride.self, forKey: .manualOverrides)
     }
 
@@ -62,6 +67,7 @@ public struct RelayProviderConfig: Codable, Equatable, Sendable {
         try container.encode(balanceAuth, forKey: .balanceAuth)
         try container.encodeIfPresent(balanceCredentialMode, forKey: .balanceCredentialMode)
         try container.encode(quotaDisplayMode, forKey: .quotaDisplayMode)
+        try container.encode(showExpirationTimeInMenuBar, forKey: .showExpirationTimeInMenuBar)
         try container.encodeIfPresent(manualOverrides, forKey: .manualOverrides)
     }
 }

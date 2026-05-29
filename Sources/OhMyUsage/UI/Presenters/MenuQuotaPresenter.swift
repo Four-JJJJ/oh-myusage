@@ -10,6 +10,7 @@ struct MenuQuotaLocalization: Equatable {
     var session: String
     var monthly: String
     var currentPlan: String
+    var totalUsage: String
     var autocomplete: String
     var dollarBalance: String
 }
@@ -22,6 +23,7 @@ struct MenuQuotaMetric: Identifiable, Equatable {
     var resetAt: Date?
     var isAvailable: Bool
     var valueTextOverride: String?
+    var detailTextOverride: String? = nil
     var kind: UsageQuotaKind?
 }
 
@@ -37,6 +39,7 @@ struct MenuQuotaMetricDisplayPresentation: Identifiable, Equatable {
     var title: String
     var valueText: String
     var resetText: String
+    var detailText: String? = nil
     var percent: Double?
     var barTone: BarTone
     var isBlockedByDepletedQuota: Bool
@@ -72,9 +75,19 @@ enum MenuQuotaPresenter {
                     title: metricTitle(for: window, provider: provider, language: language, localization: localization),
                     displayPercent: provider.displaysUsedQuota ? clamp(window.usedPercent) : clamp(window.remainingPercent),
                     healthPercent: clamp(window.remainingPercent),
-                    resetAt: window.resetAt,
+                    resetAt: provider.showsExpirationTimeInMenuBar ? window.resetAt : nil,
                     isAvailable: true,
-                    valueTextOverride: relayMetadata.quotaValueText(for: window.id),
+                    valueTextOverride: quotaValueTextOverride(
+                        window: window,
+                        provider: provider,
+                        relayMetadata: relayMetadata
+                    ),
+                    detailTextOverride: quotaDetailTextOverride(
+                        window: window,
+                        provider: provider,
+                        relayMetadata: relayMetadata,
+                        language: language
+                    ),
                     kind: quotaMetricKind(for: window, provider: provider)
                 )
             }
@@ -84,14 +97,15 @@ enum MenuQuotaPresenter {
             MenuQuotaMetric(
                 id: window.id,
                 title: metricTitle(for: window, provider: provider, language: language, localization: localization),
-                displayPercent: provider.displaysUsedQuota ? clamp(window.usedPercent) : clamp(window.remainingPercent),
-                healthPercent: clamp(window.remainingPercent),
-                resetAt: window.resetAt,
-                isAvailable: true,
-                valueTextOverride: nil,
-                kind: quotaMetricKind(for: window, provider: provider)
-            )
-        }
+                    displayPercent: provider.displaysUsedQuota ? clamp(window.usedPercent) : clamp(window.remainingPercent),
+                    healthPercent: clamp(window.remainingPercent),
+                    resetAt: provider.showsExpirationTimeInMenuBar ? window.resetAt : nil,
+                    isAvailable: true,
+                    valueTextOverride: nil,
+                    detailTextOverride: nil,
+                    kind: quotaMetricKind(for: window, provider: provider)
+                )
+            }
     }
 
     static func visibleMetrics(
@@ -152,6 +166,7 @@ enum MenuQuotaPresenter {
                 title: metric.title,
                 valueText: valueText,
                 resetText: resetText,
+                detailText: (disconnected || !metric.isAvailable) ? nil : metric.detailTextOverride,
                 percent: (displayPercent ?? 0) > 0 ? percent : 0,
                 barTone: barTone(for: metric.healthPercent),
                 isBlockedByDepletedQuota: isBlockedByDepletedWeeklyQuota(
@@ -266,8 +281,8 @@ enum MenuQuotaPresenter {
             guard provider.relayDisplayMode == .quotaPercent else { return [] }
             return [
                 MenuQuotaMetric(
-                    id: "\(provider.id)-placeholder-current-plan",
-                    title: relayTokenPlanMetricTitle("Current Plan", provider: provider, localization: localization),
+                    id: "\(provider.id)-placeholder-token-plan-total",
+                    title: relayTokenPlanMetricTitle("Total Usage", provider: provider, localization: localization),
                     displayPercent: 0,
                     healthPercent: 0,
                     resetAt: nil,
@@ -472,10 +487,62 @@ enum MenuQuotaPresenter {
             .lowercased() ?? ""
         let normalizedTitle = rawTitle.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard normalizedAdapterID == "xiaomimimo-token-plan" else { return rawTitle }
-        if normalizedTitle == "current plan" {
-            return localization.currentPlan
+        if normalizedTitle == "current plan" || normalizedTitle == "total usage" {
+            return localization.totalUsage
         }
         return rawTitle
+    }
+
+    private static func quotaValueTextOverride(
+        window: UsageQuotaWindow,
+        provider: ProviderDescriptor,
+        relayMetadata: RelaySnapshotDisplayMetadata
+    ) -> String? {
+        guard !provider.usesXiaomimimoTokenPlanQuota else {
+            return nil
+        }
+        return relayMetadata.quotaValueText(for: window.id)
+    }
+
+    private static func quotaDetailTextOverride(
+        window: UsageQuotaWindow,
+        provider: ProviderDescriptor,
+        relayMetadata: RelaySnapshotDisplayMetadata,
+        language: AppLanguage
+    ) -> String? {
+        guard provider.usesXiaomimimoTokenPlanQuota,
+              window.id == "token-plan-total",
+              let remainingTokens = tokenPlanRemainingTokens(from: relayMetadata) else {
+            return nil
+        }
+        let formatted = formattedWholeNumber(remainingTokens)
+        switch language {
+        case .zhHans:
+            return "剩余 \(formatted) tokens"
+        case .en:
+            return "\(formatted) tokens remaining"
+        }
+    }
+
+    private static func tokenPlanRemainingTokens(from relayMetadata: RelaySnapshotDisplayMetadata) -> Double? {
+        if let remaining = relayMetadata.tokenPlanRemainingTokens {
+            return remaining
+        }
+        guard let used = relayMetadata.tokenPlanUsedTokens,
+              let limit = relayMetadata.tokenPlanLimitTokens else {
+            return nil
+        }
+        return max(0, limit - used)
+    }
+
+    private static func formattedWholeNumber(_ value: Double) -> String {
+        let formatter = NumberFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.numberStyle = .decimal
+        formatter.usesGroupingSeparator = true
+        formatter.maximumFractionDigits = 0
+        formatter.minimumFractionDigits = 0
+        return formatter.string(from: NSNumber(value: value)) ?? String(Int(value.rounded()))
     }
 
     private static func localizedTraeMetricTitle(

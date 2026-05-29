@@ -36,7 +36,9 @@ extension SettingsView {
             limitJSONPath: relayEditorDraft.limitPathInputs[provider.id] ?? seed.limitJSONPath,
             successJSONPath: relayEditorDraft.successPathInputs[provider.id] ?? seed.successJSONPath,
             unit: relayEditorDraft.unitInputs[provider.id] ?? seed.unit,
-            quotaDisplayMode: relayEditorDraft.thirdPartyQuotaDisplayModeInputs[provider.id] ?? seed.quotaDisplayMode
+            quotaDisplayMode: relayEditorDraft.thirdPartyQuotaDisplayModeInputs[provider.id] ?? seed.quotaDisplayMode,
+            showExpirationTimeInMenuBar: relayEditorDraft.relayShowExpirationTimeInputs[provider.id]
+                ?? seed.showExpirationTimeInMenuBar
         )
     }
 
@@ -77,6 +79,17 @@ extension SettingsView {
             ?? seed.authScheme
         let balanceCredentialTemplate = relayCredentialTemplate(authHeader: balanceAuthHeader, authScheme: balanceAuthScheme)
         let quotaCredentialTemplate = relayCredentialTemplate(authHeader: "Authorization", authScheme: "Bearer")
+        let credentialHintLines = showBalanceCredential
+            ? relayCredentialHintLines(
+                for: provider,
+                template: balanceCredentialTemplate,
+                setupHint: relaySetupHint(for: selectedTemplate, field: .balanceAuth)
+            )
+            : relayCredentialHintLines(
+                for: provider,
+                template: quotaCredentialTemplate,
+                setupHint: relaySetupHint(for: selectedTemplate, field: .quotaAuth)
+            )
         let credentialModeBinding = Binding<RelayCredentialMode>(
             get: {
                 relayEditorDraft.relayCredentialModeInputs[provider.id]
@@ -115,8 +128,17 @@ extension SettingsView {
             _ = providerConfiguration.saveTokenAndRestart(token, for: provider)
             relayEditorDraft.tokenInputs[provider.id] = ""
         }
+        let saveCurrentCredentialIfNeeded: () -> Void = {
+            if showBalanceCredential {
+                saveBalanceCredential()
+            } else {
+                saveQuotaCredential()
+            }
+        }
 
         let relayTestStatus = relayEditorDraft.relayTestResult[provider.id]
+        let supportsBrowserImport = relayTemplateSupportsBrowserImport(selectedTemplate)
+        let credentialFieldWidth = max(220, thirdPartyConfigControlWidth - 58)
 
         settingsConfigurationRows {
             settingsConfigToggleRow(
@@ -126,6 +148,13 @@ extension SettingsView {
                     set: { providerConfiguration.setStatusBarDisplayEnabled($0, providerID: provider.id) }
                 )
             )
+
+            if shouldShowExpirationTimeToggle(for: provider) {
+                settingsConfigToggleRow(
+                    title: relayExpirationTimeTitle,
+                    isOn: relayExpirationTimeBinding(provider, providerConfiguration: providerConfiguration)
+                )
+            }
 
             relayCompactConfigRow(title: viewModel.localizedText("用量偏好", "Usage Preference")) {
                 relayPillControl(
@@ -176,31 +205,45 @@ extension SettingsView {
                 )
             }
 
-            relayCompactConfigRow(title: viewModel.localizedText("凭证", "Credential")) {
-                Group {
-                    if showBalanceCredential {
-                        let hasSavedBalanceToken = accountAuth.map { providerConfiguration.hasToken(auth: $0) } ?? false
-                        let savedBalanceTokenLength = accountAuth.flatMap { providerConfiguration.savedTokenLength(auth: $0) }
-                        settingsConfigSecureField(
-                            hasSavedBalanceToken ? maskedSecretDots(length: savedBalanceTokenLength) : balanceCredentialTemplate.placeholder,
-                            text: Binding(
-                                get: { relayEditorDraft.systemTokenInputs[provider.id, default: ""] },
-                                set: { relayEditorDraft.systemTokenInputs[provider.id] = $0 }
-                            )
-                        )
-                        .onSubmit(saveBalanceCredential)
-                    } else {
-                        let hasSavedToken = providerConfiguration.hasToken(for: provider)
-                        let savedTokenLength = providerConfiguration.savedTokenLength(for: provider)
-                        settingsConfigSecureField(
-                            hasSavedToken ? maskedSecretDots(length: savedTokenLength) : quotaCredentialTemplate.placeholder,
-                            text: Binding(
-                                get: { relayEditorDraft.tokenInputs[provider.id, default: ""] },
-                                set: { relayEditorDraft.tokenInputs[provider.id] = $0 }
-                            )
-                        )
-                        .onSubmit(saveQuotaCredential)
+            VStack(alignment: .leading, spacing: 5) {
+                relayCompactConfigRow(title: viewModel.localizedText("凭证", "Credential")) {
+                    HStack(spacing: 8) {
+                        Group {
+                            if showBalanceCredential {
+                                let hasSavedBalanceToken = accountAuth.map { providerConfiguration.hasToken(auth: $0) } ?? false
+                                let savedBalanceTokenLength = accountAuth.flatMap { providerConfiguration.savedTokenLength(auth: $0) }
+                                settingsConfigSecureField(
+                                    hasSavedBalanceToken ? maskedSecretDots(length: savedBalanceTokenLength) : balanceCredentialTemplate.placeholder,
+                                    text: Binding(
+                                        get: { relayEditorDraft.systemTokenInputs[provider.id, default: ""] },
+                                        set: { relayEditorDraft.systemTokenInputs[provider.id] = $0 }
+                                    ),
+                                    width: credentialFieldWidth
+                                )
+                                .onSubmit(saveBalanceCredential)
+                            } else {
+                                let hasSavedToken = providerConfiguration.hasToken(for: provider)
+                                let savedTokenLength = providerConfiguration.savedTokenLength(for: provider)
+                                settingsConfigSecureField(
+                                    hasSavedToken ? maskedSecretDots(length: savedTokenLength) : quotaCredentialTemplate.placeholder,
+                                    text: Binding(
+                                        get: { relayEditorDraft.tokenInputs[provider.id, default: ""] },
+                                        set: { relayEditorDraft.tokenInputs[provider.id] = $0 }
+                                    ),
+                                    width: credentialFieldWidth
+                                )
+                                .onSubmit(saveQuotaCredential)
+                            }
+                        }
+
+                        settingsSmallOutlineButton(viewModel.localizedText("保存", "Save"), width: 46) {
+                            saveCurrentCredentialIfNeeded()
+                        }
                     }
+                }
+
+                ForEach(credentialHintLines, id: \.self) { line in
+                    thirdPartyHintText(line)
                 }
             }
 
@@ -242,6 +285,7 @@ extension SettingsView {
 
             HStack(spacing: 12) {
                 settingsSmallOutlineButton(viewModel.localizedText("测试链接", "Test Connection"), width: 60) {
+                    saveCurrentCredentialIfNeeded()
                     let resultGeneration = relayTestResultGeneration
                     let providerID = provider.id
                     Task {
@@ -250,6 +294,20 @@ extension SettingsView {
                         guard resultGeneration == relayTestResultGeneration,
                               navigationState.selectedProviderID == providerID else { return }
                         relayEditorDraft.relayTestResult[providerID] = result
+                    }
+                }
+
+                if supportsBrowserImport {
+                    settingsSmallOutlineButton(viewModel.localizedText("从浏览器导入", "Import from Browser"), width: 82) {
+                        let resultGeneration = relayTestResultGeneration
+                        let providerID = provider.id
+                        Task {
+                            let draft = currentRelaySettingsDraft(for: provider)
+                            let result = await providerConfiguration.importRelayDraftFromBrowser(draft)
+                            guard resultGeneration == relayTestResultGeneration,
+                                  navigationState.selectedProviderID == providerID else { return }
+                            relayEditorDraft.relayTestResult[providerID] = result
+                        }
                     }
                 }
 
@@ -458,7 +516,9 @@ extension SettingsView {
                 limitJSONPath: relayEditorDraft.limitPathInputs[provider.id] ?? seed.limitJSONPath,
                 successJSONPath: relayEditorDraft.successPathInputs[provider.id] ?? seed.successJSONPath,
                 unit: relayEditorDraft.unitInputs[provider.id] ?? seed.unit,
-                quotaDisplayMode: relayEditorDraft.thirdPartyQuotaDisplayModeInputs[provider.id] ?? seed.quotaDisplayMode
+                quotaDisplayMode: relayEditorDraft.thirdPartyQuotaDisplayModeInputs[provider.id] ?? seed.quotaDisplayMode,
+                showExpirationTimeInMenuBar: relayEditorDraft.relayShowExpirationTimeInputs[provider.id]
+                    ?? seed.showExpirationTimeInMenuBar
             )
         }
         let persistRelaySettings: () -> Void = {

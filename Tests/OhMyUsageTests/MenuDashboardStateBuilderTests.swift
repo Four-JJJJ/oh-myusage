@@ -73,6 +73,7 @@ private extension MenuViewLocalization {
             session: "Session",
             monthly: "Monthly",
             currentPlan: "Current Plan",
+            totalUsage: "Total Usage",
             autocomplete: "Autocomplete",
             dollarBalance: "Dollar Balance"
         ),

@@ -53,8 +53,12 @@ enum MenuSubtitlePresenter {
 
     static func relayQuotaSubtitle(
         snapshot: UsageSnapshot?,
-        language: AppLanguage
+        language: AppLanguage,
+        showExpirationTime: Bool = true
     ) -> String? {
+        guard showExpirationTime else {
+            return nil
+        }
         let relayMetadata = RelaySnapshotDisplayMetadata(snapshot: snapshot)
         guard let raw = relayMetadata.tokenPlanCurrentPeriodEnd else {
             return nil

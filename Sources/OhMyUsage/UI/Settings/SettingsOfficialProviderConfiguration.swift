@@ -65,6 +65,13 @@ extension SettingsView {
                 )
             )
 
+            if shouldShowExpirationTimeToggle(for: provider) {
+                settingsConfigToggleRow(
+                    title: relayExpirationTimeTitle,
+                    isOn: relayExpirationTimeBinding(provider, providerConfiguration: providerConfiguration)
+                )
+            }
+
             officialUsagePreferenceConfigRow(quotaDisplayBinding)
 
             if !supportedSourceModes.isEmpty {

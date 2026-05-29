@@ -204,4 +204,35 @@ struct AppStatusBarPreferencesCoordinator {
             shouldNotifyDisplayConfigChange: true
         )
     }
+
+    func setShowExpirationTimeInMenuBar(
+        _ enabled: Bool,
+        providerID: String,
+        config: inout AppConfig
+    ) -> StatusBarPreferencesMutationOutcome {
+        guard let idx = config.providers.firstIndex(where: { $0.id == providerID }) else {
+            return .none
+        }
+
+        var provider = config.providers[idx]
+        if provider.isRelay {
+            guard var relayConfig = provider.relayConfig else { return .none }
+            guard relayConfig.showExpirationTimeInMenuBar != enabled else { return .none }
+            relayConfig.showExpirationTimeInMenuBar = enabled
+            provider.relayConfig = relayConfig
+        } else if provider.family == .official {
+            var official = provider.officialConfig ?? ProviderDescriptor.defaultOfficialConfig(type: provider.type)
+            guard official.showExpirationTimeInMenuBar != enabled else { return .none }
+            official.showExpirationTimeInMenuBar = enabled
+            provider.officialConfig = official
+        } else {
+            return .none
+        }
+
+        config.providers[idx] = provider.normalized()
+        return StatusBarPreferencesMutationOutcome(
+            shouldPersist: true,
+            shouldNotifyDisplayConfigChange: true
+        )
+    }
 }

@@ -995,7 +995,12 @@ extension SettingsView {
     @ViewBuilder
     func officialSubscriptionConfigSection(_ provider: ProviderDescriptor) -> some View {
         settingsConfigurationSection(title: viewModel.localizedText("配置", "Configuration")) {
-            officialProviderConfigurationContent(provider)
+            switch SettingsProviderConfigurationSectionPresenter.sectionKind(for: provider) {
+            case .official:
+                officialProviderConfigurationContent(provider)
+            case .relay:
+                relayCondensedConfigSection(provider)
+            }
         }
     }
 

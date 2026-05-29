@@ -169,24 +169,138 @@ final class MenuQuotaPresenterTests: XCTestCase {
         XCTAssertTrue(presentations[0].isBlockedByDepletedQuota)
     }
 
-    func testQuotaMetricsRewriteRelayCurrentPlanTitleForXiaomimimoTokenPlan() {
-        var provider = ProviderDescriptor.defaultOpenAilinyu()
-        provider.relayConfig?.adapterID = "xiaomimimo-token-plan"
+    func testQuotaMetricsUseMimoTotalUsageRemainingDisplayWithRemainingTokensDetail() {
+        var provider = ProviderDescriptor.defaultOfficialXiaomiMIMO()
+        provider.relayConfig?.quotaDisplayMode = .remaining
         let snapshot = UsageSnapshot(
             source: provider.id,
             status: .ok,
-            remaining: 90,
-            used: 10,
+            remaining: 99.66389942402705,
+            used: 0.336100575972948,
             limit: 100,
             unit: "%",
             updatedAt: Date(),
             note: "ok",
             quotaWindows: [
                 UsageQuotaWindow(
-                    id: "current-plan",
-                    title: "Current Plan",
-                    remainingPercent: 90,
-                    usedPercent: 10,
+                    id: "token-plan-total",
+                    title: "Total Usage",
+                    remainingPercent: 99.66389942402705,
+                    usedPercent: 0.336100575972948,
+                    kind: .custom
+                )
+            ],
+            sourceLabel: "Relay",
+            rawMeta: [
+                "account.quotaValueText.token-plan-total": "48,014,368 / 14,285,714,286",
+                "account.tokenPlanUsed": "48014368",
+                "account.tokenPlanRemaining": "14237699918",
+                "account.tokenPlanLimit": "14285714286"
+            ]
+        )
+
+        let metrics = MenuQuotaPresenter.quotaMetrics(
+            provider: provider,
+            snapshot: snapshot,
+            language: .en,
+            localization: Self.localization
+        )
+
+        XCTAssertEqual(metrics.count, 1)
+        XCTAssertEqual(metrics.first?.title, "Total Usage")
+        XCTAssertEqual(metrics.first?.displayPercent ?? -1, 99.66389942402705, accuracy: 0.000001)
+        XCTAssertEqual(metrics.first?.healthPercent ?? -1, 99.66389942402705, accuracy: 0.000001)
+        XCTAssertNil(metrics.first?.valueTextOverride)
+        XCTAssertEqual(metrics.first?.detailTextOverride, "14,237,699,918 tokens remaining")
+
+        let presentations = MenuQuotaPresenter.metricDisplays(
+            metrics: metrics,
+            blockageCandidates: metrics,
+            provider: provider,
+            snapshot: snapshot,
+            disconnected: false,
+            language: .en,
+            now: Date()
+        )
+        XCTAssertEqual(presentations.first?.valueText, "100%")
+        XCTAssertEqual(presentations.first?.detailText, "14,237,699,918 tokens remaining")
+        XCTAssertEqual(presentations.first?.barTone, .normal)
+        XCTAssertFalse(presentations.first?.isBlockedByDepletedQuota ?? true)
+    }
+
+    func testQuotaMetricsUseMimoTotalUsageUsedDisplayWhenPreferenceIsUsed() {
+        var provider = ProviderDescriptor.defaultOfficialXiaomiMIMO()
+        provider.relayConfig?.quotaDisplayMode = .used
+        let snapshot = UsageSnapshot(
+            source: provider.id,
+            status: .ok,
+            remaining: 99.66389942402705,
+            used: 0.336100575972948,
+            limit: 100,
+            unit: "%",
+            updatedAt: Date(),
+            note: "ok",
+            quotaWindows: [
+                UsageQuotaWindow(
+                    id: "token-plan-total",
+                    title: "Total Usage",
+                    remainingPercent: 99.66389942402705,
+                    usedPercent: 0.336100575972948,
+                    kind: .custom
+                )
+            ],
+            sourceLabel: "Relay",
+            rawMeta: [
+                "account.tokenPlanRemaining": "14237699918"
+            ]
+        )
+
+        let metrics = MenuQuotaPresenter.quotaMetrics(
+            provider: provider,
+            snapshot: snapshot,
+            language: .en,
+            localization: Self.localization
+        )
+
+        XCTAssertEqual(metrics.first?.title, "Total Usage used")
+        XCTAssertEqual(metrics.first?.displayPercent ?? -1, 0.336100575972948, accuracy: 0.000001)
+        XCTAssertEqual(metrics.first?.healthPercent ?? -1, 99.66389942402705, accuracy: 0.000001)
+
+        let presentations = MenuQuotaPresenter.metricDisplays(
+            metrics: metrics,
+            blockageCandidates: metrics,
+            provider: provider,
+            snapshot: snapshot,
+            disconnected: false,
+            language: .en,
+            now: Date()
+        )
+
+        XCTAssertEqual(presentations.first?.valueText, "0%")
+        XCTAssertEqual(presentations.first?.detailText, "14,237,699,918 tokens remaining")
+        XCTAssertEqual(presentations.first?.barTone, .normal)
+    }
+
+    func testQuotaMetricsHideResetTextWhenExpirationDisplayIsDisabled() {
+        var provider = ProviderDescriptor.defaultOfficialXiaomiMIMO()
+        provider.relayConfig?.showExpirationTimeInMenuBar = false
+        let resetAt = Date(timeIntervalSince1970: 1_800_000_000)
+        let snapshot = UsageSnapshot(
+            source: provider.id,
+            status: .ok,
+            remaining: 80,
+            used: 20,
+            limit: 100,
+            unit: "%",
+            updatedAt: Date(),
+            note: "ok",
+            quotaWindows: [
+                UsageQuotaWindow(
+                    id: "token-plan-total",
+                    title: "Total Usage",
+                    remainingPercent: 80,
+                    usedPercent: 20,
+                    resetAt: resetAt,
                     kind: .custom
                 )
             ],
@@ -199,8 +313,18 @@ final class MenuQuotaPresenterTests: XCTestCase {
             language: .en,
             localization: Self.localization
         )
+        let presentations = MenuQuotaPresenter.metricDisplays(
+            metrics: metrics,
+            blockageCandidates: metrics,
+            provider: provider,
+            snapshot: snapshot,
+            disconnected: false,
+            language: .en,
+            now: Date(timeIntervalSince1970: 1_700_000_000)
+        )
 
-        XCTAssertEqual(metrics.first?.title, "Current Plan")
+        XCTAssertNil(metrics.first?.resetAt)
+        XCTAssertEqual(presentations.first?.resetText, "-")
     }
 
     private static let localization = MenuQuotaLocalization(
@@ -212,6 +336,7 @@ final class MenuQuotaPresenterTests: XCTestCase {
         session: "Session",
         monthly: "Monthly",
         currentPlan: "Current Plan",
+        totalUsage: "Total Usage",
         autocomplete: "Autocomplete",
         dollarBalance: "Dollar Balance"
     )

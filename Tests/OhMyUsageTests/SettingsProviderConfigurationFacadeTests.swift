@@ -10,6 +10,8 @@ final class SettingsProviderConfigurationFacadeTests: XCTestCase {
         var showEmailMutations: [Bool] = []
         var planTypeQueries: [String] = []
         var planTypeMutations: [(String, Bool)] = []
+        var expirationQueries: [String] = []
+        var expirationMutations: [(String, Bool)] = []
         var officialSettings: [(String, OfficialSourceMode, OfficialWebMode, OfficialQuotaDisplayMode?, OfficialTraeValueDisplayMode?)] = []
         var thresholds: [(String, Double)] = []
 
@@ -33,6 +35,13 @@ final class SettingsProviderConfigurationFacadeTests: XCTestCase {
             setShowOfficialPlanTypeInMenuBar: { enabled, providerID in
                 planTypeMutations.append((providerID, enabled))
             },
+            showExpirationTimeInMenuBar: {
+                expirationQueries.append($0)
+                return true
+            },
+            setShowExpirationTimeInMenuBar: { enabled, providerID in
+                expirationMutations.append((providerID, enabled))
+            },
             updateOfficialProviderSettings: { providerID, sourceMode, webMode, quotaDisplayMode, traeValueDisplayMode in
                 officialSettings.append((providerID, sourceMode, webMode, quotaDisplayMode, traeValueDisplayMode))
             },
@@ -47,6 +56,8 @@ final class SettingsProviderConfigurationFacadeTests: XCTestCase {
         facade.setShowOfficialAccountEmailInMenuBar(true)
         XCTAssertFalse(facade.showOfficialPlanTypeInMenuBar(providerID: "trae"))
         facade.setShowOfficialPlanTypeInMenuBar(true, providerID: "trae")
+        XCTAssertTrue(facade.showExpirationTimeInMenuBar(providerID: "trae"))
+        facade.setShowExpirationTimeInMenuBar(false, providerID: "trae")
         facade.updateOfficialProviderSettings(
             providerID: "trae",
             sourceMode: .auto,
@@ -63,6 +74,9 @@ final class SettingsProviderConfigurationFacadeTests: XCTestCase {
         XCTAssertEqual(planTypeQueries, ["trae"])
         XCTAssertEqual(planTypeMutations.map(\.0), ["trae"])
         XCTAssertEqual(planTypeMutations.map(\.1), [true])
+        XCTAssertEqual(expirationQueries, ["trae"])
+        XCTAssertEqual(expirationMutations.map(\.0), ["trae"])
+        XCTAssertEqual(expirationMutations.map(\.1), [false])
         XCTAssertEqual(officialSettings.count, 1)
         XCTAssertEqual(officialSettings.first?.0, "trae")
         XCTAssertEqual(officialSettings.first?.1, .auto)

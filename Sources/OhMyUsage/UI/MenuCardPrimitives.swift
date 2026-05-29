@@ -171,6 +171,7 @@ struct PercentageMetricDisplay: Identifiable {
     let title: String
     let valueText: String
     let resetText: String
+    let detailText: String?
     let percent: Double?
     let barColor: Color
     let isBlockedByDepletedQuota: Bool

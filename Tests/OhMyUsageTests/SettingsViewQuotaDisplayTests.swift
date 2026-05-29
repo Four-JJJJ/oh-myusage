@@ -24,6 +24,42 @@ final class SettingsViewQuotaDisplayTests: XCTestCase {
         XCTAssertTrue(resolved.displaysUsedQuota)
     }
 
+    func testOfficialRelayDisplaysUsedQuotaReadsRelayConfig() {
+        var provider = ProviderDescriptor.defaultOfficialMiniMax()
+
+        provider.relayConfig?.quotaDisplayMode = .used
+        XCTAssertTrue(provider.displaysUsedQuota)
+
+        provider.relayConfig?.quotaDisplayMode = .remaining
+        XCTAssertFalse(provider.displaysUsedQuota)
+    }
+
+    func testOfficialXiaomiMIMODefaultsToUsedQuotaDisplayMode() {
+        let provider = ProviderDescriptor.defaultOfficialXiaomiMIMO()
+
+        XCTAssertEqual(provider.relayConfig?.quotaDisplayMode, .used)
+        XCTAssertTrue(provider.displaysUsedQuota)
+    }
+
+    func testOfficialXiaomiMIMOCanSwitchToRemainingQuotaDisplayMode() {
+        var provider = ProviderDescriptor.defaultOfficialXiaomiMIMO()
+
+        provider.relayConfig?.quotaDisplayMode = .remaining
+
+        XCTAssertFalse(provider.displaysUsedQuota)
+    }
+
+    func testOfficialXiaomiMIMOSupportsExpirationTimeDisplayToggle() {
+        var provider = ProviderDescriptor.defaultOfficialXiaomiMIMO()
+
+        XCTAssertTrue(provider.supportsExpirationTimeDisplay(snapshot: nil))
+        XCTAssertTrue(provider.showsExpirationTimeInMenuBar)
+
+        provider.relayConfig?.showExpirationTimeInMenuBar = false
+
+        XCTAssertFalse(provider.showsExpirationTimeInMenuBar)
+    }
+
     func testQuotaMetricPercentsKeepDisplayAndHealthSeparateInUsedMode() {
         let window = UsageQuotaWindow(
             id: "claude-session",

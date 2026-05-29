@@ -351,6 +351,7 @@ struct MenuContentView: View {
                 title: metric.title,
                 valueText: metric.valueText,
                 resetText: metric.resetText,
+                detailText: metric.detailText,
                 percent: metric.percent,
                 barColor: percentageBarColor(for: metric.barTone),
                 isBlockedByDepletedQuota: metric.isBlockedByDepletedQuota
