@@ -71,7 +71,13 @@ final class KimiLocalUsageService {
         if let defaultSessionsRootPath {
             return defaultSessionsRootPath
         }
-        return "\(NSHomeDirectory())/.kimi/sessions"
+        let home = NSHomeDirectory()
+        let kimiCodeSessions = "\(home)/.kimi-code/sessions"
+        var isDir: ObjCBool = false
+        if FileManager.default.fileExists(atPath: kimiCodeSessions, isDirectory: &isDir), isDir.boolValue {
+            return kimiCodeSessions
+        }
+        return "\(home)/.kimi/sessions"
     }
 
     private func scanSessionEvents(
