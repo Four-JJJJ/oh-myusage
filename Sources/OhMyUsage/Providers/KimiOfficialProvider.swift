@@ -130,6 +130,7 @@ final class KimiOfficialProvider: UsageProvider, @unchecked Sendable {
     private func resolveCredentialPaths() -> [String] {
         let home = homeDirectory()
         let explicit = [
+            "\(home)/.kimi-code/credentials/kimi-code.json",
             "\(home)/.kimi/credentials/kimi-code.json",
             "\(home)/.config/kimi/credentials/kimi-code.json",
             "\(home)/Library/Application Support/kimi/credentials/kimi-code.json",
@@ -139,9 +140,8 @@ final class KimiOfficialProvider: UsageProvider, @unchecked Sendable {
         ]
 
         var discovered: [String] = []
-        if let enumerator = FileManager.default.enumerator(
-            atPath: "\(home)/.kimi/credentials"
-        ) {
+        for scanDir in ["\(home)/.kimi-code/credentials", "\(home)/.kimi/credentials"] {
+            guard let enumerator = FileManager.default.enumerator(atPath: scanDir) else { continue }
             for case let item as String in enumerator {
                 let lower = item.lowercased()
                 guard lower.hasSuffix(".json"),
@@ -149,7 +149,7 @@ final class KimiOfficialProvider: UsageProvider, @unchecked Sendable {
                       lower.contains("code") else {
                     continue
                 }
-                discovered.append("\(home)/.kimi/credentials/\(item)")
+                discovered.append("\(scanDir)/\(item)")
             }
         }
 
