@@ -14,7 +14,7 @@ final class AppViewModel {
     let thirdPartyBalanceBaselineStore = ThirdPartyBalanceBaselineStore()
     let codexSlotStore: CodexAccountSlotStore
     let codexProfileStore: CodexAccountProfileStore
-    let codexProfileSnapshotService = CodexProfileSnapshotService()
+    let codexProfileSnapshotService: CodexProfileSnapshotService
     let codexDesktopAuthService: CodexDesktopAuthService
     let codexDesktopAppService: CodexDesktopAppService
     let oauthImportOrchestrator = OAuthImportOrchestrator()
@@ -245,6 +245,7 @@ final class AppViewModel {
         codexProfileStore: CodexAccountProfileStore = CodexAccountProfileStore(),
         codexDesktopAuthService: CodexDesktopAuthService = CodexDesktopAuthService(),
         codexDesktopAppService: CodexDesktopAppService = CodexDesktopAppService(),
+        codexProfileSnapshotService: CodexProfileSnapshotService = CodexProfileSnapshotService(),
         notificationService: NotificationService = NotificationService(),
         providerFactory: (any ProviderFactorying)? = nil,
         keychain: KeychainService = KeychainService(),
@@ -261,6 +262,7 @@ final class AppViewModel {
         self.codexProfileStore = codexProfileStore
         self.codexDesktopAuthService = codexDesktopAuthService
         self.codexDesktopAppService = codexDesktopAppService
+        self.codexProfileSnapshotService = codexProfileSnapshotService
         self.notifications = notificationService
         let resolvedProviderFactory = providerFactory ?? ProviderFactory(keychain: keychain)
         self.providerRefreshCoordinator = AppProviderRefreshCoordinator(
@@ -330,6 +332,7 @@ final class AppViewModel {
         codexProfileStore: CodexAccountProfileStore = CodexAccountProfileStore(),
         codexDesktopAuthService: CodexDesktopAuthService = CodexDesktopAuthService(),
         codexDesktopAppService: CodexDesktopAppService = CodexDesktopAppService(),
+        codexProfileSnapshotService: CodexProfileSnapshotService = CodexProfileSnapshotService(),
         notificationService: NotificationService = NotificationService(),
         providerFactory: (any ProviderFactorying)? = nil,
         keychain: KeychainService = KeychainService(),
@@ -346,6 +349,7 @@ final class AppViewModel {
         self.codexProfileStore = codexProfileStore
         self.codexDesktopAuthService = codexDesktopAuthService
         self.codexDesktopAppService = codexDesktopAppService
+        self.codexProfileSnapshotService = codexProfileSnapshotService
         self.notifications = notificationService
         let resolvedProviderFactory = providerFactory ?? ProviderFactory(keychain: keychain)
         self.providerRefreshCoordinator = AppProviderRefreshCoordinator(
@@ -666,6 +670,17 @@ final class AppViewModel {
     }
 
     func localUsageHistoryState(for query: LocalUsageHistoryQuery) -> LocalUsageHistoryState {
+        guard LocalUsageHistoryRefreshCoordinator.supports(query.providerType) else {
+            return LocalUsageHistoryState(
+                summary: nil,
+                error: nil,
+                isLoading: false,
+                lastRefreshedAt: nil,
+                sourceFingerprint: nil,
+                lastFingerprintCheckedAt: nil,
+                isStaleFallback: false
+            )
+        }
         _ = localUsageHistoryVersion
         return localUsageHistoryRepository.snapshot(for: query)
     }

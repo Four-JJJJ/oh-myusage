@@ -176,7 +176,11 @@ enum OfficialProviderDefaultCatalog {
             enabled: false,
             pollIntervalSec: 60,
             threshold: AlertRule(lowRemaining: 20, maxConsecutiveFailures: 2, notifyOnAuthError: true),
-            auth: .none,
+            auth: AuthConfig(
+                kind: .bearer,
+                keychainService: KeychainService.defaultServiceName,
+                keychainAccount: "official/kimi/coding-api-key"
+            ),
             baseURL: baseURL(for: .kimi),
             officialConfig: config(for: .kimi)
         )

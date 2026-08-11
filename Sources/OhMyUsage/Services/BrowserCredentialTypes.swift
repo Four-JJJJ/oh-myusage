@@ -16,6 +16,15 @@ enum BrowserCredentialAccessIntent {
             return true
         }
     }
+
+    var allowsKeychainInteraction: Bool {
+        switch self {
+        case .background:
+            return false
+        case .interactiveImport, .authRecovery:
+            return true
+        }
+    }
 }
 
 protocol BrowserCookieDetecting {

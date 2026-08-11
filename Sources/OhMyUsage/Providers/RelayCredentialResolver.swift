@@ -71,7 +71,7 @@ struct RelayCredentialResolver {
         let savedBearer = savedRaw.flatMap { raw in
             looksLikeCookieHeader(raw) ? nil : normalizeBearerToken(raw)
         }
-        let savedBearerExpired = savedBearer.map(isExpiredJWT) ?? false
+        let savedBearerExpired = savedBearer.map { isExpiredJWT($0) || isRefreshJWT($0) } ?? false
 
         func append(_ candidate: RelayCredentialCandidate?) {
             guard let candidate else { return }
@@ -103,7 +103,9 @@ struct RelayCredentialResolver {
                     accessIntent: browserAccessIntent
                 ) {
                     let normalized = normalizeBearerToken(detected.value)
-                    guard !normalized.isEmpty, !isExpiredJWT(normalized) else { continue }
+                    guard !normalized.isEmpty,
+                          !isExpiredJWT(normalized),
+                          !isRefreshJWT(normalized) else { continue }
                     append(buildHeaderCandidate(
                         request: request,
                         header: request.authHeader ?? "Authorization",
@@ -139,14 +141,20 @@ struct RelayCredentialResolver {
                     host: host,
                     accessIntent: browserAccessIntent
                 ) {
+                    let resolvedCookie = completeBrowserCookieHeaderIfNeeded(
+                        detected,
+                        host: host,
+                        manifest: manifest,
+                        browserAccessIntent: browserAccessIntent
+                    )
                     append(RelayCredentialCandidate(
                         headers: buildHeaders(
                             request: request,
                             authHeader: "Cookie",
-                            authValue: detected.value
+                            authValue: resolvedCookie.value
                         ),
-                        source: "browserCookieHeader:\(detected.source)",
-                        persistedCredential: detected.value
+                        source: "browserCookieHeader:\(resolvedCookie.source)",
+                        persistedCredential: resolvedCookie.value
                     ))
                 }
             case .namedCookie:
@@ -290,6 +298,72 @@ struct RelayCredentialResolver {
             }
     }
 
+    private func completeBrowserCookieHeaderIfNeeded(
+        _ detected: BrowserDetectedCredential,
+        host: String,
+        manifest: RelayAdapterManifest,
+        browserAccessIntent: BrowserCredentialAccessIntent
+    ) -> BrowserDetectedCredential {
+        guard isXiaomimimoManifest(manifest),
+              cookieHeaderContains(detected.value, name: "api-platform_serviceToken"),
+              !cookieHeaderContains(detected.value, name: "userId"),
+              host.caseInsensitiveCompare("xiaomimimo.com") != .orderedSame,
+              let parentDetected = browserCredentialService.detectCookieHeader(
+                host: "xiaomimimo.com",
+                accessIntent: browserAccessIntent
+              ) else {
+            return detected
+        }
+
+        let merged = mergeCookieHeaders(primary: detected.value, fallback: parentDetected.value)
+        guard cookieHeaderContains(merged, name: "api-platform_serviceToken"),
+              cookieHeaderContains(merged, name: "userId") else {
+            return detected
+        }
+
+        return BrowserDetectedCredential(
+            value: merged,
+            source: "\(detected.source)+\(parentDetected.source)"
+        )
+    }
+
+    private func isXiaomimimoManifest(_ manifest: RelayAdapterManifest) -> Bool {
+        manifest.id == "xiaomimimo" || manifest.id == "xiaomimimo-token-plan"
+    }
+
+    private func cookieHeaderContains(_ header: String, name: String) -> Bool {
+        parseCookieNames(header).contains { $0.caseInsensitiveCompare(name) == .orderedSame }
+    }
+
+    private func mergeCookieHeaders(primary: String, fallback: String) -> String {
+        var output = cookiePairs(from: primary)
+        var existingNames = Set(output.map { $0.name.lowercased() })
+
+        for pair in cookiePairs(from: fallback) where !existingNames.contains(pair.name.lowercased()) {
+            output.append(pair)
+            existingNames.insert(pair.name.lowercased())
+        }
+
+        return output.map { "\($0.name)=\($0.value)" }.joined(separator: "; ")
+    }
+
+    private func cookiePairs(from header: String) -> [(name: String, value: String)] {
+        header
+            .split(separator: ";")
+            .compactMap { item in
+                let pair = item.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !pair.isEmpty,
+                      let equalsIndex = pair.firstIndex(of: "=") else {
+                    return nil
+                }
+                let name = String(pair[..<equalsIndex]).trimmingCharacters(in: .whitespacesAndNewlines)
+                let valueStart = pair.index(after: equalsIndex)
+                let value = String(pair[valueStart...]).trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !name.isEmpty else { return nil }
+                return (name: name, value: value)
+            }
+    }
+
     func isExpiredJWT(_ token: String) -> Bool {
         let parts = token.split(separator: ".")
         guard parts.count == 3 else { return false }
@@ -299,6 +373,31 @@ struct RelayCredentialResolver {
             return false
         }
         return KimiJWT.isExpired(token)
+    }
+
+    func isRefreshJWT(_ token: String) -> Bool {
+        let parts = token.split(separator: ".")
+        guard parts.count == 3,
+              let payloadData = decodeBase64URL(String(parts[1])),
+              let payload = try? JSONSerialization.jsonObject(with: payloadData) as? [String: Any] else {
+            return false
+        }
+        let tokenType = (payload["typ"] as? String)
+            ?? (payload["token_type"] as? String)
+            ?? (payload["tokenType"] as? String)
+        return tokenType?.trimmingCharacters(in: .whitespacesAndNewlines)
+            .caseInsensitiveCompare("refresh") == .orderedSame
+    }
+
+    private func decodeBase64URL(_ value: String) -> Data? {
+        var normalized = value
+            .replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/")
+        let remainder = normalized.count % 4
+        if remainder != 0 {
+            normalized += String(repeating: "=", count: 4 - remainder)
+        }
+        return Data(base64Encoded: normalized)
     }
 
     func buildHeaderCandidate(

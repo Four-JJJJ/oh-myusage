@@ -17,17 +17,22 @@ final class BrowserCookieDatabaseReader {
         let expiresAt: Date
     }
 
+    private struct SafeStoragePasswordCacheKey: Hashable {
+        let browser: KimiBrowserKind
+        let allowsInteraction: Bool
+    }
+
     private let fileManager: FileManager
     private let sqliteTimeout: TimeInterval?
     private let cookiePathCacheTTL: TimeInterval
     private let safeStoragePasswordCacheTTL: TimeInterval
     private let now: () -> Date
     private let cookiePathEnumerator: ((KimiBrowserKind, Bool) -> [String])?
-    private let safeStoragePasswordReader: (String, String) -> String?
+    private let safeStoragePasswordReader: (String, String, Bool) -> String?
     private let cookiePathCacheLock = NSLock()
     private let safeStorageCacheLock = NSLock()
     private var cookiePathCache: [CookiePathCacheKey: ExpiringPathCacheEntry] = [:]
-    private var safeStorageCache: [KimiBrowserKind: ExpiringSafeStoragePasswordCacheEntry] = [:]
+    private var safeStorageCache: [SafeStoragePasswordCacheKey: ExpiringSafeStoragePasswordCacheEntry] = [:]
 
     init(
         fileManager: FileManager = .default,
@@ -36,8 +41,12 @@ final class BrowserCookieDatabaseReader {
         safeStoragePasswordCacheTTL: TimeInterval = 60,
         now: @escaping () -> Date = Date.init,
         cookiePathEnumerator: ((KimiBrowserKind, Bool) -> [String])? = nil,
-        safeStoragePasswordReader: @escaping (String, String) -> String? = { service, account in
-            SecurityCredentialReader.readGenericPassword(service: service, account: account)
+        safeStoragePasswordReader: @escaping (String, String, Bool) -> String? = { service, account, interactive in
+            SecurityCredentialReader.readGenericPassword(
+                service: service,
+                account: account,
+                interactive: interactive
+            )
         }
     ) {
         self.fileManager = fileManager
@@ -145,7 +154,8 @@ final class BrowserCookieDatabaseReader {
         fromDatabaseAt path: String,
         browser: KimiBrowserKind,
         cookieName: String,
-        hostContains: String
+        hostContains: String,
+        accessIntent: BrowserCredentialAccessIntent = .interactiveImport
     ) -> String? {
         let queries = [
             "SELECT value, hex(encrypted_value) FROM cookies WHERE name='\(cookieName)' AND host_key LIKE '%\(hostContains)%' ORDER BY LENGTH(value) DESC, LENGTH(encrypted_value) DESC;",
@@ -170,7 +180,11 @@ final class BrowserCookieDatabaseReader {
                     let selected: String
                     if !plain.isEmpty {
                         selected = plain
-                    } else if let decrypted = decryptChromiumCookieHex(encryptedHex, browser: browser), !decrypted.isEmpty {
+                    } else if let decrypted = decryptChromiumCookieHex(
+                        encryptedHex,
+                        browser: browser,
+                        accessIntent: accessIntent
+                    ), !decrypted.isEmpty {
                         selected = decrypted
                     } else {
                         continue
@@ -192,7 +206,8 @@ final class BrowserCookieDatabaseReader {
     func cookieHeader(
         fromDatabaseAt path: String,
         browser: KimiBrowserKind,
-        hostContains: String
+        hostContains: String,
+        accessIntent: BrowserCredentialAccessIntent = .interactiveImport
     ) -> String? {
         let queries = [
             "SELECT name, value, hex(encrypted_value) FROM cookies WHERE host_key LIKE '%\(hostContains)%' ORDER BY name;",
@@ -220,7 +235,11 @@ final class BrowserCookieDatabaseReader {
                     let value: String
                     if !plain.isEmpty {
                         value = plain
-                    } else if let decrypted = decryptChromiumCookieHex(encryptedHex, browser: browser), !decrypted.isEmpty {
+                    } else if let decrypted = decryptChromiumCookieHex(
+                        encryptedHex,
+                        browser: browser,
+                        accessIntent: accessIntent
+                    ), !decrypted.isEmpty {
                         value = decrypted
                     } else {
                         continue
@@ -316,7 +335,11 @@ final class BrowserCookieDatabaseReader {
         return String(data: data, encoding: .utf8)
     }
 
-    private func decryptChromiumCookieHex(_ hex: String, browser: KimiBrowserKind) -> String? {
+    private func decryptChromiumCookieHex(
+        _ hex: String,
+        browser: KimiBrowserKind,
+        accessIntent: BrowserCredentialAccessIntent
+    ) -> String? {
         let cleaned = hex.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleaned.isEmpty,
               let encrypted = HexCookieDataParser.data(from: cleaned),
@@ -329,7 +352,7 @@ final class BrowserCookieDatabaseReader {
             return nil
         }
 
-        guard let passphrase = safeStoragePassword(for: browser), !passphrase.isEmpty,
+        guard let passphrase = safeStoragePassword(for: browser, accessIntent: accessIntent), !passphrase.isEmpty,
               let key = pbkdf2SHA1(password: passphrase, salt: "saltysalt", rounds: 1003, keyByteCount: 16) else {
             return nil
         }
@@ -354,40 +377,58 @@ final class BrowserCookieDatabaseReader {
         return nil
     }
 
-    private func safeStoragePassword(for browser: KimiBrowserKind) -> String? {
+    private func safeStoragePassword(
+        for browser: KimiBrowserKind,
+        accessIntent: BrowserCredentialAccessIntent
+    ) -> String? {
         let currentDate = now()
+        let cacheKey = SafeStoragePasswordCacheKey(
+            browser: browser,
+            allowsInteraction: accessIntent.allowsKeychainInteraction
+        )
         if safeStoragePasswordCacheTTL > 0,
-           let cached = cachedSafeStoragePassword(for: browser, now: currentDate) {
+           let cached = cachedSafeStoragePassword(for: cacheKey, now: currentDate) {
             return cached
         }
 
         let labels = safeStorageLabels(for: browser)
         for label in labels {
-            if let password = safeStoragePasswordReader(label.service, label.account),
+            if let password = safeStoragePasswordReader(
+                label.service,
+                label.account,
+                accessIntent.allowsKeychainInteraction
+            ),
                !password.isEmpty {
-                cacheSafeStoragePassword(password, for: browser, now: currentDate)
+                cacheSafeStoragePassword(password, for: cacheKey, now: currentDate)
+                if accessIntent.allowsKeychainInteraction {
+                    cacheSafeStoragePassword(
+                        password,
+                        for: SafeStoragePasswordCacheKey(browser: browser, allowsInteraction: false),
+                        now: currentDate
+                    )
+                }
                 return password
             }
         }
 
-        cacheSafeStoragePassword(nil, for: browser, now: currentDate)
+        cacheSafeStoragePassword(nil, for: cacheKey, now: currentDate)
         return nil
     }
 
-    private func cachedSafeStoragePassword(for browser: KimiBrowserKind, now: Date) -> String?? {
+    private func cachedSafeStoragePassword(for key: SafeStoragePasswordCacheKey, now: Date) -> String?? {
         safeStorageCacheLock.lock()
         defer { safeStorageCacheLock.unlock() }
         purgeExpiredSafeStorageCacheLocked(now: now)
-        guard let entry = safeStorageCache[browser] else {
+        guard let entry = safeStorageCache[key] else {
             return nil
         }
         return entry.password
     }
 
-    private func cacheSafeStoragePassword(_ password: String?, for browser: KimiBrowserKind, now: Date) {
+    private func cacheSafeStoragePassword(_ password: String?, for key: SafeStoragePasswordCacheKey, now: Date) {
         guard safeStoragePasswordCacheTTL > 0 else { return }
         safeStorageCacheLock.lock()
-        safeStorageCache[browser] = ExpiringSafeStoragePasswordCacheEntry(
+        safeStorageCache[key] = ExpiringSafeStoragePasswordCacheEntry(
             password: password,
             expiresAt: now.addingTimeInterval(safeStoragePasswordCacheTTL)
         )

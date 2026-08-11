@@ -225,12 +225,19 @@ final class OfficialProviderTests: XCTestCase {
         """#
         try authJSON.write(to: authDirectory.appendingPathComponent("auth.json"), atomically: true, encoding: .utf8)
 
-        var requestCount = 0
+        var usageRequestCount = 0
+        var refreshRequestCount = 0
         OfficialMockURLProtocol.requestHandler = { request in
-            requestCount += 1
             let url = try XCTUnwrap(request.url)
+            if url.absoluteString == "https://auth.openai.com/oauth/token" {
+                refreshRequestCount += 1
+                let response = HTTPURLResponse(url: url, statusCode: 401, httpVersion: nil, headerFields: nil)!
+                return (response, Data())
+            }
+
             XCTAssertEqual(url.absoluteString, "https://chatgpt.com/backend-api/wham/usage")
-            if requestCount == 1 {
+            usageRequestCount += 1
+            if usageRequestCount == 1 {
                 let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
                 let body = """
                 {
@@ -276,13 +283,107 @@ final class OfficialProviderTests: XCTestCase {
             XCTFail("forceRefresh should not fall back to a stale cached snapshot")
         } catch let error as ProviderError {
             if case .unauthorized = error {
-                XCTAssertEqual(requestCount, 2)
+                XCTAssertEqual(usageRequestCount, 2)
+                XCTAssertEqual(refreshRequestCount, 1)
             } else {
                 XCTFail("unexpected provider error: \(error)")
             }
         } catch {
             XCTFail("unexpected error: \(error)")
         }
+    }
+
+    func testCodexAPIRefreshesAndRetriesWhenUsageRejectsStaleAccessToken() async throws {
+        let homeDirectory = try makeTemporaryHomeDirectory(prefix: "codex-provider-refresh-tests")
+        let authDirectory = homeDirectory.appendingPathComponent(".config/codex", isDirectory: true)
+        try FileManager.default.createDirectory(at: authDirectory, withIntermediateDirectories: true)
+        let authPath = authDirectory.appendingPathComponent("auth.json")
+        let idToken = makeJWT(email: "codex@example.com")
+        let initialAuthJSON = #"""
+        {
+          "last_refresh": "2099-06-08T14:00:00Z",
+          "tokens": {
+            "access_token": "stale-access-token",
+            "refresh_token": "codex-refresh-token",
+            "account_id": "codex-account",
+            "id_token": "\#(idToken)"
+          }
+        }
+        """#
+        try writeText(initialAuthJSON, to: authPath)
+
+        var usageRequestCount = 0
+        var didRefresh = false
+        OfficialMockURLProtocol.requestHandler = { request in
+            let url = try XCTUnwrap(request.url)
+            if url.absoluteString == "https://auth.openai.com/oauth/token" {
+                didRefresh = true
+                XCTAssertEqual(request.httpMethod, "POST")
+                let body = String(data: try XCTUnwrap(requestBodyData(request)), encoding: .utf8) ?? ""
+                XCTAssertTrue(body.contains("grant_type=refresh_token"))
+                XCTAssertTrue(body.contains("refresh_token=codex-refresh-token"))
+                let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
+                let bodyJSON = #"""
+                {
+                  "access_token": "fresh-access-token",
+                  "refresh_token": "fresh-refresh-token",
+                  "id_token": "\#(idToken)"
+                }
+                """#
+                return (response, Data(bodyJSON.utf8))
+            }
+
+            XCTAssertEqual(url.absoluteString, "https://chatgpt.com/backend-api/wham/usage")
+            usageRequestCount += 1
+            if usageRequestCount == 1 {
+                XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer stale-access-token")
+                let response = HTTPURLResponse(url: url, statusCode: 401, httpVersion: nil, headerFields: nil)!
+                return (response, Data())
+            }
+
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer fresh-access-token")
+            let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            let body = """
+            {
+              "plan_type": "plus",
+              "rate_limit": {
+                "primary_window": { "used_percent": 25, "reset_at": 1760000000 },
+                "secondary_window": { "used_percent": 60, "reset_at": 1760500000 }
+              }
+            }
+            """
+            return (response, Data(body.utf8))
+        }
+        defer { OfficialMockURLProtocol.requestHandler = nil }
+
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [OfficialMockURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+
+        var descriptor = ProviderDescriptor.defaultOfficialCodex()
+        descriptor.id = "codex-usage-401-refresh-\(UUID().uuidString)"
+        descriptor.officialConfig?.sourceMode = .api
+        descriptor.officialConfig?.webMode = .disabled
+
+        let provider = CodexProvider(
+            descriptor: descriptor,
+            session: session,
+            keychain: makeTestKeychain(),
+            browserCookieService: BrowserCookieService(),
+            cache: FetchedAtOfficialSnapshotCache(),
+            gate: PassthroughOfficialFetchGate(),
+            homeDirectory: { homeDirectory.path },
+            environment: { [:] }
+        )
+
+        let snapshot = try await provider.fetch(forceRefresh: true)
+
+        XCTAssertEqual(snapshot.remaining ?? -1, 40, accuracy: 0.001)
+        XCTAssertEqual(usageRequestCount, 2)
+        XCTAssertTrue(didRefresh)
+        let persisted = try String(contentsOf: authPath, encoding: .utf8)
+        XCTAssertTrue(persisted.contains("fresh-access-token"))
+        XCTAssertTrue(persisted.contains("fresh-refresh-token"))
     }
 
     func testClaudeForceRefreshDoesNotReturnStaleCachedSnapshot() async throws {
@@ -563,6 +664,50 @@ final class OfficialProviderTests: XCTestCase {
         let snapshot = try await provider.fetch(forceRefresh: true)
         XCTAssertEqual(snapshot.sourceLabel, "Web")
         XCTAssertEqual(spy.detectCookieHeaderCallCount, 0)
+    }
+
+    func testOfficialKimiPrefersSavedCodingAPIKey() async throws {
+        let keychain = makeTestKeychain()
+        var descriptor = ProviderDescriptor.defaultOfficialKimi()
+        descriptor.id = "kimi-api-key-\(UUID().uuidString)"
+        descriptor.officialConfig?.sourceMode = .api
+        let service = try XCTUnwrap(descriptor.auth.keychainService)
+        let account = try XCTUnwrap(descriptor.auth.keychainAccount)
+        XCTAssertTrue(keychain.saveToken("kimi-coding-api-key", service: service, account: account))
+
+        OfficialMockURLProtocol.requestHandler = { request in
+            XCTAssertEqual(request.url?.absoluteString, "https://api.kimi.com/coding/v1/usages")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer kimi-coding-api-key")
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            let body = """
+            {
+              "usage": { "used": "40", "limit": "100" },
+              "limits": [
+                {
+                  "window": { "duration": 300, "timeUnit": "TIME_UNIT_MINUTE" },
+                  "detail": { "used": "10", "limit": "50" }
+                }
+              ]
+            }
+            """
+            return (response, Data(body.utf8))
+        }
+        defer { OfficialMockURLProtocol.requestHandler = nil }
+
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [OfficialMockURLProtocol.self]
+        let provider = KimiOfficialProvider(
+            descriptor: descriptor,
+            session: URLSession(configuration: configuration),
+            keychain: keychain,
+            cache: SnapshotTimestampOfficialSnapshotCache(),
+            gate: PassthroughOfficialFetchGate(),
+            homeDirectory: { "/path/that/does/not/exist" }
+        )
+
+        let snapshot = try await provider.fetch(forceRefresh: true)
+        XCTAssertEqual(snapshot.remaining ?? -1, 60, accuracy: 0.001)
+        XCTAssertEqual(snapshot.sourceLabel, "API")
     }
 
     func testCodexWebBackoffSkipsRepeatedBrowserReadAndForceRefreshBypasses() async throws {
@@ -1126,6 +1271,64 @@ final class OfficialProviderTests: XCTestCase {
         XCTAssertNotNil(snapshot.quotaWindows.first(where: { $0.title == "Overall" })?.resetAt)
     }
 
+    func testOfficialKimiResponseParsesCurrentUsedLimitWireShape() throws {
+        // Current /coding/v1/usages payload (kimi-code 0.18+ era): decimal-string
+        // `used`/`limit` under `usage` summary and per-window `detail`, with no
+        // remaining/quota fields at all.
+        let root: [String: Any] = [
+            "usage": ["used": "40", "limit": "1000", "resetTime": "2030-01-08T00:00:00.000Z"],
+            "limits": [
+                [
+                    "window": ["duration": 300, "timeUnit": "TIME_UNIT_MINUTE"],
+                    "detail": ["used": "10", "limit": "100", "resetTime": "2030-01-01T05:00:00.000Z"],
+                ],
+                [
+                    "window": ["duration": 7, "timeUnit": "TIME_UNIT_DAY"],
+                    "detail": ["used": "30", "limit": "200", "resetTime": "2030-01-08T00:00:00.000Z"],
+                ],
+            ],
+        ]
+
+        let snapshot = try KimiOfficialProvider.parseUsageSnapshot(
+            root: root,
+            descriptor: ProviderDescriptor.defaultOfficialKimi(),
+            sourceLabel: "API"
+        )
+
+        let session = snapshot.quotaWindows.first(where: { $0.kind == .session })
+        XCTAssertEqual(session?.remainingPercent ?? -1, 90, accuracy: 0.001)
+        XCTAssertNotNil(session?.resetAt)
+
+        let weekly = snapshot.quotaWindows.first(where: { $0.kind == .weekly })
+        XCTAssertEqual(weekly?.remainingPercent ?? -1, 85, accuracy: 0.001)
+
+        XCTAssertFalse(snapshot.quotaWindows.isEmpty)
+    }
+
+    func testOfficialKimiResponseParsesHourAndWeekTimeUnits() throws {
+        let root: [String: Any] = [
+            "limits": [
+                [
+                    "window": ["duration": 5, "timeUnit": "TIME_UNIT_HOUR"],
+                    "detail": ["used": "25", "limit": "100"],
+                ],
+                [
+                    "window": ["duration": 1, "timeUnit": "TIME_UNIT_WEEK"],
+                    "detail": ["used": "10", "limit": "50"],
+                ],
+            ],
+        ]
+
+        let snapshot = try KimiOfficialProvider.parseUsageSnapshot(
+            root: root,
+            descriptor: ProviderDescriptor.defaultOfficialKimi(),
+            sourceLabel: "API"
+        )
+
+        XCTAssertEqual(snapshot.quotaWindows.first(where: { $0.kind == .session })?.remainingPercent ?? -1, 75, accuracy: 0.001)
+        XCTAssertEqual(snapshot.quotaWindows.first(where: { $0.kind == .weekly })?.remainingPercent ?? -1, 80, accuracy: 0.001)
+    }
+
     func testCopilotResponseParsesPremiumAndChat() throws {
         let json = """
         {
@@ -1276,7 +1479,7 @@ final class OfficialProviderTests: XCTestCase {
             "data": [
                 "limits": [
                     ["type": "TOKENS_LIMIT", "unit": 3, "number": 5, "percentage": 15, "nextResetTime": 1770648402389 as Double],
-                    ["type": "TOKENS_LIMIT", "unit": 6, "number": 7, "percentage": 45, "nextResetTime": 1771200000000 as Double],
+                    ["type": "TOKENS_LIMIT", "unit": 6, "number": 1, "percentage": 45, "nextResetTime": 1771200000000 as Double],
                     ["type": "TIME_LIMIT", "remaining": 2172, "usage": 4000],
                 ]
             ]
@@ -1291,6 +1494,13 @@ final class OfficialProviderTests: XCTestCase {
         XCTAssertEqual(snapshot.quotaWindows.count, 3)
         XCTAssertEqual(snapshot.quotaWindows.first(where: { $0.kind == .session })?.remainingPercent ?? -1, 85, accuracy: 0.001)
         XCTAssertEqual(snapshot.extras["planType"], "GLM Coding Max")
+    }
+
+    func testZaiQuotaAuthorizationDoesNotAddBearerPrefix() {
+        XCTAssertEqual(
+            ZaiProvider.authorizationHeaderValue(apiKey: "  glm-api-key  "),
+            "glm-api-key"
+        )
     }
 
     func testAmpResponseParsesFreeAndCredits() throws {

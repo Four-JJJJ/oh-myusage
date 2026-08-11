@@ -13,10 +13,12 @@ struct OfficialProviderAuthRequestResult<State, Response> {
 
 enum OfficialProviderAuthRuntime {
     static func urlEncodedFormData(_ fields: [String: String]) -> Data? {
-        fields
+        let allowed = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
+        return fields
             .map { key, value in
-                let encoded = value.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? value
-                return "\(key)=\(encoded)"
+                let encodedKey = key.addingPercentEncoding(withAllowedCharacters: allowed) ?? key
+                let encodedValue = value.addingPercentEncoding(withAllowedCharacters: allowed) ?? value
+                return "\(encodedKey)=\(encodedValue)"
             }
             .joined(separator: "&")
             .data(using: .utf8)

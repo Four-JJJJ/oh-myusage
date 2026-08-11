@@ -194,6 +194,66 @@ final class KimiLocalUsageServiceTests: XCTestCase {
         XCTAssertEqual(parseCount, 2)
     }
 
+    func testFetchSummaryParsesV2UsageRecordWireFormat() throws {
+        let now = try fixedDate("2026-04-18T12:00:00Z")
+        let todayMs = (now.timeIntervalSince1970 - (2 * 60 * 60)) * 1000
+        let yesterdayMs = (now.timeIntervalSince1970 - (26 * 60 * 60)) * 1000
+
+        try writeWireFile(
+            relativePath: "session-v2/agents/main/wire.jsonl",
+            lines: [
+                jsonLine(["type": "metadata", "protocol_version": "1.5", "created_at": todayMs]),
+                jsonLine([
+                    "type": "usage.record",
+                    "model": "kimi-k2",
+                    "usage": ["inputOther": 100, "output": 20, "inputCacheRead": 30, "inputCacheCreation": 10],
+                    "usageScope": "turn",
+                    "time": todayMs
+                ]),
+                jsonLine([
+                    "type": "usage.record",
+                    "model": "kimi-k2",
+                    "usage": ["inputOther": 50, "output": 10, "inputCacheRead": 0, "inputCacheCreation": 0],
+                    "usageScope": "session",
+                    "time": todayMs + 120_000
+                ])
+            ]
+        )
+        try writeWireFile(
+            relativePath: "session-v2b/wire.jsonl",
+            lines: [
+                jsonLine([
+                    "type": "usage.record",
+                    "model": "kimi-k2",
+                    "usage": ["inputOther": 70, "output": 20, "inputCacheRead": 0, "inputCacheCreation": 0],
+                    "time": yesterdayMs
+                ])
+            ]
+        )
+
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let service = KimiLocalUsageService(
+            calendar: calendar,
+            nowProvider: { now },
+            defaultSessionsRootPath: sessionsRoot.path
+        )
+
+        let summary = try service.fetchSummary(scope: .allAccounts)
+
+        // v2 records are per-call deltas and must be summed as-is.
+        XCTAssertEqual(summary.today.totalTokens, 220)
+        XCTAssertEqual(summary.today.responses, 2)
+        XCTAssertEqual(summary.today.inputTokens, 150)
+        XCTAssertEqual(summary.today.outputTokens, 30)
+        XCTAssertEqual(summary.today.cacheReadTokens, 30)
+        XCTAssertEqual(summary.today.cacheWriteTokens, 10)
+        XCTAssertEqual(summary.yesterday.totalTokens, 90)
+        XCTAssertEqual(summary.yesterday.responses, 1)
+        XCTAssertEqual(summary.last30Days.totalTokens, 310)
+        XCTAssertEqual(summary.last30Days.responses, 3)
+    }
+
     private func writeWireFile(relativePath: String, lines: [String]) throws {
         let fileURL = sessionsRoot.appendingPathComponent(relativePath)
         try FileManager.default.createDirectory(

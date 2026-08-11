@@ -28,4 +28,29 @@ final class LocalUsageHistoryRefreshCoordinatorTests: XCTestCase {
 
         XCTAssertFalse(invoked)
     }
+
+    func testRelayQueryIsIgnored() {
+        let coordinator = LocalUsageHistoryRefreshCoordinator()
+        let repository = LocalUsageHistoryRepository(
+            baseDirectoryURL: URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+                .appendingPathComponent("local-history-\(UUID().uuidString)", isDirectory: true)
+        )
+        var invoked = false
+
+        coordinator.refreshLocalUsageHistoryIfNeeded(
+            query: LocalUsageHistoryQuery(
+                providerType: .relay,
+                providerID: "deepseek-official",
+                scope: .allAccounts,
+                identityKey: "all"
+            ),
+            repository: repository,
+            performRefresh: { _, _, _, _, _, _ in
+                invoked = true
+            },
+            onStateChange: {}
+        )
+
+        XCTAssertFalse(invoked)
+    }
 }

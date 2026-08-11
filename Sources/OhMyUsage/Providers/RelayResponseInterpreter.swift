@@ -43,6 +43,11 @@ enum RelayResponseInterpreter {
             throw ProviderError.invalidResponse("probe failed at \(successExpression)")
         }
 
+        if manifest.id == "deepseek",
+           let deepseekError = deepseekBusinessError(root: root, candidate: candidate) {
+            throw deepseekError
+        }
+
         if manifest.id == "moonshot",
            let moonshotFallback = try? await extractMoonshotAccountValues(
             initialRoot: root,
@@ -63,6 +68,15 @@ enum RelayResponseInterpreter {
             planType: supplementalPlanType ?? extractXiaomimimoPlanType(from: root)
            ) {
             return mimoFallback
+        }
+
+        if manifest.id == "minimax",
+           request.path.contains("/coding_plan/remains") {
+            return try extractMiniMaxCodingPlanValues(
+                root: root,
+                request: request,
+                candidate: candidate
+            )
         }
 
         guard var remaining = RelayJSONExpressionEvaluator.numericValue(for: request.remainingExpression, in: root) else {
@@ -133,6 +147,79 @@ enum RelayResponseInterpreter {
             note: note,
             rawMeta: extraMeta
         )
+    }
+
+    static func extractMiniMaxCodingPlanValues(
+        root: Any,
+        request: ResolvedRelayRequest,
+        candidate: RelayCredentialCandidate
+    ) throws -> AccountChannelResult {
+        guard let body = root as? [String: Any] else {
+            throw ProviderError.invalidResponse("MiniMax coding plan response is not an object")
+        }
+        if let baseResponse = body["base_resp"] as? [String: Any],
+           let statusCode = OfficialValueParser.int(baseResponse["status_code"]),
+           statusCode != 0 {
+            let message = OfficialValueParser.string(baseResponse["status_msg"]) ?? "code \(statusCode)"
+            throw ProviderError.invalidResponse("MiniMax coding plan \(message)")
+        }
+        let remains = (body["model_remains"] as? [Any])?.compactMap { $0 as? [String: Any] } ?? []
+        guard let general = remains.first(where: {
+            OfficialValueParser.string($0["model_name"])?.lowercased() == "general"
+        }) else {
+            throw ProviderError.invalidResponse("missing MiniMax general coding plan quota")
+        }
+
+        var windows: [UsageQuotaWindow] = []
+        if let remaining = OfficialValueParser.double(general["current_interval_remaining_percent"]) {
+            windows.append(
+                UsageQuotaWindow(
+                    id: "minimax-coding-plan-5h",
+                    title: "5h",
+                    remainingPercent: min(100, max(0, remaining)),
+                    usedPercent: min(100, max(0, 100 - remaining)),
+                    resetAt: normalizedEpochDate(general["end_time"]),
+                    kind: .session
+                )
+            )
+        }
+        if OfficialValueParser.int(general["current_weekly_status"]) == 1,
+           let remaining = OfficialValueParser.double(general["current_weekly_remaining_percent"]) {
+            windows.append(
+                UsageQuotaWindow(
+                    id: "minimax-coding-plan-weekly",
+                    title: "Weekly",
+                    remainingPercent: min(100, max(0, remaining)),
+                    usedPercent: min(100, max(0, 100 - remaining)),
+                    resetAt: normalizedEpochDate(general["weekly_end_time"]),
+                    kind: .weekly
+                )
+            )
+        }
+        guard !windows.isEmpty else {
+            throw ProviderError.invalidResponse("missing MiniMax coding plan windows")
+        }
+        let remaining = windows.map(\.remainingPercent).min() ?? 0
+        return AccountChannelResult(
+            remaining: remaining,
+            used: 100 - remaining,
+            limit: 100,
+            unit: "%",
+            accountLabel: nil,
+            planType: "Coding Plan",
+            quotaWindows: windows,
+            note: windows.map { "\($0.title) \(Int($0.remainingPercent.rounded()))%" }.joined(separator: " | "),
+            rawMeta: [
+                "endpointPath": request.path,
+                "requestMethod": request.method,
+                "authSource": candidate.source
+            ]
+        )
+    }
+
+    private static func normalizedEpochDate(_ value: Any?) -> Date? {
+        guard let raw = OfficialValueParser.double(value), raw > 0 else { return nil }
+        return Date(timeIntervalSince1970: raw > 1_000_000_000_000 ? raw / 1000 : raw)
     }
 
     static func extractXiaomimimoTokenPlanValues(
@@ -237,6 +324,26 @@ enum RelayResponseInterpreter {
             note: noteParts.joined(separator: " | "),
             rawMeta: rawMeta
         )
+    }
+
+    // DeepSeek's platform session endpoint reports auth failures as HTTP 200 with a
+    // business code instead of an HTTP error. API keys (sk-...) are always rejected
+    // there; surface that as invalidResponse so the executor falls through to the
+    // api.deepseek.com balance probe, and treat real session tokens as expired so
+    // browser recovery can re-import a fresh login.
+    private static func deepseekBusinessError(root: Any, candidate: RelayCredentialCandidate) -> ProviderError? {
+        guard let dict = root as? [String: Any] else { return nil }
+        let topLevelCode = (dict["code"] as? NSNumber)?.intValue
+        let nestedCode = (dict["data"] as? [String: Any]).flatMap { ($0["code"] as? NSNumber)?.intValue }
+        guard let code = topLevelCode ?? nestedCode, code == 40002 || code == 40003 else {
+            return nil
+        }
+        let rawMessage = (dict["msg"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let message = rawMessage.isEmpty ? "code \(code)" : rawMessage
+        if candidate.persistedCredential?.hasPrefix("sk-") == true {
+            return .invalidResponse("deepseek session endpoint rejected API key (\(message))")
+        }
+        return .unauthorizedDetail("DeepSeek login missing or expired (\(message))")
     }
 
     static func extractXiaomimimoPlanType(from root: Any) -> String? {

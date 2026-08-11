@@ -6,6 +6,7 @@ enum SecurityCredentialReader {
     private struct CredentialCacheKey: Hashable {
         let service: String
         let account: String?
+        let interactive: Bool
     }
 
     private enum CachedCredentialValue {
@@ -23,10 +24,19 @@ enum SecurityCredentialReader {
     private static let successCacheTTL: TimeInterval = 120
     private static let failureBackoffInterval: TimeInterval = 8
 
-    static func readGenericPassword(service: String, account: String? = nil, bypassCache: Bool = false) -> String? {
+    static func readGenericPassword(
+        service: String,
+        account: String? = nil,
+        bypassCache: Bool = false,
+        interactive: Bool = false
+    ) -> String? {
         let normalizedService = normalize(service)
         let normalizedAccount = normalizeOptional(account)
-        let cacheKey = CredentialCacheKey(service: normalizedService, account: normalizedAccount)
+        let cacheKey = CredentialCacheKey(
+            service: normalizedService,
+            account: normalizedAccount,
+            interactive: interactive
+        )
         let now = Date()
 
         if !bypassCache, let cached = cachedCredential(for: cacheKey, now: now) {
@@ -43,7 +53,7 @@ enum SecurityCredentialReader {
             kSecAttrService as String: normalizedService,
             kSecMatchLimit as String: kSecMatchLimitOne,
             kSecReturnData as String: true,
-            kSecUseAuthenticationContext as String: nonInteractiveContext(),
+            kSecUseAuthenticationContext as String: authenticationContext(interactive: interactive),
         ]
         if let normalizedAccount {
             query[kSecAttrAccount as String] = normalizedAccount
@@ -84,8 +94,10 @@ enum SecurityCredentialReader {
         let status = SecItemAdd(addAttributes as CFDictionary, nil)
         if status == errSecSuccess {
             let now = Date()
-            cache(.value(text), for: CredentialCacheKey(service: normalizedService, account: normalizedAccount), now: now)
-            cache(.value(text), for: CredentialCacheKey(service: normalizedService, account: nil), now: now)
+            cache(.value(text), for: CredentialCacheKey(service: normalizedService, account: normalizedAccount, interactive: false), now: now)
+            cache(.value(text), for: CredentialCacheKey(service: normalizedService, account: normalizedAccount, interactive: true), now: now)
+            cache(.value(text), for: CredentialCacheKey(service: normalizedService, account: nil, interactive: false), now: now)
+            cache(.value(text), for: CredentialCacheKey(service: normalizedService, account: nil, interactive: true), now: now)
             return true
         }
 
@@ -101,8 +113,10 @@ enum SecurityCredentialReader {
         }
         if output.status == 0 {
             let now = Date()
-            cache(.value(text), for: CredentialCacheKey(service: normalizedService, account: normalizedAccount), now: now)
-            cache(.value(text), for: CredentialCacheKey(service: normalizedService, account: nil), now: now)
+            cache(.value(text), for: CredentialCacheKey(service: normalizedService, account: normalizedAccount, interactive: false), now: now)
+            cache(.value(text), for: CredentialCacheKey(service: normalizedService, account: normalizedAccount, interactive: true), now: now)
+            cache(.value(text), for: CredentialCacheKey(service: normalizedService, account: nil, interactive: false), now: now)
+            cache(.value(text), for: CredentialCacheKey(service: normalizedService, account: nil, interactive: true), now: now)
             return true
         }
         return false
@@ -152,9 +166,9 @@ enum SecurityCredentialReader {
         return trimmed.isEmpty ? nil : trimmed
     }
 
-    private static func nonInteractiveContext() -> LAContext {
+    private static func authenticationContext(interactive: Bool) -> LAContext {
         let context = LAContext()
-        context.interactionNotAllowed = true
+        context.interactionNotAllowed = !interactive
         return context
     }
 }

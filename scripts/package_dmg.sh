@@ -130,6 +130,7 @@ sign_mode() {
 
 resolve_binary_path() {
   local candidates=(
+    "$ROOT_DIR/.build/out/Products/Release/$EXECUTABLE_NAME"
     "$ROOT_DIR/.build/apple/Products/Release/$EXECUTABLE_NAME"
     "$ROOT_DIR/.build/arm64-apple-macosx/release/$EXECUTABLE_NAME"
     "$ROOT_DIR/.build/x86_64-apple-macosx/release/$EXECUTABLE_NAME"

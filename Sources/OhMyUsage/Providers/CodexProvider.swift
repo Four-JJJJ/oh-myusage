@@ -85,9 +85,11 @@ final class CodexProvider: UsageProvider, @unchecked Sendable {
 
     private func loadFromAPI(includeWebOverlay: Bool, forceRefresh: Bool) async throws -> UsageSnapshot {
         var credentials = try loadCredentials()
+        var didRefreshBeforeRequest = false
         if needsRefresh(lastRefresh: credentials.lastRefresh) {
             do {
                 credentials = try await refresh(credentials: credentials)
+                didRefreshBeforeRequest = true
             } catch let error as ProviderError {
                 if case .unauthorized = error {
                     throw error
@@ -97,10 +99,23 @@ final class CodexProvider: UsageProvider, @unchecked Sendable {
             }
         }
 
-        let (data, response) = try await requestUsage(
-            authorization: .bearer(credentials.accessToken),
-            accountId: credentials.accountId
-        )
+        let data: Data
+        let response: HTTPURLResponse
+        do {
+            (data, response) = try await requestUsage(
+                authorization: .bearer(credentials.accessToken),
+                accountId: credentials.accountId
+            )
+        } catch let error as ProviderError {
+            guard case .unauthorized = error, !didRefreshBeforeRequest else {
+                throw error
+            }
+            credentials = try await refresh(credentials: credentials)
+            (data, response) = try await requestUsage(
+                authorization: .bearer(credentials.accessToken),
+                accountId: credentials.accountId
+            )
+        }
         var snapshot = try Self.parseUsageSnapshot(
             data: data,
             response: response,

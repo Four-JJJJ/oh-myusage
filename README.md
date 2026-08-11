@@ -9,19 +9,19 @@ oh-myusage 把官方订阅额度、模型使用窗口、第三方中转余额、
 
 [下载最新版本](https://github.com/Four-JJJJ/oh-myusage/releases/latest) · [安装说明](docs/DOWNLOAD.md) · [支持的服务](docs/PROVIDERS.md) · [扩展指南](docs/EXTENDING.md) · [发布清单](docs/RELEASE_CHECKLIST.md) · [English](docs/README.en.md)
 
-## V2.2.0 更新
+## V2.2.4 更新
 
-V2.2.0 的重点是性能优化：减少重复刷新、降低钥匙串读取次数、加速缓存数据读取，并让菜单栏常驻时更省资源。
+V2.2.4 的重点是提高官方模型余额与额度查询的稳定性，并修复多余额菜单栏展示。
 
 本次更新集中在五件事：
 
 | 方向 | 改进 |
 | --- | --- |
-| 刷新调度 | 收敛使用统计与额度刷新路径，减少不必要的重复扫描和重复请求 |
-| 钥匙串读取 | 增加凭证读取快照与复用逻辑，降低同一轮刷新内反复访问钥匙串的次数 |
-| 菜单栏渲染 | 缓存状态栏展示快照，只有内容变化时才更新菜单栏，减少重绘和常驻耗电 |
-| 缓存读取 | 优化本地统计快照、Provider 映射和展示模型缓存，让设置页与菜单栏读取更快 |
-| 架构边界 | 继续拆分刷新、缓存、展示和 Provider 配置边界，降低后续优化和测试成本 |
+| 官方余额 | DeepSeek 支持使用已保存的 API key 查询账户余额，并区分余额与订阅限额展示 |
+| 凭证恢复 | 优化 Kimi、MiniMax、Xiaomi MiMo 等服务的浏览器凭证、Cookie 合并和失效凭证回退 |
+| 额度解析 | 增强 Kimi Coding、MiniMax Coding Plan、Moonshot 及多种官方余额响应结构的解析兼容性 |
+| 账号刷新 | Codex 鉴权失败时自动刷新一次凭证，并改进账号切换后的状态同步 |
+| 菜单栏 | 恢复同时展示多个余额，金额统一保留两位小数并支持千分位 |
 
 ## 适合谁
 
@@ -94,7 +94,7 @@ oh-myusage 的目标是让这些信息变得可扫读、可诊断、可维护：
 | 类型 | 服务 |
 | --- | --- |
 | 官方 / 本地桌面端 | Codex、Claude、Gemini、GitHub Copilot、Cursor、Windsurf |
-| 官方 / API 或网页来源 | Kimi、Amp、Z.ai、OpenCode Go |
+| 官方 / API 或网页来源 | Kimi / Moonshot、DeepSeek、MiniMax、Xiaomi MiMo、Amp、Z.ai、OpenCode Go |
 | 官方 / 本地数据来源 | JetBrains AI、Kiro |
 
 ### 第三方中转模板

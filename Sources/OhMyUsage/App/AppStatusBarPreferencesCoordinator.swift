@@ -41,10 +41,15 @@ struct AppStatusBarPreferencesCoordinator {
     ) -> StatusBarPreferencesMutationOutcome {
         guard config.statusBarMultiUsageEnabled != enabled else { return .none }
         config.statusBarMultiUsageEnabled = enabled
-        if enabled,
-           config.statusBarMultiProviderIDs.isEmpty,
-           let selected = config.statusBarProviderID {
-            config.statusBarMultiProviderIDs = [selected]
+        if enabled {
+            let visibleProviderIDs = config.providers
+                .filter { $0.enabled && $0.showsInMenuBar }
+                .map(\.id)
+            if visibleProviderIDs.isEmpty, let selected = config.statusBarProviderID {
+                config.statusBarMultiProviderIDs = [selected]
+            } else {
+                config.statusBarMultiProviderIDs = visibleProviderIDs
+            }
         }
         normalizeSelections(
             config: &config,

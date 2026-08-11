@@ -59,6 +59,42 @@ final class MenuDashboardStateBuilderTests: XCTestCase {
         XCTAssertEqual(amountCard.balanceLabel, "Balance")
         XCTAssertNil(amountCard.secondaryText)
     }
+
+    func testOfficialDeepSeekRendersCurrencyBalanceInsteadOfQuotaPlaceholders() {
+        var deepSeek = ProviderDescriptor.defaultOfficialDeepSeek()
+        deepSeek.enabled = true
+        let snapshot = UsageSnapshot(
+            source: deepSeek.id,
+            status: .ok,
+            remaining: 88.5,
+            used: nil,
+            limit: nil,
+            unit: "CNY",
+            updatedAt: Date(timeIntervalSince1970: 100),
+            note: "ok",
+            sourceLabel: deepSeek.name
+        )
+
+        let state = MenuDashboardStateBuilder.build(
+            config: AppConfig(language: .en, providers: [deepSeek]),
+            snapshots: [deepSeek.id: snapshot],
+            errors: [:],
+            lastUpdatedAt: snapshot.updatedAt,
+            updateState: .init(kind: .idle, statusText: nil, tone: .neutral, retryTitle: nil, isRetryEnabled: false),
+            now: Date(timeIntervalSince1970: 160),
+            shouldShowPermissionGuide: false,
+            codexSlots: [],
+            claudeSlots: [],
+            localization: .englishTest
+        )
+
+        guard case let .amount(card) = state.cards.first else {
+            return XCTFail("Expected DeepSeek to render as a balance amount card")
+        }
+        XCTAssertEqual(card.title, "DeepSeek")
+        XCTAssertEqual(card.amountText, "88.50")
+        XCTAssertEqual(card.balanceLabel, "Balance")
+    }
 }
 
 private extension MenuViewLocalization {

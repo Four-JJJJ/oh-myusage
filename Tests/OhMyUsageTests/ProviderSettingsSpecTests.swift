@@ -27,6 +27,13 @@ final class ProviderSettingsSpecTests: XCTestCase {
         XCTAssertEqual(spec.credentialFields.first?.storageTarget, .providerToken)
     }
 
+    func testKimiSpecAcceptsCodingPlanAPIKey() {
+        let spec = ProviderSettingsSpec.resolve(for: ProviderDescriptor.defaultOfficialKimi())
+
+        XCTAssertEqual(spec.credentialFields.map(\.kind), [.bearerToken])
+        XCTAssertEqual(spec.credentialFields.first?.storageTarget, .providerToken)
+    }
+
     func testClaudeSpecUsesManualCookieCredential() {
         let spec = ProviderSettingsSpec.resolve(for: ProviderDescriptor.defaultOfficialClaude())
 

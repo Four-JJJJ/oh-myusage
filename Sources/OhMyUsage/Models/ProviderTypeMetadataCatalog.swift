@@ -79,7 +79,8 @@ enum ProviderTypeMetadataCatalog {
             officialDisplayName: "Kimi Coding",
             iconName: "menu_kimi_icon",
             fallbackSystemIcon: "moon.stars.fill",
-            supportsLocalUsageHistory: true
+            supportsLocalUsageHistory: true,
+            supportsOfficialBearerCredentialInput: true
         ),
         .trae: ProviderTypeMetadata(displayName: "Trae SOLO", iconName: "menu_relay_icon", fallbackSystemIcon: "link"),
         .openrouterCredits: ProviderTypeMetadata(

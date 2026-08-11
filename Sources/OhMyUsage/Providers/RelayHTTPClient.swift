@@ -21,11 +21,17 @@ struct RelayHTTPClient {
             }
         }
 
-        let (data, response) = try await session.data(for: req)
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await session.data(for: req)
+        } catch let error as URLError {
+            throw ProviderError.timeout(error.localizedDescription)
+        }
         guard let http = response as? HTTPURLResponse else {
             throw ProviderError.invalidResponse("non-http response")
         }
-        if http.statusCode == 401 {
+        if http.statusCode == 401 || http.statusCode == 403 {
             if let message = extractErrorMessage(from: data), !message.isEmpty {
                 throw ProviderError.unauthorizedDetail(message)
             }
@@ -36,6 +42,9 @@ struct RelayHTTPClient {
         }
         if http.statusCode == 429 {
             throw ProviderError.rateLimited
+        }
+        if http.statusCode == 408 || (500...599).contains(http.statusCode) {
+            throw ProviderError.timeout("http \(http.statusCode)")
         }
         guard (200...299).contains(http.statusCode) else {
             throw ProviderError.invalidResponse("http \(http.statusCode)")
@@ -91,6 +100,10 @@ struct RelayHTTPClient {
         }
         if let error = root["error"] as? String {
             return error.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        if let errorObject = root["error"] as? [String: Any],
+           let message = errorObject["message"] as? String {
+            return message.trimmingCharacters(in: .whitespacesAndNewlines)
         }
         if let details = root["details"] as? String {
             return details.trimmingCharacters(in: .whitespacesAndNewlines)

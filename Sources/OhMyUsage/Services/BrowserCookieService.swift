@@ -46,7 +46,12 @@ final class BrowserCookieService: BrowserCookieDetecting {
                 includeSafariBinaryCookies: true,
                 bypassCache: refreshPaths
             ) {
-                if let header = cookieReader.cookieHeader(fromDatabaseAt: path, browser: browser, hostContains: hostContains),
+                if let header = cookieReader.cookieHeader(
+                    fromDatabaseAt: path,
+                    browser: browser,
+                    hostContains: hostContains,
+                    accessIntent: accessIntent
+                ),
                    !header.isEmpty {
                     return BrowserCookieHeader(header: header, source: browserLabel(browser))
                 }
@@ -85,7 +90,13 @@ final class BrowserCookieService: BrowserCookieDetecting {
                 includeSafariBinaryCookies: true,
                 bypassCache: refreshPaths
             ) {
-                if let value = cookieReader.namedCookieValue(fromDatabaseAt: path, browser: browser, cookieName: name, hostContains: hostContains),
+                if let value = cookieReader.namedCookieValue(
+                    fromDatabaseAt: path,
+                    browser: browser,
+                    cookieName: name,
+                    hostContains: hostContains,
+                    accessIntent: accessIntent
+                ),
                    !value.isEmpty {
                     return BrowserCookieHeader(header: "\(name)=\(value)", source: browserLabel(browser))
                 }

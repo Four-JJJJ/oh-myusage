@@ -331,6 +331,344 @@ final class KimiProviderTests: XCTestCase {
         XCTAssertTrue(KimiJWT.isExpired("invalid.jwt", now: now))
     }
 
+    func testPreferredAccessTokenSkipsRefreshTokens() throws {
+        let now = Date().timeIntervalSince1970
+        let refresh = jwt(exp: Int(now) + 90 * 24 * 3600, typ: "refresh")
+        let access = jwt(exp: Int(now) + 3600, typ: "access")
+        let candidates = [
+            BrowserDetectedCredential(value: refresh, source: "localStorage"),
+            BrowserDetectedCredential(value: access, source: "localStorage"),
+        ]
+
+        XCTAssertEqual(
+            KimiBrowserCookieService.preferredAccessToken(in: candidates)?.value,
+            access,
+            "Expiry-sorted candidates put the long-lived refresh token first; the access token must win."
+        )
+    }
+
+    func testPreferredAccessTokenFallsBackToUnknownShape() throws {
+        let now = Date().timeIntervalSince1970
+        let refresh = jwt(exp: Int(now) + 90 * 24 * 3600, typ: "refresh")
+        let unknown = jwt(exp: Int(now) + 3600)
+        let candidates = [
+            BrowserDetectedCredential(value: refresh, source: "localStorage"),
+            BrowserDetectedCredential(value: unknown, source: "localStorage"),
+        ]
+
+        XCTAssertEqual(KimiBrowserCookieService.preferredAccessToken(in: candidates)?.value, unknown)
+    }
+
+    func testForceRefreshExchangesRefreshTokenWhenAccessTokenMissing() async throws {
+        let service = "OhMyUsageTests-\(UUID().uuidString)"
+        let now = Date().timeIntervalSince1970
+        let detectedRefreshToken = jwt(exp: Int(now) + 90 * 24 * 3600, typ: "refresh")
+        let newAccessToken = jwt(exp: Int(now) + 3600, typ: "access")
+        let rotatedRefreshToken = jwt(exp: Int(now) + 90 * 24 * 3600 + 60, typ: "refresh")
+        let keychainURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("OhMyUsageTests", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+            .appendingPathComponent("keychain.json")
+        defer { try? FileManager.default.removeItem(at: keychainURL.deletingLastPathComponent()) }
+        let keychain = KeychainService(storageURL: keychainURL)
+
+        let usageJSON = """
+        {
+          "usages": [
+            {
+              "scope": "FEATURE_CODING",
+              "detail": { "limit": 100, "used": 25, "remaining": 75 },
+              "limits": [
+                {
+                  "window": { "duration": 300, "timeUnit": "TIME_UNIT_MINUTE" },
+                  "detail": { "limit": 10, "remaining": 8 }
+                }
+              ]
+            }
+          ]
+        }
+        """
+
+        var refreshCallCount = 0
+        MockURLProtocol.requestHandler = { request in
+            let url = request.url!
+            if url.absoluteString.contains("AuthService/RefreshToken") {
+                refreshCallCount += 1
+                let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
+                let body = """
+                {"accessToken": "\(newAccessToken)", "refreshToken": "\(rotatedRefreshToken)"}
+                """
+                return (response, Data(body.utf8))
+            }
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer \(newAccessToken)")
+            let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            return (response, Data(usageJSON.utf8))
+        }
+        defer { MockURLProtocol.requestHandler = nil }
+
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [MockURLProtocol.self]
+        let session = URLSession(configuration: config)
+
+        var descriptor = makeDescriptor()
+        descriptor.auth.keychainService = service
+        descriptor.kimiConfig?.authMode = .auto
+        descriptor.kimiConfig?.autoCookieEnabled = true
+
+        let provider = KimiProvider(
+            descriptor: descriptor,
+            session: session,
+            keychain: keychain,
+            browserCookieService: KimiBrowserCookieService(),
+            browserTokenResolverOverride: { _, _ in nil },
+            browserRefreshTokenResolverOverride: { _, _ in
+                KimiDetectedToken(token: detectedRefreshToken, source: "auto:test")
+            }
+        )
+
+        let snapshot = try await provider.fetch(forceRefresh: true)
+        XCTAssertEqual(refreshCallCount, 1)
+        XCTAssertEqual(snapshot.rawMeta["kimi.authSource"], "auto:test+refresh")
+        XCTAssertEqual(snapshot.rawMeta["kimi.weekly.remaining"], "75.00")
+        // The rotated refresh token must replace the consumed one.
+        XCTAssertEqual(
+            keychain.readToken(service: service, account: "kimi.com/kimi-refresh-auto"),
+            rotatedRefreshToken
+        )
+        // And the fresh access token is cached for background polls.
+        XCTAssertEqual(
+            keychain.readToken(service: service, account: "kimi.com/kimi-auth-auto"),
+            newAccessToken
+        )
+    }
+
+    func testBackgroundFetchRenewsExpiredAccessTokenWithCachedRefreshToken() async throws {
+        let service = "OhMyUsageTests-\(UUID().uuidString)"
+        let now = Date().timeIntervalSince1970
+        let expiredAccess = jwt(exp: Int(now) - 60, typ: "access")
+        let cachedRefresh = jwt(exp: Int(now) + 90 * 24 * 3600, typ: "refresh")
+        let newAccessToken = jwt(exp: Int(now) + 3600, typ: "access")
+        let keychainURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("OhMyUsageTests", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+            .appendingPathComponent("keychain.json")
+        defer { try? FileManager.default.removeItem(at: keychainURL.deletingLastPathComponent()) }
+        let keychain = KeychainService(storageURL: keychainURL)
+        XCTAssertTrue(keychain.saveToken(expiredAccess, service: service, account: "kimi.com/kimi-auth-auto"))
+        XCTAssertTrue(keychain.saveToken(cachedRefresh, service: service, account: "kimi.com/kimi-refresh-auto"))
+
+        let usageJSON = """
+        {
+          "usages": [
+            {
+              "scope": "FEATURE_CODING",
+              "detail": { "limit": 100, "used": 25, "remaining": 75 },
+              "limits": [
+                {
+                  "window": { "duration": 300, "timeUnit": "TIME_UNIT_MINUTE" },
+                  "detail": { "limit": 10, "remaining": 8 }
+                }
+              ]
+            }
+          ]
+        }
+        """
+
+        var refreshCallCount = 0
+        MockURLProtocol.requestHandler = { request in
+            let url = request.url!
+            if url.absoluteString.contains("AuthService/RefreshToken") {
+                refreshCallCount += 1
+                let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
+                let body = """
+                {"accessToken": "\(newAccessToken)", "refreshToken": "\(cachedRefresh)"}
+                """
+                return (response, Data(body.utf8))
+            }
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer \(newAccessToken)")
+            let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            return (response, Data(usageJSON.utf8))
+        }
+        defer { MockURLProtocol.requestHandler = nil }
+
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [MockURLProtocol.self]
+        let session = URLSession(configuration: config)
+
+        var descriptor = makeDescriptor()
+        descriptor.auth.keychainService = service
+        descriptor.kimiConfig?.authMode = .auto
+        descriptor.kimiConfig?.autoCookieEnabled = true
+
+        var browserLookupCount = 0
+        let provider = KimiProvider(
+            descriptor: descriptor,
+            session: session,
+            keychain: keychain,
+            browserCookieService: KimiBrowserCookieService(),
+            browserTokenResolverOverride: { _, _ in
+                browserLookupCount += 1
+                return nil
+            },
+            browserRefreshTokenResolverOverride: { _, _ in
+                browserLookupCount += 1
+                return nil
+            }
+        )
+
+        let snapshot = try await provider.fetch(forceRefresh: false)
+        XCTAssertEqual(refreshCallCount, 1)
+        XCTAssertEqual(browserLookupCount, 0, "Background renewal must not scan browser storage")
+        XCTAssertEqual(snapshot.rawMeta["kimi.authSource"], "auto:refresh-cache+refresh")
+        XCTAssertEqual(snapshot.rawMeta["kimi.weekly.remaining"], "75.00")
+    }
+
+    func testStaleCachedRefreshTokenIsMigratedAndExchanged() async throws {
+        // Versions that cached the long-lived refresh token in the access slot
+        // must self-heal: move it to the refresh slot and exchange it.
+        let service = "OhMyUsageTests-\(UUID().uuidString)"
+        let now = Date().timeIntervalSince1970
+        let staleRefresh = jwt(exp: Int(now) + 90 * 24 * 3600, typ: "refresh")
+        let newAccessToken = jwt(exp: Int(now) + 3600, typ: "access")
+        let rotatedRefreshToken = jwt(exp: Int(now) + 90 * 24 * 3600 + 60, typ: "refresh")
+        let keychainURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("OhMyUsageTests", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+            .appendingPathComponent("keychain.json")
+        defer { try? FileManager.default.removeItem(at: keychainURL.deletingLastPathComponent()) }
+        let keychain = KeychainService(storageURL: keychainURL)
+        XCTAssertTrue(keychain.saveToken(staleRefresh, service: service, account: "kimi.com/kimi-auth-auto"))
+
+        let usageJSON = """
+        {
+          "usages": [
+            {
+              "scope": "FEATURE_CODING",
+              "detail": { "limit": 100, "used": 25, "remaining": 75 },
+              "limits": [
+                {
+                  "window": { "duration": 300, "timeUnit": "TIME_UNIT_MINUTE" },
+                  "detail": { "limit": 10, "remaining": 8 }
+                }
+              ]
+            }
+          ]
+        }
+        """
+
+        var refreshCallCount = 0
+        MockURLProtocol.requestHandler = { request in
+            let url = request.url!
+            if url.absoluteString.contains("AuthService/RefreshToken") {
+                refreshCallCount += 1
+                let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
+                let body = """
+                {"accessToken": "\(newAccessToken)", "refreshToken": "\(rotatedRefreshToken)"}
+                """
+                return (response, Data(body.utf8))
+            }
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer \(newAccessToken)")
+            let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            return (response, Data(usageJSON.utf8))
+        }
+        defer { MockURLProtocol.requestHandler = nil }
+
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [MockURLProtocol.self]
+
+        var descriptor = makeDescriptor()
+        descriptor.auth.keychainService = service
+        descriptor.kimiConfig?.authMode = .auto
+        descriptor.kimiConfig?.autoCookieEnabled = true
+
+        let provider = KimiProvider(
+            descriptor: descriptor,
+            session: URLSession(configuration: config),
+            keychain: keychain,
+            browserCookieService: KimiBrowserCookieService(),
+            browserTokenResolverOverride: { _, _ in nil },
+            browserRefreshTokenResolverOverride: { _, _ in nil }
+        )
+
+        let snapshot = try await provider.fetch(forceRefresh: false)
+        XCTAssertEqual(refreshCallCount, 1)
+        XCTAssertEqual(snapshot.rawMeta["kimi.weekly.remaining"], "75.00")
+        XCTAssertEqual(
+            keychain.readToken(service: service, account: "kimi.com/kimi-auth-auto"),
+            newAccessToken,
+            "The stale refresh token must be replaced by the fresh access token"
+        )
+        XCTAssertEqual(
+            keychain.readToken(service: service, account: "kimi.com/kimi-refresh-auto"),
+            rotatedRefreshToken
+        )
+    }
+
+    func testManualRefreshTokenIsExchangedForAccessToken() async throws {
+        let service = "OhMyUsageTests-\(UUID().uuidString)"
+        let now = Date().timeIntervalSince1970
+        let manualRefresh = jwt(exp: Int(now) + 90 * 24 * 3600, typ: "refresh")
+        let newAccessToken = jwt(exp: Int(now) + 3600, typ: "access")
+        let keychainURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("OhMyUsageTests", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+            .appendingPathComponent("keychain.json")
+        defer { try? FileManager.default.removeItem(at: keychainURL.deletingLastPathComponent()) }
+        let keychain = KeychainService(storageURL: keychainURL)
+        XCTAssertTrue(keychain.saveToken(manualRefresh, service: service, account: "kimi.com/kimi-auth-manual"))
+
+        let usageJSON = """
+        {
+          "usages": [
+            {
+              "scope": "FEATURE_CODING",
+              "detail": { "limit": 100, "used": 25, "remaining": 75 },
+              "limits": [
+                {
+                  "window": { "duration": 300, "timeUnit": "TIME_UNIT_MINUTE" },
+                  "detail": { "limit": 10, "remaining": 8 }
+                }
+              ]
+            }
+          ]
+        }
+        """
+
+        MockURLProtocol.requestHandler = { request in
+            let url = request.url!
+            if url.absoluteString.contains("AuthService/RefreshToken") {
+                let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
+                let body = """
+                {"accessToken": "\(newAccessToken)", "refreshToken": "\(manualRefresh)"}
+                """
+                return (response, Data(body.utf8))
+            }
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer \(newAccessToken)")
+            let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            return (response, Data(usageJSON.utf8))
+        }
+        defer { MockURLProtocol.requestHandler = nil }
+
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [MockURLProtocol.self]
+
+        var descriptor = makeDescriptor()
+        descriptor.auth.keychainService = service
+        descriptor.kimiConfig?.authMode = .manual
+
+        let provider = KimiProvider(
+            descriptor: descriptor,
+            session: URLSession(configuration: config),
+            keychain: keychain,
+            browserCookieService: KimiBrowserCookieService()
+        )
+
+        let snapshot = try await provider.fetch(forceRefresh: false)
+        XCTAssertEqual(snapshot.rawMeta["kimi.authSource"], "manual+refresh")
+        XCTAssertEqual(snapshot.rawMeta["kimi.weekly.remaining"], "75.00")
+    }
+
+
     private func makeDescriptor(threshold: Double = 10) -> ProviderDescriptor {
         ProviderDescriptor(
             id: "kimi-coding",
@@ -350,9 +688,13 @@ final class KimiProviderTests: XCTestCase {
         )
     }
 
-    private func jwt(exp: Int) -> String {
+    private func jwt(exp: Int, typ: String? = nil) -> String {
         let header = #"{"alg":"HS256","typ":"JWT"}"#
-        let payload = #"{"exp":\#(exp)}"#
+        var payload = #"{"exp":\#(exp)"#
+        if let typ {
+            payload += #", "typ":"\#(typ)""#
+        }
+        payload += "}"
         return "\(b64url(header)).\(b64url(payload)).signature"
     }
 

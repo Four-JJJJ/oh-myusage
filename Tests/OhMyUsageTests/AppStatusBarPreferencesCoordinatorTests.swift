@@ -2,7 +2,7 @@ import XCTest
 @testable import OhMyUsage
 
 final class AppStatusBarPreferencesCoordinatorTests: XCTestCase {
-    func testSetStatusBarMultiUsageEnabledSeedsSelectedProviderAndRequestsRefresh() {
+    func testSetStatusBarMultiUsageEnabledRestoresAllVisibleProvidersAndRequestsRefresh() {
         var config = AppConfig(
             statusBarProviderID: "alpha",
             statusBarMultiUsageEnabled: false,
@@ -20,7 +20,7 @@ final class AppStatusBarPreferencesCoordinatorTests: XCTestCase {
         )
 
         XCTAssertTrue(config.statusBarMultiUsageEnabled)
-        XCTAssertEqual(config.statusBarMultiProviderIDs, ["alpha"])
+        XCTAssertEqual(config.statusBarMultiProviderIDs, ["alpha", "beta"])
         XCTAssertEqual(
             outcome,
             StatusBarPreferencesMutationOutcome(

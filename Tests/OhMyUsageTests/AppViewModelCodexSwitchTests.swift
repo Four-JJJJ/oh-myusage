@@ -34,6 +34,172 @@ final class AppViewModelCodexSwitchTests: XCTestCase {
         try await assertSwitchPersistsAndWarnsForManualRelaunch(restartResult: .relaunchFailed)
     }
 
+    func testSwitchCodexProfileStoresRefreshedSystemAuthAfterVerifiedFetch() async throws {
+        let refreshedAuthJSON = Self.sampleAuthJSON(
+            accountID: "acc-b",
+            email: "b@example.com",
+            accessToken: "access-token-refreshed",
+            refreshToken: "refresh-token-refreshed"
+        )
+        let fixture = try makeFixture(
+            restartResult: .relaunched,
+            providerFactory: { root in
+                MutatingStubProviderFactory(
+                    snapshot: Self.makeSnapshot(accountID: "acc-b", email: "b@example.com"),
+                    onFetch: {
+                        try refreshedAuthJSON.write(
+                            to: root.appendingPathComponent("auth.json"),
+                            atomically: true,
+                            encoding: .utf8
+                        )
+                    }
+                )
+            }
+        )
+        let viewModel = fixture.viewModel
+        let originalAuthJSON = Self.sampleAuthJSON(
+            accountID: "acc-b",
+            email: "b@example.com",
+            accessToken: "access-token-original",
+            refreshToken: "refresh-token-original"
+        )
+
+        _ = viewModel.saveCodexProfile(
+            slotID: .b,
+            displayName: "Codex B",
+            note: nil,
+            authJSON: originalAuthJSON
+        )
+
+        await viewModel.switchCodexProfile(slotID: .b)
+
+        let stored = try XCTUnwrap(fixture.profileStore.profile(slotID: .b))
+        XCTAssertTrue(stored.authJSON.contains("access-token-refreshed"))
+        XCTAssertTrue(stored.authJSON.contains("refresh-token-refreshed"))
+    }
+
+    func testSwitchCodexProfileRefreshesTargetAuthBeforeApplyingToDesktop() async throws {
+        var usageRequestCount = 0
+        CodexSwitchMockURLProtocol.requestHandler = { request in
+            let url = request.url?.absoluteString ?? ""
+            if url == "https://chatgpt.com/backend-api/wham/usage" {
+                usageRequestCount += 1
+                if usageRequestCount == 1 {
+                    return (
+                        HTTPURLResponse(url: request.url!, statusCode: 401, httpVersion: nil, headerFields: nil)!,
+                        Data()
+                    )
+                }
+                XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer access-token-refreshed")
+                let body: [String: Any] = [
+                    "plan_type": "team",
+                    "rate_limit": [
+                        "primary_window": ["used_percent": 1, "reset_at": 1_760_000_000],
+                        "secondary_window": ["used_percent": 0, "reset_at": 1_760_500_000]
+                    ]
+                ]
+                return (
+                    HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!,
+                    try JSONSerialization.data(withJSONObject: body)
+                )
+            }
+            if url == "https://auth.openai.com/oauth/token" {
+                let body: [String: Any] = [
+                    "access_token": "access-token-refreshed",
+                    "refresh_token": "refresh-token-refreshed",
+                    "id_token": Self.makeIDToken(email: "b@example.com")
+                ]
+                return (
+                    HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!,
+                    try JSONSerialization.data(withJSONObject: body)
+                )
+            }
+            throw URLError(.badURL)
+        }
+        defer { CodexSwitchMockURLProtocol.requestHandler = nil }
+
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [CodexSwitchMockURLProtocol.self]
+        let keychainWrites = LockedStringLog()
+        let fixture = try makeFixture(
+            restartResult: .relaunched,
+            codexProfileSnapshotService: CodexProfileSnapshotService(
+                session: URLSession(configuration: configuration)
+            ),
+            keychainWrites: keychainWrites
+        )
+        let viewModel = fixture.viewModel
+
+        _ = viewModel.saveCodexProfile(
+            slotID: .b,
+            displayName: "Codex B",
+            note: nil,
+            authJSON: Self.sampleAuthJSON(
+                accountID: "acc-b",
+                email: "b@example.com",
+                accessToken: "access-token-stale",
+                refreshToken: "refresh-token-stale"
+            )
+        )
+
+        await viewModel.switchCodexProfile(slotID: .b)
+
+        let writes = keychainWrites.values
+        XCTAssertEqual(usageRequestCount, 2)
+        XCTAssertEqual(writes.count, 1)
+        XCTAssertTrue(writes[0].contains("access-token-refreshed"))
+        XCTAssertFalse(writes[0].contains("access-token-stale"))
+        let stored = try XCTUnwrap(fixture.profileStore.profile(slotID: .b))
+        XCTAssertTrue(stored.authJSON.contains("refresh-token-refreshed"))
+    }
+
+    func testSwitchCodexProfileStillAppliesDesktopAuthWhenPreflightRefreshFails() async throws {
+        CodexSwitchMockURLProtocol.requestHandler = { request in
+            let url = request.url?.absoluteString ?? ""
+            if url == "https://chatgpt.com/backend-api/wham/usage"
+                || url == "https://auth.openai.com/oauth/token" {
+                return (
+                    HTTPURLResponse(url: request.url!, statusCode: 401, httpVersion: nil, headerFields: nil)!,
+                    Data()
+                )
+            }
+            throw URLError(.badURL)
+        }
+        defer { CodexSwitchMockURLProtocol.requestHandler = nil }
+
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [CodexSwitchMockURLProtocol.self]
+        let keychainWrites = LockedStringLog()
+        let fixture = try makeFixture(
+            restartResult: .relaunched,
+            codexProfileSnapshotService: CodexProfileSnapshotService(
+                session: URLSession(configuration: configuration)
+            ),
+            keychainWrites: keychainWrites
+        )
+        let viewModel = fixture.viewModel
+
+        _ = viewModel.saveCodexProfile(
+            slotID: .b,
+            displayName: "Codex B",
+            note: nil,
+            authJSON: Self.sampleAuthJSON(
+                accountID: "acc-b",
+                email: "b@example.com",
+                accessToken: "access-token-original",
+                refreshToken: "refresh-token-original"
+            )
+        )
+
+        await viewModel.switchCodexProfile(slotID: .b)
+
+        XCTAssertEqual(fixture.restartCounter.value, 1)
+        let writes = keychainWrites.values
+        XCTAssertEqual(writes.count, 1)
+        XCTAssertTrue(writes.first?.contains("access-token-original") == true)
+        XCTAssertEqual(viewModel.codexSwitchFeedback[.b]?.message, viewModel.text(.codexSwitchSuccess))
+    }
+
     private func assertSwitchPersistsAndWarnsForManualRelaunch(
         restartResult: CodexDesktopAppRestartResult
     ) async throws {
@@ -60,8 +226,16 @@ final class AppViewModelCodexSwitchTests: XCTestCase {
     }
 
     private func makeFixture(
-        restartResult: CodexDesktopAppRestartResult
-    ) throws -> (viewModel: AppViewModel, restartCounter: LockedCounter) {
+        restartResult: CodexDesktopAppRestartResult,
+        providerFactory: ((URL) -> ProviderFactorying)? = nil,
+        codexProfileSnapshotService: CodexProfileSnapshotService? = nil,
+        keychainWrites: LockedStringLog? = nil
+    ) throws -> (
+        viewModel: AppViewModel,
+        restartCounter: LockedCounter,
+        root: URL,
+        profileStore: CodexAccountProfileStore
+    ) {
         let root = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
             .appendingPathComponent("app-view-model-codex-switch-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -76,7 +250,10 @@ final class AppViewModelCodexSwitchTests: XCTestCase {
             homeDirectory: { root.path },
             environment: { ["CODEX_HOME": root.path] },
             keychainReader: { nil },
-            keychainWriter: { _ in true }
+            keychainWriter: {
+                keychainWrites?.append($0)
+                return true
+            }
         )
         let restartCounter = LockedCounter()
         let runningState = LockedRunningState(true)
@@ -85,7 +262,8 @@ final class AppViewModelCodexSwitchTests: XCTestCase {
             runningState: runningState,
             restartCounter: restartCounter
         )
-        let providerFactory = StubProviderFactory(
+        let resolvedProfileSnapshotService = codexProfileSnapshotService ?? Self.makePassthroughProfileSnapshotService()
+        let resolvedProviderFactory = providerFactory?(root) ?? StubProviderFactory(
             snapshot: Self.makeSnapshot(accountID: "team-a", email: "test@example.com")
         )
 
@@ -99,9 +277,16 @@ final class AppViewModelCodexSwitchTests: XCTestCase {
             codexProfileStore: profileStore,
             codexDesktopAuthService: authService,
             codexDesktopAppService: appService,
-            providerFactory: providerFactory
+            codexProfileSnapshotService: resolvedProfileSnapshotService,
+            providerFactory: resolvedProviderFactory
         )
-        return (viewModel, restartCounter)
+        return (viewModel, restartCounter, root, profileStore)
+    }
+
+    private static func makePassthroughProfileSnapshotService() -> CodexProfileSnapshotService {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [CodexSwitchPassthroughURLProtocol.self]
+        return CodexProfileSnapshotService(session: URLSession(configuration: configuration))
     }
 
     private func makeAppService(
@@ -176,21 +361,33 @@ final class AppViewModelCodexSwitchTests: XCTestCase {
         )
     }
 
-    private static func sampleAuthJSON(accountID: String, email: String) -> String {
+    private static func sampleAuthJSON(
+        accountID: String,
+        email: String,
+        accessToken: String? = nil,
+        refreshToken: String? = nil
+    ) -> String {
+        let idToken = makeIDToken(email: email)
+        let resolvedAccessToken = accessToken ?? "access-token-\(accountID)"
+        let resolvedRefreshToken = refreshToken ?? "refresh-token-\(accountID)"
+        return #"""
+        {
+          "tokens": {
+            "access_token": "\#(resolvedAccessToken)",
+            "refresh_token": "\#(resolvedRefreshToken)",
+            "account_id": "\#(accountID)",
+            "id_token": "\#(idToken)"
+          }
+        }
+        """#
+    }
+
+    private static func makeIDToken(email: String) -> String {
         let payload = Data(#"{"email":"\#(email)"}"#.utf8).base64EncodedString()
             .replacingOccurrences(of: "+", with: "-")
             .replacingOccurrences(of: "/", with: "_")
             .replacingOccurrences(of: "=", with: "")
-        return #"""
-        {
-          "tokens": {
-            "access_token": "access-token-\#(accountID)",
-            "refresh_token": "refresh-token-\#(accountID)",
-            "account_id": "\#(accountID)",
-            "id_token": "header.\#(payload).signature"
-          }
-        }
-        """#
+        return "header.\(payload).signature"
     }
 }
 
@@ -208,6 +405,30 @@ private struct StubUsageProvider: UsageProvider {
 
     func fetch() async throws -> UsageSnapshot {
         snapshot
+    }
+}
+
+private struct MutatingStubProviderFactory: ProviderFactorying {
+    let snapshot: UsageSnapshot
+    let onFetch: @Sendable () throws -> Void
+
+    func makeProvider(for descriptor: ProviderDescriptor) -> UsageProvider {
+        MutatingStubUsageProvider(
+            descriptor: descriptor,
+            snapshot: snapshot,
+            onFetch: onFetch
+        )
+    }
+}
+
+private struct MutatingStubUsageProvider: UsageProvider {
+    let descriptor: ProviderDescriptor
+    let snapshot: UsageSnapshot
+    let onFetch: @Sendable () throws -> Void
+
+    func fetch() async throws -> UsageSnapshot {
+        try onFetch()
+        return snapshot
     }
 }
 
@@ -262,5 +483,91 @@ private final class LockedCounter {
     }
 }
 
+private final class LockedStringLog: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: [String] = []
+
+    var values: [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return storage
+    }
+
+    func append(_ value: String) {
+        lock.lock()
+        storage.append(value)
+        lock.unlock()
+    }
+}
+
 private struct CodexSwitchLaunchFailure: Error {
+}
+
+private final class CodexSwitchMockURLProtocol: URLProtocol {
+    nonisolated(unsafe) static var requestHandler: ((URLRequest) throws -> (HTTPURLResponse, Data))?
+
+    override class func canInit(with request: URLRequest) -> Bool {
+        true
+    }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest {
+        request
+    }
+
+    override func startLoading() {
+        guard let handler = CodexSwitchMockURLProtocol.requestHandler else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
+            return
+        }
+
+        do {
+            let (response, data) = try handler(request)
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: data)
+            client?.urlProtocolDidFinishLoading(self)
+        } catch {
+            client?.urlProtocol(self, didFailWithError: error)
+        }
+    }
+
+    override func stopLoading() {}
+}
+
+private final class CodexSwitchPassthroughURLProtocol: URLProtocol {
+    override class func canInit(with request: URLRequest) -> Bool {
+        true
+    }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest {
+        request
+    }
+
+    override func startLoading() {
+        let body: [String: Any] = [
+            "plan_type": "team",
+            "rate_limit": [
+                "primary_window": ["used_percent": 1, "reset_at": 1_760_000_000],
+                "secondary_window": ["used_percent": 0, "reset_at": 1_760_500_000]
+            ]
+        ]
+        do {
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: nil
+            )!
+            client?.urlProtocol(
+                self,
+                didReceive: response,
+                cacheStoragePolicy: .notAllowed
+            )
+            client?.urlProtocol(self, didLoad: try JSONSerialization.data(withJSONObject: body))
+            client?.urlProtocolDidFinishLoading(self)
+        } catch {
+            client?.urlProtocol(self, didFailWithError: error)
+        }
+    }
+
+    override func stopLoading() {}
 }

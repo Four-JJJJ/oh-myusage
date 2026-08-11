@@ -242,7 +242,8 @@ extension AppViewModel {
                 return profile
             },
             apply: { [self] profile in
-                try self.codexDesktopAuthService.applyProfile(profile)
+                let refreshedProfile = try await self.refreshCodexProfileAuthBeforeDesktopApply(profile)
+                try self.codexDesktopAuthService.applyProfile(refreshedProfile)
             },
             restart: { [self] _ in
                 await self.codexDesktopAppService.restartIfRunning()
@@ -254,6 +255,13 @@ extension AppViewModel {
                 }
                 let provider = self.providerFactory.makeProvider(for: descriptor)
                 let fetched = try await provider.fetch(forceRefresh: true)
+                if let currentAuthJSON = self.codexDesktopAuthService.currentAuthJSON() {
+                    _ = self.codexProfileStore.updateStoredAuthJSON(
+                        slotID: slotID,
+                        authJSON: currentAuthJSON
+                    )
+                    self.syncCodexProfilesCurrentState()
+                }
                 let snapshot = self.markCodexSnapshotActive(fetched, preferredSlotID: slotID)
                 return OfficialAccountSwitchVerificationResult(
                     descriptor: descriptor,
@@ -294,6 +302,33 @@ extension AppViewModel {
                 "\(self.text(.codexSwitchNeedsVerification)): \(error.localizedDescription)"
             }
         )
+    }
+
+    private func refreshCodexProfileAuthBeforeDesktopApply(
+        _ profile: CodexAccountProfile
+    ) async throws -> CodexAccountProfile {
+        guard let descriptor = config.providers.first(where: { $0.type == .codex && $0.family == .official }) else {
+            return profile
+        }
+
+        do {
+            let result = try await codexProfileSnapshotService.fetchSnapshot(
+                profile: profile,
+                descriptor: descriptor
+            )
+            guard let refreshedAuthJSON = result.refreshedAuthJSON,
+                  !refreshedAuthJSON.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  let updated = codexProfileStore.updateStoredAuthJSON(
+                    slotID: profile.slotID,
+                    authJSON: refreshedAuthJSON
+                  ) else {
+                return profile
+            }
+            syncCodexProfilesCurrentState()
+            return updated
+        } catch {
+            return profile
+        }
     }
 
     func switchClaudeProfile(slotID: CodexSlotID) async {

@@ -7,6 +7,7 @@ final class KimiProvider: UsageProvider, @unchecked Sendable {
     private let browserCookieService: KimiBrowserCookieService
     private let tokenResolverOverride: (() throws -> (token: String, source: String))?
     private let browserTokenResolverOverride: (([KimiBrowserKind], Bool) -> KimiDetectedToken?)?
+    private let browserRefreshTokenResolverOverride: (([KimiBrowserKind], Bool) -> KimiDetectedToken?)?
 
     let descriptor: ProviderDescriptor
 
@@ -16,7 +17,8 @@ final class KimiProvider: UsageProvider, @unchecked Sendable {
         keychain: KeychainService,
         browserCookieService: KimiBrowserCookieService = KimiBrowserCookieService(),
         tokenResolverOverride: (() throws -> (token: String, source: String))? = nil,
-        browserTokenResolverOverride: (([KimiBrowserKind], Bool) -> KimiDetectedToken?)? = nil
+        browserTokenResolverOverride: (([KimiBrowserKind], Bool) -> KimiDetectedToken?)? = nil,
+        browserRefreshTokenResolverOverride: (([KimiBrowserKind], Bool) -> KimiDetectedToken?)? = nil
     ) {
         self.descriptor = descriptor
         self.session = session
@@ -24,6 +26,7 @@ final class KimiProvider: UsageProvider, @unchecked Sendable {
         self.browserCookieService = browserCookieService
         self.tokenResolverOverride = tokenResolverOverride
         self.browserTokenResolverOverride = browserTokenResolverOverride
+        self.browserRefreshTokenResolverOverride = browserRefreshTokenResolverOverride
     }
 
     func fetch() async throws -> UsageSnapshot {
@@ -32,7 +35,12 @@ final class KimiProvider: UsageProvider, @unchecked Sendable {
 
     func fetch(forceRefresh: Bool) async throws -> UsageSnapshot {
         let baseURL = URL(string: descriptor.baseURL ?? "https://www.kimi.com")!
-        let resolved = try (tokenResolverOverride?() ?? resolveToken(forceRefresh: forceRefresh))
+        let resolved: (token: String, source: String)
+        if let tokenResolverOverride {
+            resolved = try tokenResolverOverride()
+        } else {
+            resolved = try await resolveToken(forceRefresh: forceRefresh)
+        }
         let authToken = Self.normalizeToken(resolved.token)
         let sessionInfo = Self.decodeSessionInfo(from: authToken)
 
@@ -410,7 +418,7 @@ final class KimiProvider: UsageProvider, @unchecked Sendable {
         return nil
     }
 
-    private func resolveToken(forceRefresh: Bool) throws -> (token: String, source: String) {
+    private func resolveToken(forceRefresh: Bool) async throws -> (token: String, source: String) {
         guard let kimiConfig = descriptor.kimiConfig else {
             throw ProviderError.invalidResponse("missing kimi config")
         }
@@ -419,10 +427,28 @@ final class KimiProvider: UsageProvider, @unchecked Sendable {
         }
 
         let manualAccount = kimiConfig.manualTokenAccount
+        let autoAccount = "kimi.com/kimi-auth-auto"
+        let refreshAccount = "kimi.com/kimi-refresh-auto"
+
         if let manual = keychain.readToken(service: service, account: manualAccount), !manual.isEmpty {
             let normalized = Self.normalizeToken(manual)
             if !normalized.isEmpty, !KimiJWT.isExpired(normalized) {
-                return (normalized, "manual")
+                if KimiJWT.payloadType(normalized) == "refresh" {
+                    // Users sometimes paste the long-lived refresh token; the
+                    // API only accepts access tokens, so exchange it instead.
+                    if let exchanged = await refreshWebAccessToken(
+                        service: service,
+                        autoAccount: autoAccount,
+                        refreshAccount: refreshAccount,
+                        browserOrder: kimiConfig.browserOrder,
+                        allowBrowserDetection: false,
+                        explicitRefreshToken: normalized
+                    ) {
+                        return exchanged
+                    }
+                } else {
+                    return (normalized, "manual")
+                }
             }
             if kimiConfig.authMode == .manual {
                 throw ProviderError.unauthorized
@@ -435,37 +461,135 @@ final class KimiProvider: UsageProvider, @unchecked Sendable {
             throw ProviderError.missingCredential(manualAccount)
         }
 
-        let autoAccount = "kimi.com/kimi-auth-auto"
+        // Earlier versions could cache the long-lived refresh token in the
+        // access slot (it sorted first by expiry). Move it to the refresh
+        // slot so the exchange flow can use it instead of replaying it.
+        if let cached = keychain.readToken(service: service, account: autoAccount) {
+            let normalizedCached = Self.normalizeToken(cached)
+            if !normalizedCached.isEmpty, KimiJWT.payloadType(normalizedCached) == "refresh" {
+                _ = keychain.saveToken(normalizedCached, service: service, account: refreshAccount)
+                _ = keychain.deleteToken(service: service, account: autoAccount)
+            }
+        }
+
         let cachedAuto = cachedAutoToken(service: service, account: autoAccount)
         if !forceRefresh, let cachedAuto {
             return cachedAuto
         }
 
-        guard forceRefresh else {
+        if forceRefresh {
+            let detected = browserTokenResolverOverride?(kimiConfig.browserOrder, true)
+                ?? browserCookieService.detectKimiAuthToken(order: kimiConfig.browserOrder, refreshPaths: true)
+            if let detected,
+               !KimiJWT.isExpired(Self.normalizeToken(detected.token)) {
+                let normalized = Self.normalizeToken(detected.token)
+                _ = keychain.saveToken(normalized, service: service, account: autoAccount)
+                return (normalized, detected.source)
+            }
+
+            // The web access token expires about daily; the browser session is
+            // usually still alive via its long-lived refresh token — exchange it.
+            if let refreshed = await refreshWebAccessToken(
+                service: service,
+                autoAccount: autoAccount,
+                refreshAccount: refreshAccount,
+                browserOrder: kimiConfig.browserOrder,
+                allowBrowserDetection: true
+            ) {
+                return refreshed
+            }
+
+            if let cachedAuto {
+                return cachedAuto
+            }
             throw ProviderError.missingCredential(autoAccount)
         }
 
-        let detected = browserTokenResolverOverride?(kimiConfig.browserOrder, true)
-            ?? browserCookieService.detectKimiAuthToken(order: kimiConfig.browserOrder, refreshPaths: true)
-        if let detected,
-           !KimiJWT.isExpired(Self.normalizeToken(detected.token)) {
-            let normalized = Self.normalizeToken(detected.token)
-            _ = keychain.saveToken(normalized, service: service, account: autoAccount)
-            return (normalized, detected.source)
+        // Background path: silently renew with the stored refresh token (no
+        // browser disk scan outside an explicit refresh).
+        if let refreshed = await refreshWebAccessToken(
+            service: service,
+            autoAccount: autoAccount,
+            refreshAccount: refreshAccount,
+            browserOrder: kimiConfig.browserOrder,
+            allowBrowserDetection: false
+        ) {
+            return refreshed
         }
-
-        if let cachedAuto {
-            return cachedAuto
-        }
-
         throw ProviderError.missingCredential(autoAccount)
+    }
+
+    private func refreshWebAccessToken(
+        service: String,
+        autoAccount: String,
+        refreshAccount: String,
+        browserOrder: [KimiBrowserKind],
+        allowBrowserDetection: Bool,
+        explicitRefreshToken: String? = nil
+    ) async -> (token: String, source: String)? {
+        var refreshToken: String?
+        var refreshSource = "auto:refresh-cache"
+        if let explicitRefreshToken {
+            refreshToken = explicitRefreshToken
+            refreshSource = "manual"
+        } else if allowBrowserDetection {
+            let detected = browserRefreshTokenResolverOverride?(browserOrder, true)
+                ?? browserCookieService.detectKimiRefreshToken(order: browserOrder, refreshPaths: true)
+            if let detected {
+                let normalized = Self.normalizeToken(detected.token)
+                if !normalized.isEmpty {
+                    refreshToken = normalized
+                    refreshSource = detected.source
+                }
+            }
+        }
+        if refreshToken == nil,
+           let cached = keychain.readToken(service: service, account: refreshAccount) {
+            let normalized = Self.normalizeToken(cached)
+            if !normalized.isEmpty {
+                refreshToken = normalized
+            }
+        }
+        guard let refreshToken, !KimiJWT.isExpired(refreshToken) else { return nil }
+
+        var request = URLRequest(url: URL(string: "https://auth.kimi.com/api/account.gateway.v1.AuthService/RefreshToken")!)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 15
+        request.httpBody = try? JSONSerialization.data(withJSONObject: ["refresh_token": refreshToken])
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("1", forHTTPHeaderField: "connect-protocol-version")
+        request.setValue("web", forHTTPHeaderField: "x-msh-platform")
+        request.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36", forHTTPHeaderField: "User-Agent")
+
+        guard let (data, response) = try? await session.data(for: request),
+              let http = response as? HTTPURLResponse,
+              (200...299).contains(http.statusCode),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let rawAccess = (root["accessToken"] as? String) ?? (root["access_token"] as? String) else {
+            return nil
+        }
+
+        let newAccess = Self.normalizeToken(rawAccess)
+        guard !newAccess.isEmpty, !KimiJWT.isExpired(newAccess) else { return nil }
+
+        if let rawRefresh = (root["refreshToken"] as? String) ?? (root["refresh_token"] as? String) {
+            let newRefresh = Self.normalizeToken(rawRefresh)
+            if !newRefresh.isEmpty {
+                _ = keychain.saveToken(newRefresh, service: service, account: refreshAccount)
+            }
+        }
+        _ = keychain.saveToken(newAccess, service: service, account: autoAccount)
+        return (newAccess, "\(refreshSource)+refresh")
     }
 
     private func cachedAutoToken(service: String, account: String) -> (token: String, source: String)? {
         if let cached = keychain.readToken(service: service, account: account),
            !cached.isEmpty {
             let normalized = Self.normalizeToken(cached)
-            if !normalized.isEmpty, !KimiJWT.isExpired(normalized) {
+            if !normalized.isEmpty,
+               KimiJWT.payloadType(normalized) != "refresh",
+               !KimiJWT.isExpired(normalized) {
                 return (normalized, "auto:cache")
             }
         }
@@ -611,6 +735,17 @@ enum KimiJWT {
         }
         let exp = expNumber.doubleValue
         return exp <= now.timeIntervalSince1970 + 5
+    }
+
+    /// The JWT `typ` claim ("access" / "refresh" on kimi.com tokens), lowercased.
+    static func payloadType(_ token: String) -> String? {
+        let parts = token.split(separator: ".")
+        guard parts.count >= 2,
+              let payloadData = decodeBase64URL(String(parts[1])),
+              let payload = try? JSONSerialization.jsonObject(with: payloadData) as? [String: Any] else {
+            return nil
+        }
+        return (payload["typ"] as? String)?.lowercased()
     }
 
     static func decodeBase64URL(_ value: String) -> Data? {

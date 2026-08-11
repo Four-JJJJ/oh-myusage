@@ -1,4 +1,5 @@
 import OhMyUsageApplication
+import OhMyUsageDomain
 import Foundation
 
 private enum LocalUsageHistoryRefreshCoordinatorError: LocalizedError {
@@ -31,7 +32,7 @@ final class LocalUsageHistoryRefreshCoordinator {
         ) -> Void)? = nil,
         onStateChange: @escaping @MainActor () -> Void
     ) {
-        guard query.providerType != .gemini else { return }
+        guard Self.supports(query.providerType) else { return }
 
         let providerType = query.providerType
         let scope = query.scope
@@ -108,4 +109,10 @@ final class LocalUsageHistoryRefreshCoordinator {
             )
         }
     }
+
+    static func supports(_ providerType: ProviderType) -> Bool {
+        supportedProviderTypes.contains(providerType)
+    }
+
+    private static let supportedProviderTypes: Set<ProviderType> = [.codex, .claude, .kimi]
 }

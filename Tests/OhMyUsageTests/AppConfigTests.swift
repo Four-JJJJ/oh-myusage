@@ -149,6 +149,10 @@ final class AppConfigTests: XCTestCase {
         XCTAssertEqual(trae?.auth.kind, .bearer)
         XCTAssertEqual(trae?.baseURL, "https://api-sg-central.trae.ai")
 
+        let kimi = AppConfig.default.providers.first(where: { $0.id == "kimi-official" })
+        XCTAssertEqual(kimi?.auth.kind, .bearer)
+        XCTAssertEqual(kimi?.auth.keychainAccount, "official/kimi/coding-api-key")
+
         let openRouterCredits = AppConfig.default.providers.first(where: { $0.id == "openrouter-credits-official" })
         XCTAssertEqual(openRouterCredits?.family, .official)
         XCTAssertEqual(openRouterCredits?.type, .openrouterCredits)
@@ -206,6 +210,17 @@ final class AppConfigTests: XCTestCase {
         XCTAssertEqual(xiaomiMIMO?.relayConfig?.quotaDisplayMode, .used)
         XCTAssertEqual(xiaomiMIMO?.baseURL, "https://platform.xiaomimimo.com")
         XCTAssertNil(xiaomiMIMO?.officialConfig)
+    }
+
+    func testNormalizationMigratesLegacyKimiWithoutAuthToCodingAPIKey() {
+        var kimi = ProviderDescriptor.defaultOfficialKimi()
+        kimi.auth = .none
+
+        let normalized = kimi.normalized()
+
+        XCTAssertEqual(normalized.auth.kind, .bearer)
+        XCTAssertEqual(normalized.auth.keychainService, KeychainService.defaultServiceName)
+        XCTAssertEqual(normalized.auth.keychainAccount, "official/kimi/coding-api-key")
     }
 
     func testDefaultProvidersDoNotIncludePresetThirdPartyRelays() {

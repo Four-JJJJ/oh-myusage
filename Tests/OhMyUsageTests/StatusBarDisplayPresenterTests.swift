@@ -9,7 +9,7 @@ final class StatusBarDisplayPresenterTests: XCTestCase {
         XCTAssertEqual(StatusBarDisplayPresenter.displayName(for: provider), "API")
     }
 
-    func testBarStyleUsesThirdPartyBaselinePercentWhenLimitIsMissingWithIntegerValueText() {
+    func testBarStyleUsesThirdPartyBaselinePercentWhenLimitIsMissingWithTwoDecimalValueText() {
         let provider = makeProvider(name: "Relay", family: .thirdParty, type: .relay)
         let snapshot = UsageSnapshot(
             source: provider.id,
@@ -31,7 +31,7 @@ final class StatusBarDisplayPresenterTests: XCTestCase {
 
         let item = StatusBarDisplayPresenter.displayItem(for: source, style: .barNamePercent)
 
-        XCTAssertEqual(item.valueText, "12")
+        XCTAssertEqual(item.valueText, "12.34")
         assertPercent(item.percent, equals: 61)
     }
 
@@ -57,7 +57,7 @@ final class StatusBarDisplayPresenterTests: XCTestCase {
 
         let item = StatusBarDisplayPresenter.displayItem(for: source, style: .barNamePercent)
 
-        XCTAssertEqual(item.valueText, "319")
+        XCTAssertEqual(item.valueText, "319.33")
         assertPercent(item.percent, equals: 63.8665216)
     }
 
@@ -83,7 +83,7 @@ final class StatusBarDisplayPresenterTests: XCTestCase {
 
         let item = StatusBarDisplayPresenter.displayItem(for: source, style: .barNamePercent)
 
-        XCTAssertEqual(item.valueText, "181")
+        XCTAssertEqual(item.valueText, "181.18")
         assertPercent(item.percent, equals: 90.589436)
     }
 
@@ -109,11 +109,11 @@ final class StatusBarDisplayPresenterTests: XCTestCase {
 
         let item = StatusBarDisplayPresenter.displayItem(for: source, style: .barNamePercent)
 
-        XCTAssertEqual(item.valueText, "42")
+        XCTAssertEqual(item.valueText, "42.00")
         assertPercent(item.percent, equals: 37)
     }
 
-    func testThirdPartyAmountUsesGroupedIntegerValueText() {
+    func testThirdPartyAmountUsesGroupedTwoDecimalValueText() {
         let provider = makeProvider(name: "Relay", family: .thirdParty, type: .relay)
         let snapshot = UsageSnapshot(
             source: provider.id,
@@ -131,10 +131,10 @@ final class StatusBarDisplayPresenterTests: XCTestCase {
 
         let item = StatusBarDisplayPresenter.displayItem(for: source, style: .iconPercent)
 
-        XCTAssertEqual(item.valueText, "34,746")
+        XCTAssertEqual(item.valueText, "34,746.63")
     }
 
-    func testTraeAmountModeUsesIntegerValueText() {
+    func testTraeAmountModeUsesTwoDecimalValueText() {
         let provider = makeProvider(
             name: "Trae SOLO",
             family: .official,
@@ -160,7 +160,7 @@ final class StatusBarDisplayPresenterTests: XCTestCase {
 
         let item = StatusBarDisplayPresenter.displayItem(for: source, style: .iconPercent)
 
-        XCTAssertEqual(item.valueText, "12")
+        XCTAssertEqual(item.valueText, "12.50")
         assertPercent(item.percent, equals: 64)
     }
 

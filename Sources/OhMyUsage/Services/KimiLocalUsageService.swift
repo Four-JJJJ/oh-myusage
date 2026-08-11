@@ -126,14 +126,59 @@ final class KimiLocalUsageService {
         var previousComponents = LocalUsageTokenComponents()
         var seenSnapshots: Set<String> = []
         var output: [LocalUsageEvent] = []
+        var lineIndex = 0
 
         scanJSONLLines(atPath: filePath) { line in
-            guard line.contains("\"StatusUpdate\""), line.contains("\"token_usage\"") else {
+            defer { lineIndex += 1 }
+            // v2 journals (kimi-code Node CLI) persist one `usage.record` op per
+            // LLM call whose usage is already a per-call delta; legacy journals
+            // carry cumulative StatusUpdate snapshots instead.
+            let looksLikeV2UsageRecord = line.contains("\"usage.record\"")
+            let looksLikeV1StatusUpdate = line.contains("\"StatusUpdate\"") && line.contains("\"token_usage\"")
+            guard looksLikeV2UsageRecord || looksLikeV1StatusUpdate else {
                 return
             }
 
             guard let data = line.data(using: .utf8),
-                  let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+                  let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+                return
+            }
+
+            if looksLikeV2UsageRecord,
+               Self.stringValue(root["type"]) == "usage.record" {
+                guard let eventAt = Self.parseTimestampDate(root["time"]),
+                      eventAt >= startOfLast30Days,
+                      let usage = root["usage"] as? [String: Any] else {
+                    return
+                }
+
+                let components = Self.tokenComponents(from: usage)
+                let total = components.totalTokens
+                guard total > 0 else {
+                    return
+                }
+
+                let signature = "kimi-v2|\(sessionID)|\(lineIndex)|\(Int(eventAt.timeIntervalSince1970))|\(total)"
+                guard seenSnapshots.insert(signature).inserted else {
+                    return
+                }
+
+                output.append(
+                    LocalUsageEvent(
+                        signature: signature,
+                        eventAt: eventAt,
+                        modelID: Self.stringValue(root["model"]) ?? "unknown",
+                        totalTokens: total,
+                        inputTokens: components.inputTokens,
+                        outputTokens: components.outputTokens,
+                        cacheReadTokens: components.cacheReadTokens,
+                        cacheWriteTokens: components.cacheWriteTokens
+                    )
+                )
+                return
+            }
+
+            guard looksLikeV1StatusUpdate,
                   let eventAt = Self.parseTimestampDate(root["timestamp"]),
                   eventAt >= startOfLast30Days,
                   let message = root["message"] as? [String: Any],
@@ -245,7 +290,7 @@ final class KimiLocalUsageService {
     private static func tokenComponents(from usage: [String: Any]) -> LocalUsageTokenComponents {
         let input = firstInt(
             in: usage,
-            keys: ["input_other", "input_tokens", "input"]
+            keys: ["input_other", "input_tokens", "input", "inputOther"]
         ) ?? 0
         let output = firstInt(
             in: usage,
@@ -253,11 +298,11 @@ final class KimiLocalUsageService {
         ) ?? 0
         let cacheRead = firstInt(
             in: usage,
-            keys: ["input_cache_read", "cache_read_input_tokens"]
+            keys: ["input_cache_read", "cache_read_input_tokens", "inputCacheRead"]
         ) ?? 0
         let cacheWrite = firstInt(
             in: usage,
-            keys: ["input_cache_creation", "cache_creation_input_tokens"]
+            keys: ["input_cache_creation", "cache_creation_input_tokens", "inputCacheCreation"]
         ) ?? 0
 
         let components = LocalUsageTokenComponents(
@@ -306,18 +351,20 @@ final class KimiLocalUsageService {
     }
 
     private static func parseTimestampDate(_ raw: Any?) -> Date? {
+        let epochValue: Double?
         if let value = raw as? Double {
-            return Date(timeIntervalSince1970: value)
+            epochValue = value
+        } else if let value = raw as? Int {
+            epochValue = Double(value)
+        } else if let value = raw as? NSNumber {
+            epochValue = value.doubleValue
+        } else if let value = raw as? String {
+            epochValue = Double(value)
+        } else {
+            epochValue = nil
         }
-        if let value = raw as? Int {
-            return Date(timeIntervalSince1970: Double(value))
-        }
-        if let value = raw as? NSNumber {
-            return Date(timeIntervalSince1970: value.doubleValue)
-        }
-        if let value = raw as? String, let parsed = Double(value) {
-            return Date(timeIntervalSince1970: parsed)
-        }
-        return nil
+        guard let epoch = epochValue else { return nil }
+        // v2 wire journals stamp `time` in epoch milliseconds; legacy logs use seconds.
+        return Date(timeIntervalSince1970: epoch > 1_000_000_000_000 ? epoch / 1000 : epoch)
     }
 }

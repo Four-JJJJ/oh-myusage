@@ -267,6 +267,11 @@ extension SettingsView {
     }
 
     func relayTemplateNeedsManualUserID(_ manifest: RelayAdapterManifest) -> Bool {
+        if manifest.id == "minimax" {
+            // GroupId remains available for Cookie compatibility, but the
+            // preferred Coding Plan API-key flow does not require it.
+            return true
+        }
         let setupRequiresUserID = manifest.setup?.requiredInputs.contains(.userID) ?? false
         return setupRequiresUserID || (
             manifest.balanceRequest.userID == nil &&
@@ -448,7 +453,10 @@ extension SettingsView {
                     resolved.append(item)
                 }
             }
-            if showsManualUserID && !resolved.contains(.userID) && relayTemplateNeedsManualUserID(manifest) {
+            if showsManualUserID,
+               manifest.id != "minimax",
+               !resolved.contains(.userID),
+               relayTemplateNeedsManualUserID(manifest) {
                 resolved.append(.userID)
             }
             return resolved

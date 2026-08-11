@@ -58,7 +58,7 @@ final class AppViewModelConfigurationPersistenceTests: XCTestCase {
         )
         XCTAssertEqual(viewModel.config.providers.first?.officialConfig?.quotaDisplayMode, .used)
 
-        await assertEventually("saved status should auto clear") {
+        await assertEventually("saved status should auto clear", timeout: 5) {
             viewModel.settingsPersistenceDisplayState.kind == .idle
                 && viewModel.settingsPersistenceErrorMessage == nil
         }

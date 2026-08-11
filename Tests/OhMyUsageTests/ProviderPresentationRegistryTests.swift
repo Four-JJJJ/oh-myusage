@@ -26,6 +26,15 @@ final class ProviderPresentationRegistryTests: XCTestCase {
         XCTAssertEqual(QuotaMetricDisplayFactory.preferredMetricCount(for: provider), 2)
     }
 
+    func testOfficialDeepSeekUsesBalanceAmountCard() {
+        let provider = ProviderDescriptor.defaultOfficialDeepSeek()
+        let capabilities = ProviderCapabilities.capabilities(for: provider)
+
+        XCTAssertTrue(capabilities.supportsBalance)
+        XCTAssertFalse(capabilities.supportsQuotaWindows)
+        XCTAssertFalse(capabilities.usesPercentageMenuCard)
+    }
+
     func testClaudePreferredMetricCountIsFour() {
         let provider = ProviderDescriptor.defaultOfficialClaude()
 

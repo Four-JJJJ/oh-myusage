@@ -122,6 +122,7 @@ struct SettingsView: View {
 
 }
 
+#if DEBUG
 #Preview("Settings / General") {
     SettingsView(viewModel: {
         let root = FileManager.default.temporaryDirectory
@@ -138,3 +139,4 @@ struct SettingsView: View {
     .frame(width: 1000, height: 720)
     .preferredColorScheme(.dark)
 }
+#endif

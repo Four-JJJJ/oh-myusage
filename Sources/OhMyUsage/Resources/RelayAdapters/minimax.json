@@ -9,17 +9,18 @@
   },
   "setup": {
     "recommendedBaseURL": "https://platform.minimaxi.com",
-    "requiredInputs": ["balanceAuth", "userID"],
+    "requiredInputs": ["balanceAuth"],
     "balanceAuthHint": {
-      "zhHans": "粘贴浏览器请求里的完整 Cookie。模板会自动带上 `Origin` 和 `Referer` 等固定请求头。",
-      "en": "Paste the full Cookie value from your browser request. The template already adds the fixed `Origin` and `Referer` headers."
+      "zhHans": "优先粘贴 MiniMax Coding Plan API Key，直接查询官方套餐额度；也兼容浏览器请求里的完整 Cookie。",
+      "en": "Prefer a MiniMax Coding Plan API key for the official quota endpoint. A full browser Cookie remains supported for compatibility."
     },
     "userIDHint": {
-      "zhHans": "这里填写请求 URL 里的 `GroupId`，例如 `/backend/account?GroupId=2026...` 里的那一串数字。",
-      "en": "Enter the `GroupId` from the request URL, for example the numeric value in `/backend/account?GroupId=2026...`."
+      "zhHans": "仅 Cookie 模式需要：填写请求 URL 里的 `GroupId`。使用 Coding Plan API Key 时可留空。",
+      "en": "Only required for Cookie mode: enter the `GroupId` from the request URL. Leave it empty when using a Coding Plan API key."
     }
   },
   "authStrategies": [
+    { "kind": "savedBearer" },
     { "kind": "savedCookieHeader" },
     { "kind": "browserCookieHeader" }
   ],

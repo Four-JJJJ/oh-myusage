@@ -8,6 +8,7 @@ final class KimiOfficialProvider: UsageProvider, @unchecked Sendable {
     private let cacheTTL: TimeInterval = 15
     private let refreshBuffer: TimeInterval = 5 * 60
     private let session: URLSession
+    private let keychain: KeychainService
     private let cache: any OfficialSnapshotCaching
     private let gate: any OfficialFetchGating
     private let homeDirectory: () -> String
@@ -17,12 +18,14 @@ final class KimiOfficialProvider: UsageProvider, @unchecked Sendable {
     init(
         descriptor: ProviderDescriptor,
         session: URLSession = .shared,
+        keychain: KeychainService = KeychainService(),
         cache: any OfficialSnapshotCaching = KimiOfficialProvider.cache,
         gate: any OfficialFetchGating = KimiOfficialProvider.gate,
         homeDirectory: @escaping () -> String = { NSHomeDirectory() }
     ) {
         self.descriptor = descriptor
         self.session = session
+        self.keychain = keychain
         self.cache = cache
         self.gate = gate
         self.homeDirectory = homeDirectory
@@ -103,6 +106,19 @@ final class KimiOfficialProvider: UsageProvider, @unchecked Sendable {
     }
 
     private func loadCredentials() throws -> KimiOfficialCredentials {
+        if let service = descriptor.auth.keychainService,
+           let account = descriptor.auth.keychainAccount,
+           let apiKey = keychain.readToken(service: service, account: account)?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           !apiKey.isEmpty {
+            return KimiOfficialCredentials(
+                accessToken: KimiProvider.normalizeToken(apiKey),
+                refreshToken: nil,
+                expiresAt: nil,
+                filePath: nil
+            )
+        }
+
         let candidates = resolveCredentialPaths()
         for path in candidates {
             guard FileManager.default.fileExists(atPath: path) else { continue }
@@ -208,7 +224,7 @@ final class KimiOfficialProvider: UsageProvider, @unchecked Sendable {
     }
 
     private func persist(credentials: KimiOfficialCredentials) {
-        let path = credentials.filePath
+        guard let path = credentials.filePath else { return }
         OfficialProviderAuthRuntime.updateJSONObjectFile(path: path) { json in
             var auth = (json["auth"] as? [String: Any]) ?? json
             auth["access_token"] = credentials.accessToken
@@ -331,11 +347,19 @@ final class KimiOfficialProvider: UsageProvider, @unchecked Sendable {
         case .weekly:
             title = "Weekly"
         default:
-            title = OfficialValueParser.string(item["name"] ?? item["title"]) ?? "Window \(index + 1)"
+            title = OfficialValueParser.string(item["name"] ?? item["title"] ?? usage["name"] ?? usage["title"]) ?? "Window \(index + 1)"
         }
 
-        guard let remaining = OfficialValueParser.double(usage["remaining_amount"] ?? usage["remaining"] ?? usage["available"]),
-              let limit = OfficialValueParser.double(usage["quota_amount"] ?? usage["limit"] ?? usage["total"]) else {
+        // The current /coding/v1/usages payload reports `used`/`limit` only;
+        // older payloads reported remaining/quota fields. Support both.
+        guard let limit = OfficialValueParser.double(usage["quota_amount"] ?? usage["limit"] ?? usage["total"]) else {
+            return nil
+        }
+        let used = OfficialValueParser.double(
+            usage["used_amount"] ?? usage["usedAmount"] ?? usage["used"] ?? usage["consumed"]
+        )
+        guard let remaining = OfficialValueParser.double(usage["remaining_amount"] ?? usage["remaining"] ?? usage["available"])
+            ?? used.map({ max(0, limit - $0) }) else {
             return nil
         }
         let remainingPercent = percent(remaining: remaining, limit: limit)
@@ -431,8 +455,14 @@ final class KimiOfficialProvider: UsageProvider, @unchecked Sendable {
 
     private static func parseRawModelEntryFromLimit(item: [String: Any], index: Int) -> KimiRawModelEntry? {
         let usage = (item["usage"] as? [String: Any]) ?? (item["detail"] as? [String: Any]) ?? item
-        guard let remaining = OfficialValueParser.double(usage["remaining_amount"] ?? usage["remaining"] ?? usage["available"]),
-              let limit = OfficialValueParser.double(usage["quota_amount"] ?? usage["limit"] ?? usage["total"]) else {
+        guard let limit = OfficialValueParser.double(usage["quota_amount"] ?? usage["limit"] ?? usage["total"]) else {
+            return nil
+        }
+        let used = OfficialValueParser.double(
+            usage["used_amount"] ?? usage["usedAmount"] ?? usage["used"] ?? usage["consumed"]
+        )
+        guard let remaining = OfficialValueParser.double(usage["remaining_amount"] ?? usage["remaining"] ?? usage["available"])
+            ?? used.map({ max(0, limit - $0) }) else {
             return nil
         }
         let resolvedTitle = OfficialValueParser.string(item["title"] ?? item["name"]) ?? "Window \(index + 1)"
@@ -658,6 +688,12 @@ final class KimiOfficialProvider: UsageProvider, @unchecked Sendable {
             if duration == 300 && timeUnit.contains("minute") {
                 return .session
             }
+            if duration == 5 && timeUnit.contains("hour") {
+                return .session
+            }
+            if timeUnit.contains("week") {
+                return .weekly
+            }
             if duration >= 7 && timeUnit.contains("day") {
                 return .weekly
             }
@@ -707,7 +743,7 @@ private struct KimiOfficialCredentials {
     var accessToken: String
     var refreshToken: String?
     var expiresAt: Date?
-    var filePath: String
+    var filePath: String?
 }
 
 private struct KimiRawModelEntry {

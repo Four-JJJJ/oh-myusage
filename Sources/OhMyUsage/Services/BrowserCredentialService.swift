@@ -55,10 +55,14 @@ final class BrowserCredentialService {
         guard !normalizedHost.isEmpty else { return [] }
 
         let now = now()
-        if let cached = cachedBearerCandidates(for: normalizedHost, now: now) {
-            return cached
+        // Interactive lookups always hit disk so a login the user just completed
+        // is picked up immediately; only background polls reuse the cached result.
+        if !accessIntent.allowsLiveLookup {
+            if let cached = cachedBearerCandidates(for: normalizedHost, now: now) {
+                return cached
+            }
+            return []
         }
-        guard accessIntent.allowsLiveLookup else { return [] }
 
         let resolved: [BrowserDetectedCredential]
         if let bearerCandidatesOverride {
@@ -84,10 +88,12 @@ final class BrowserCredentialService {
         guard !normalizedHost.isEmpty else { return nil }
 
         let now = now()
-        if let cached = cachedCookieHeader(for: normalizedHost, now: now) {
-            return cached
+        if !accessIntent.allowsLiveLookup {
+            if let cached = cachedCookieHeader(for: normalizedHost, now: now) {
+                return cached
+            }
+            return nil
         }
-        guard accessIntent.allowsLiveLookup else { return nil }
 
         let resolved: BrowserDetectedCredential?
         if let cookieHeaderOverride {
@@ -139,10 +145,12 @@ final class BrowserCredentialService {
 
         let cacheKey = "\(normalizedName.lowercased())|\(normalizedHost)"
         let now = now()
-        if let cached = cachedNamedCookie(for: cacheKey, now: now) {
-            return cached
+        if !accessIntent.allowsLiveLookup {
+            if let cached = cachedNamedCookie(for: cacheKey, now: now) {
+                return cached
+            }
+            return nil
         }
-        guard accessIntent.allowsLiveLookup else { return nil }
 
         let resolved: BrowserDetectedCredential?
         if let namedCookieOverride {

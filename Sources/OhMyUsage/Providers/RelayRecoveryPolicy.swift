@@ -155,7 +155,7 @@ struct RelayRecoveryPolicy {
                 return .unauthorizedDetail("XiaomiMIMO cookie looks incomplete. Paste the full Cookie header and make sure it includes api-platform_serviceToken and userId.")
             }
             if credentialMode != .manualPreferred {
-                return .unauthorizedDetail("No live XiaomiMIMO login was found in the browser. Log in to platform.xiaomimimo.com first, or switch back to Manual First and paste the full Cookie header.")
+                return .unauthorizedDetail("No live XiaomiMIMO login was found in the browser. Log in to platform.xiaomimimo.com first; if it is already logged in, grant Full Disk Access and approve Arc/Chrome Safe Storage keychain access, then test again.")
             }
             return .unauthorizedDetail("No usable XiaomiMIMO cookie was found. Paste the full Cookie header, or switch to Browser First and make sure platform.xiaomimimo.com is logged in.")
         case "xiaomimimo-token-plan":
@@ -163,7 +163,7 @@ struct RelayRecoveryPolicy {
                 return .unauthorizedDetail("XiaomiMIMO Token Plan cookie looks incomplete. Paste the full Cookie header and make sure it includes api-platform_serviceToken and userId.")
             }
             if credentialMode != .manualPreferred {
-                return .unauthorizedDetail("No live XiaomiMIMO Token Plan login was found in the browser. Log in to platform.xiaomimimo.com first, or switch back to Manual First and paste the full Cookie header.")
+                return .unauthorizedDetail("No live XiaomiMIMO Token Plan login was found in the browser. Log in to platform.xiaomimimo.com first; if it is already logged in, grant Full Disk Access and approve Arc/Chrome Safe Storage keychain access, then test again.")
             }
             return .unauthorizedDetail("No usable XiaomiMIMO Token Plan cookie was found. Paste the full Cookie header, or switch to Browser First and make sure platform.xiaomimimo.com is logged in.")
         case "minimax":
@@ -173,6 +173,11 @@ struct RelayRecoveryPolicy {
             return .unauthorizedDetail("No usable MiniMax cookie was found. Paste the full Cookie header, and make sure GroupId is filled in User ID.")
         case "ailinyu":
             return .unauthorizedDetail("No usable open.ailinyu.de cookie was found. Paste the full Cookie header, and check that User ID matches your site account.")
+        case "deepseek":
+            if credentialMode != .manualPreferred {
+                return .unauthorizedDetail("No platform.deepseek.com login was found in the browser. Log in to platform.deepseek.com (note: chat.deepseek.com is a different site) in Chrome, Arc, Edge or another Chromium browser — Safari and Firefox logins cannot be read — then test again. You can also paste your userToken or an API key (sk-...) directly.")
+            }
+            return .unauthorizedDetail("No usable DeepSeek credential was found. Paste your platform.deepseek.com userToken (DevTools → Application → Local Storage → userToken) or an API key (sk-...) from the API Keys page, or switch to Browser First after logging in.")
         default:
             let host = baseURL.host?.lowercased() ?? descriptor.name
             if credentialMode == .manualPreferred {
@@ -196,11 +201,13 @@ struct RelayRecoveryPolicy {
             case "moonshot":
                 return .unauthorizedDetail("Moonshot login expired. Paste a fresh bearer token, or switch to Browser First and log in again in platform.moonshot.cn.")
             case "xiaomimimo":
-                return .unauthorizedDetail("XiaomiMIMO login expired. Paste a fresh Cookie, or switch to Browser First and log in again in platform.xiaomimimo.com.")
+                return .unauthorizedDetail("XiaomiMIMO login expired. Log in again in platform.xiaomimimo.com and test the connection to re-import the browser Cookie, or paste a fresh Cookie manually.")
             case "xiaomimimo-token-plan":
-                return .unauthorizedDetail("XiaomiMIMO Token Plan login expired. Paste a fresh Cookie, or switch to Browser First and log in again in platform.xiaomimimo.com.")
+                return .unauthorizedDetail("XiaomiMIMO Token Plan login expired. Log in again in platform.xiaomimimo.com and test the connection to re-import the browser Cookie, or paste a fresh Cookie manually.")
             case "minimax":
                 return .unauthorizedDetail("MiniMax login expired. Paste a fresh Cookie, or switch to Browser First and log in again in platform.minimaxi.com.")
+            case "deepseek":
+                return .unauthorizedDetail("DeepSeek rejected the credential. Paste a valid API key (sk-...) or a fresh platform.deepseek.com userToken, or switch to Browser First and log in again in platform.deepseek.com.")
             default:
                 return .unauthorized
             }

@@ -116,6 +116,52 @@ final class CodexProfileSnapshotServiceTests: XCTestCase {
         XCTAssertTrue(result.refreshedAuthJSON?.contains("refresh-token-new") == true)
     }
 
+    func testFetchSnapshotPercentEncodesRefreshTokenFormValue() async throws {
+        var didAssertRefreshBody = false
+        CodexSnapshotMockURLProtocol.requestHandler = { request in
+            let url = request.url?.absoluteString ?? ""
+            if url == "https://chatgpt.com/backend-api/wham/usage" {
+                return (
+                    HTTPURLResponse(url: request.url!, statusCode: 401, httpVersion: nil, headerFields: nil)!,
+                    Data()
+                )
+            }
+            if url == "https://auth.openai.com/oauth/token" {
+                let body = String(data: requestBodyData(request) ?? Data(), encoding: .utf8) ?? ""
+                XCTAssertTrue(
+                    body.contains("refresh_token=refresh%2Btoken%2Fwith%3Dchars%26space%20value"),
+                    "refresh_token form value must be percent encoded; got \(body)"
+                )
+                didAssertRefreshBody = true
+                let responseBody: [String: Any] = [
+                    "access_token": "access-refreshed",
+                    "refresh_token": "refresh-token-new",
+                    "id_token": self.makeIDToken(email: "refreshed@example.com", subject: "sub-refreshed")
+                ]
+                return (
+                    HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!,
+                    try JSONSerialization.data(withJSONObject: responseBody)
+                )
+            }
+            throw URLError(.badURL)
+        }
+
+        let service = makeService()
+        let descriptor = ProviderDescriptor.defaultOfficialCodex()
+        let profile = makeProfile(
+            slotID: .a,
+            accountID: "team-refresh",
+            email: "stale@example.com",
+            subject: "sub-stale",
+            accessToken: "access-stale",
+            refreshToken: "refresh+token/with=chars&space value"
+        )
+
+        _ = try? await service.fetchSnapshot(profile: profile, descriptor: descriptor)
+
+        XCTAssertTrue(didAssertRefreshBody)
+    }
+
     private func makeService() -> CodexProfileSnapshotService {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [CodexSnapshotMockURLProtocol.self]
@@ -211,4 +257,30 @@ private final class CodexSnapshotMockURLProtocol: URLProtocol {
     }
 
     override func stopLoading() {}
+}
+
+private func requestBodyData(_ request: URLRequest) -> Data? {
+    if let httpBody = request.httpBody {
+        return httpBody
+    }
+    guard let stream = request.httpBodyStream else {
+        return nil
+    }
+
+    stream.open()
+    defer { stream.close() }
+
+    let bufferSize = 4096
+    let buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: bufferSize)
+    defer { buffer.deallocate() }
+
+    var data = Data()
+    while stream.hasBytesAvailable {
+        let count = stream.read(buffer, maxLength: bufferSize)
+        if count <= 0 {
+            break
+        }
+        data.append(buffer, count: count)
+    }
+    return data.isEmpty ? nil : data
 }

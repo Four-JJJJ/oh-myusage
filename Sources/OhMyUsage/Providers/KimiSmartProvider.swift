@@ -14,7 +14,11 @@ final class KimiSmartProvider: UsageProvider, @unchecked Sendable {
         session: URLSession = .shared
     ) {
         self.descriptor = descriptor
-        self.officialProvider = KimiOfficialProvider(descriptor: descriptor, session: session)
+        self.officialProvider = KimiOfficialProvider(
+            descriptor: descriptor,
+            session: session,
+            keychain: keychain
+        )
         self.legacyProvider = KimiProvider(
             descriptor: Self.makeLegacyDescriptor(from: descriptor),
             session: session,

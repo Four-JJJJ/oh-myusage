@@ -68,6 +68,8 @@ enum RelayRequestResolver {
                 requests.append(contentsOf: moonshotProbeRequests(from: primary))
             case "minimax":
                 requests.append(contentsOf: minimaxProbeRequests(from: primary))
+            case "deepseek":
+                requests.append(contentsOf: deepseekProbeRequests(from: primary))
             default:
                 break
             }
@@ -223,8 +225,24 @@ enum RelayRequestResolver {
     }
 
     private static func minimaxProbeRequests(from base: ResolvedRelayRequest) -> [ResolvedRelayRequest] {
+        let codingPlanRequest = ResolvedRelayRequest(
+            method: "GET",
+            path: "https://api.minimaxi.com/v1/api/openplatform/coding_plan/remains",
+            bodyJSON: nil,
+            staticHeaders: ["Accept": "application/json", "Content-Type": "application/json"],
+            userID: nil,
+            userIDHeader: base.userIDHeader,
+            authHeader: "Authorization",
+            authScheme: "Bearer",
+            successExpression: nil,
+            remainingExpression: "model_remains.0.current_interval_remaining_percent",
+            usedExpression: nil,
+            limitExpression: "100",
+            unitExpression: "\"%\"",
+            accountLabelExpression: nil
+        )
         guard let groupID = base.userID?.trimmingCharacters(in: .whitespacesAndNewlines), !groupID.isEmpty else {
-            return []
+            return [codingPlanRequest]
         }
         let expressions = (
             remaining: "coalesce(data.available_amount,data.balance,data.availableBalance,data.accountBalance,data.currentBalance,data.current_balance,data.group.balance,data.groupBalance,data.wallet.balance,data.walletBalance,data.remainBalance,data.remainingBalance,available_amount,balance,availableBalance,accountBalance,currentBalance,current_balance,groupBalance,walletBalance,remainBalance,remainingBalance)",
@@ -238,7 +256,7 @@ enum RelayRequestResolver {
             "https://www.minimaxi.com/backend/account/query_balance?GroupId=\(groupID)",
             "https://platform.minimaxi.com/backend/query_balance?GroupId=\(groupID)"
         ]
-        return paths.map { path in
+        let cookieRequests = paths.map { path in
             ResolvedRelayRequest(
                 method: "GET",
                 path: path,
@@ -256,6 +274,30 @@ enum RelayRequestResolver {
                 accountLabelExpression: base.accountLabelExpression
             )
         }
+        return [codingPlanRequest] + cookieRequests
+    }
+
+    private static func deepseekProbeRequests(from base: ResolvedRelayRequest) -> [ResolvedRelayRequest] {
+        // The platform session endpoint only accepts browser login tokens. Pasted
+        // API keys (sk-...) are served by the official public balance endpoint.
+        [
+            ResolvedRelayRequest(
+                method: "GET",
+                path: "https://api.deepseek.com/user/balance",
+                bodyJSON: nil,
+                staticHeaders: base.staticHeaders,
+                userID: base.userID,
+                userIDHeader: base.userIDHeader,
+                authHeader: base.authHeader,
+                authScheme: base.authScheme,
+                successExpression: nil,
+                remainingExpression: "sum(balance_infos.*.total_balance)",
+                usedExpression: nil,
+                limitExpression: nil,
+                unitExpression: "coalesce(balance_infos.0.currency,\"CNY\")",
+                accountLabelExpression: base.accountLabelExpression
+            )
+        ]
     }
 
     private static func trimmedOrNil(_ value: String?) -> String? {

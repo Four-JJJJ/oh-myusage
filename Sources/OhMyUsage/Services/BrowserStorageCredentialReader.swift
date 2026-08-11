@@ -270,6 +270,7 @@ final class BrowserStorageCredentialReader {
                     around: match.range(at: 1),
                     nsText: ns,
                     normalizedHost: normalizedHost,
+                    requiresNearbyHost: !hostMatchedByPath && !hostMatchedBySiteKey,
                     keyHints: keyHints,
                     candidates: &candidates
                 )
@@ -282,6 +283,7 @@ final class BrowserStorageCredentialReader {
                     around: match.range(at: 1),
                     nsText: ns,
                     normalizedHost: normalizedHost,
+                    requiresNearbyHost: !hostMatchedByPath && !hostMatchedBySiteKey,
                     keyHints: keyHints,
                     candidates: &candidates
                 )
@@ -294,6 +296,7 @@ final class BrowserStorageCredentialReader {
                     around: match.range(at: 2),
                     nsText: ns,
                     normalizedHost: normalizedHost,
+                    requiresNearbyHost: !hostMatchedByPath && !hostMatchedBySiteKey,
                     keyHints: keyHints,
                     candidates: &candidates
                 )
@@ -319,6 +322,7 @@ final class BrowserStorageCredentialReader {
         around range: NSRange,
         nsText: NSString,
         normalizedHost: String,
+        requiresNearbyHost: Bool,
         keyHints: [String],
         candidates: inout [BearerTokenCandidate]
     ) {
@@ -344,6 +348,7 @@ final class BrowserStorageCredentialReader {
         let windowStart = max(0, range.location - 260)
         let windowLen = min(nsText.length - windowStart, range.length + 520)
         let window = nsText.substring(with: NSRange(location: windowStart, length: windowLen)).lowercased()
+        guard !requiresNearbyHost || window.contains(normalizedHost) else { return }
 
         var score = 0
         if window.contains(normalizedHost) { score += 4 }

@@ -11,8 +11,8 @@
     "recommendedBaseURL": "https://platform.deepseek.com",
     "requiredInputs": ["balanceAuth"],
     "balanceAuthHint": {
-      "zhHans": "粘贴请求头中的 Authorization 值（Bearer Token 或登录态令牌）。",
-      "en": "Paste the Authorization value from request headers (Bearer token or session token)."
+      "zhHans": "粘贴登录态 userToken（浏览器开发者工具 → Application → Local Storage → platform.deepseek.com → userToken），或粘贴 API Key（sk- 开头，在平台 API Keys 页面创建）。",
+      "en": "Paste your login userToken (DevTools → Application → Local Storage → platform.deepseek.com → userToken), or an API key (sk-..., created on the platform API Keys page)."
     }
   },
   "authStrategies": [

@@ -20,7 +20,18 @@ struct RelayBalanceChannelExecutor {
         let primaryBrowserAccessIntent: BrowserCredentialAccessIntent =
             credentialMode == .browserOnly ? .interactiveImport : browserAccessIntent
 
-        if let requiredInputError = recoveryPolicy.relayRequiredInputError(manifest: manifest, request: requestForCandidates) {
+        let savedCredential = credentialResolver.readSavedCredential(auth: relayConfig.balanceAuth)
+        let hasMiniMaxAPIKey = manifest.id == "minimax"
+            && savedCredential.map { !credentialResolver.looksLikeCookieHeader($0) } == true
+        if manifest.id == "minimax",
+           !hasMiniMaxAPIKey,
+           requestForCandidates.userID?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
+            throw ProviderError.unauthorizedDetail(
+                "MiniMax needs GroupId before it can query balance with a Cookie. Fill User ID with the GroupId from the account request URL, for example /account/query_balance?GroupId=..."
+            )
+        }
+        if !hasMiniMaxAPIKey,
+           let requiredInputError = recoveryPolicy.relayRequiredInputError(manifest: manifest, request: requestForCandidates) {
             throw requiredInputError
         }
 
@@ -117,8 +128,17 @@ struct RelayBalanceChannelExecutor {
             }
         }
 
-        if let recordedFailure = firstFailure,
-           let trigger = recoveryPolicy.recoveryTrigger(for: recordedFailure),
+        let missingSavedCredentialRecoveryTrigger = shouldAttemptMissingSavedCredentialBrowserRecovery(
+            credentialMode: credentialMode,
+            forceRefresh: forceRefresh,
+            manifest: manifest,
+            relayConfig: relayConfig,
+            primaryCandidates: primaryCandidates,
+            fallbackCandidates: fallbackDeduped
+        ) ? "missingSavedCredential" : nil
+        let recoveryTrigger = firstFailure.flatMap(recoveryPolicy.recoveryTrigger(for:)) ?? missingSavedCredentialRecoveryTrigger
+
+        if let trigger = recoveryTrigger,
            recoveryPolicy.relaySupportsBrowserRecovery(manifest: manifest, channel: .balance),
            await recoveryPolicy.canAttemptBrowserRecovery(
             host: baseURL.host?.lowercased() ?? "",
@@ -140,26 +160,35 @@ struct RelayBalanceChannelExecutor {
                 !fallbackDeduped.contains(where: { $0.headers == fallback.headers || $0.source == fallback.source })
             }
 
-            do {
-                let recovered = try await attemptBalanceFetch(
-                    candidates: recoveryCandidates,
-                    requests: requests,
-                    baseURL: baseURL,
-                    relayConfig: relayConfig,
-                    manifest: manifest,
-                    recoveryTrigger: trigger
-                )
-                await recoveryPolicy.clearBrowserRecoveryFailure(
-                    host: baseURL.host?.lowercased() ?? "",
-                    channel: .balance
-                )
-                return recovered
-            } catch let error as ProviderError {
-                firstFailure = error
+            if recoveryCandidates.isEmpty {
+                // Keep the original auth error instead of masking it with a
+                // missing-credential error from an empty recovery attempt.
                 await recoveryPolicy.markBrowserRecoveryFailure(
                     host: baseURL.host?.lowercased() ?? "",
                     channel: .balance
                 )
+            } else {
+                do {
+                    let recovered = try await attemptBalanceFetch(
+                        candidates: recoveryCandidates,
+                        requests: requests,
+                        baseURL: baseURL,
+                        relayConfig: relayConfig,
+                        manifest: manifest,
+                        recoveryTrigger: trigger
+                    )
+                    await recoveryPolicy.clearBrowserRecoveryFailure(
+                        host: baseURL.host?.lowercased() ?? "",
+                        channel: .balance
+                    )
+                    return recovered
+                } catch let error as ProviderError {
+                    firstFailure = error
+                    await recoveryPolicy.markBrowserRecoveryFailure(
+                        host: baseURL.host?.lowercased() ?? "",
+                        channel: .balance
+                    )
+                }
             }
         }
 
@@ -197,6 +226,24 @@ struct RelayBalanceChannelExecutor {
         throw ProviderError.missingCredential(relayConfig.balanceAuth.keychainAccount ?? "\(descriptor.id)/system-token")
     }
 
+    private func shouldAttemptMissingSavedCredentialBrowserRecovery(
+        credentialMode: RelayCredentialMode,
+        forceRefresh: Bool,
+        manifest: RelayAdapterManifest,
+        relayConfig: RelayProviderConfig,
+        primaryCandidates: [RelayCredentialCandidate],
+        fallbackCandidates: [RelayCredentialCandidate]
+    ) -> Bool {
+        guard credentialMode == .browserPreferred,
+              !forceRefresh,
+              primaryCandidates.isEmpty,
+              fallbackCandidates.isEmpty,
+              recoveryPolicy.relaySupportsBrowserRecovery(manifest: manifest, channel: .balance) else {
+            return false
+        }
+        return credentialResolver.readSavedCredential(auth: relayConfig.balanceAuth) == nil
+    }
+
     private func attemptBalanceFetch(
         candidates: [RelayCredentialCandidate],
         requests: [ResolvedRelayRequest],
@@ -226,10 +273,22 @@ struct RelayBalanceChannelExecutor {
                 throw ProviderError.unauthorizedDetail("saved bearer token expired")
             }
             for request in requests {
+                guard requestIsCompatible(
+                    request: request,
+                    candidate: candidate,
+                    manifest: manifest
+                ) else {
+                    continue
+                }
                 do {
+                    let candidateHeaders = requestHeaders(
+                        request: request,
+                        candidate: candidate,
+                        manifest: manifest
+                    )
                     let root = try await httpClient.requestJSON(
                         url: RelayRequestResolver.relayURL(baseURL: baseURL, rawPath: request.path),
-                        headers: candidate.headers.merging(request.staticHeaders, uniquingKeysWith: { _, rhs in rhs }),
+                        headers: candidateHeaders.merging(request.staticHeaders, uniquingKeysWith: { _, rhs in rhs }),
                         method: request.method,
                         bodyJSON: request.bodyJSON
                     )
@@ -243,7 +302,7 @@ struct RelayBalanceChannelExecutor {
                         baseURL: baseURL,
                         request: request,
                         manifest: manifest,
-                        headers: candidate.headers,
+                        headers: candidateHeaders,
                         candidate: candidate,
                         supplementalPlanType: harvestedPlanType,
                         requestJSON: httpClient.requestJSON
@@ -276,6 +335,40 @@ struct RelayBalanceChannelExecutor {
             }
         }
         throw lastError
+    }
+
+    private func requestIsCompatible(
+        request: ResolvedRelayRequest,
+        candidate: RelayCredentialCandidate,
+        manifest: RelayAdapterManifest
+    ) -> Bool {
+        if manifest.id == "minimax" {
+            let isCodingPlanRequest = request.path.contains("/coding_plan/remains")
+            let isBearer = candidate.source.lowercased().contains("bearer")
+            return isCodingPlanRequest == isBearer
+        }
+        if manifest.id == "deepseek",
+           let raw = candidate.persistedCredential?.trimmingCharacters(in: .whitespacesAndNewlines) {
+            let isPublicBalanceRequest = request.path.contains("api.deepseek.com/user/balance")
+            return raw.lowercased().hasPrefix("sk-") == isPublicBalanceRequest
+        }
+        return true
+    }
+
+    private func requestHeaders(
+        request: ResolvedRelayRequest,
+        candidate: RelayCredentialCandidate,
+        manifest: RelayAdapterManifest
+    ) -> [String: String] {
+        guard manifest.id == "minimax",
+              request.path.contains("/coding_plan/remains"),
+              let raw = candidate.persistedCredential else {
+            return candidate.headers
+        }
+        var headers = candidate.headers
+        headers.removeValue(forKey: "Cookie")
+        headers["Authorization"] = "Bearer \(credentialResolver.normalizeBearerToken(raw))"
+        return headers
     }
 
     private func attemptXiaomimimoTokenPlanFetch(

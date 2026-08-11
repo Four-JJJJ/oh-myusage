@@ -101,8 +101,11 @@ actor CodexProfileSnapshotService {
         request.httpMethod = "POST"
         request.timeoutInterval = 15
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
-        request.httpBody = "grant_type=refresh_token&client_id=app_EMoamEEZ73f0CkXaXp7hrann&refresh_token=\(refreshToken.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? refreshToken)"
-            .data(using: .utf8)
+        request.httpBody = OfficialProviderAuthRuntime.urlEncodedFormData([
+            "grant_type": "refresh_token",
+            "client_id": "app_EMoamEEZ73f0CkXaXp7hrann",
+            "refresh_token": refreshToken,
+        ])
 
         let refresh = try await OfficialProviderAuthRuntime.requestOAuthRefresh(
             session: session,

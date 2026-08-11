@@ -154,6 +154,9 @@ enum ProviderDescriptorNormalizer {
         if copy.family == .official || copy.id == "kimi-official" {
             copy.family = .official
             copy.name = "Kimi Coding"
+            if copy.auth.kind == .none {
+                copy.auth = OfficialProviderDefaultCatalog.kimi().auth
+            }
             if copy.officialConfig == nil {
                 copy.officialConfig = ProviderDescriptor.defaultOfficialConfig(type: .kimi)
             } else if copy.officialConfig?.manualCookieAccount?.isEmpty ?? true {

@@ -250,14 +250,13 @@ enum StatusBarDisplayPresenter {
     }
 
     private static func formattedAmount(_ value: Double) -> String {
-        let wholeValue = value.rounded(.towardZero)
-        let normalizedValue = wholeValue == 0 ? 0 : wholeValue
+        let normalizedValue = value == 0 ? 0 : value
         let formatter = NumberFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.numberStyle = .decimal
         formatter.usesGroupingSeparator = true
-        formatter.minimumFractionDigits = 0
-        formatter.maximumFractionDigits = 0
-        return formatter.string(from: NSNumber(value: normalizedValue)) ?? String(format: "%.0f", normalizedValue)
+        formatter.minimumFractionDigits = 2
+        formatter.maximumFractionDigits = 2
+        return formatter.string(from: NSNumber(value: normalizedValue)) ?? String(format: "%.2f", normalizedValue)
     }
 }

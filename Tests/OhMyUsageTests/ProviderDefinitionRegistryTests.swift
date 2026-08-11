@@ -49,6 +49,7 @@ final class ProviderDefinitionRegistryTests: XCTestCase {
             (.defaultOfficialTrae(), [.traeAuthorization]),
             (.defaultOfficialOpenRouterAPI(), [.bearerToken]),
             (.defaultOfficialOpenRouterCredits(), [.bearerToken]),
+            (.defaultOfficialKimi(), [.bearerToken]),
             (.defaultOfficialOpenCodeGo(), [.opencodeWorkspaceID, .opencodeManualCookie]),
             (.makeOpenRelay(name: "Relay X", baseURL: "https://relay.example.com"), [])
         ]

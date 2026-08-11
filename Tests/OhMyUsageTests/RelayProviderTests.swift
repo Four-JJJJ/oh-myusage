@@ -255,7 +255,7 @@ final class RelayProviderTests: XCTestCase {
     func testRegistryMatchesMinimaxManifest() {
         let manifest = RelayAdapterRegistry.shared.manifest(for: "https://platform.minimaxi.com")
         XCTAssertEqual(manifest.id, "minimax")
-        XCTAssertEqual(manifest.setup?.requiredInputs, [.balanceAuth, .userID])
+        XCTAssertEqual(manifest.setup?.requiredInputs, [.balanceAuth])
     }
 
     func testRegistryLoadsSetupMetadataForKnownTemplate() {
@@ -263,8 +263,8 @@ final class RelayProviderTests: XCTestCase {
         XCTAssertEqual(manifest.setup?.recommendedBaseURL, "https://platform.deepseek.com")
         XCTAssertEqual(manifest.setup?.requiredInputs, [.balanceAuth])
         let hint = manifest.setup?.balanceAuthHint?.zhHans ?? ""
-        XCTAssertTrue(hint.contains("Bearer Token"))
-        XCTAssertTrue(hint.contains("登录态令牌"))
+        XCTAssertTrue(hint.contains("userToken"))
+        XCTAssertTrue(hint.contains("API Key"))
     }
 
     func testRegistryDecoratesDisplayModeAndDiagnosticHints() {
@@ -450,6 +450,200 @@ final class RelayProviderTests: XCTestCase {
         XCTAssertEqual(snapshot.remaining ?? -1, 90, accuracy: 0.001)
         XCTAssertEqual(snapshot.rawMeta["account.authSource"], "savedBearer")
         XCTAssertEqual(browserBearerLookupCount, 0)
+    }
+
+    func testBrowserPreferredWithoutSavedCredentialImportsBrowserCookieInBackground() async throws {
+        RelayMockURLProtocol.requestHandler = { request in
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Cookie"), "api-platform_serviceToken=freshCookie; userId=10001")
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            switch request.url?.path {
+            case "/api/v1/userProfile":
+                return (response, Data(#"{"data":{"nickname":"mimo-user"}}"#.utf8))
+            case "/api/v1/balance":
+                return (response, Data(#"{"data":{"availableBalance":"42.42"}}"#.utf8))
+            default:
+                XCTFail("Unexpected path \(request.url?.path ?? "nil")")
+                return (response, Data(#"{}"#.utf8))
+            }
+        }
+        defer { RelayMockURLProtocol.requestHandler = nil }
+
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [RelayMockURLProtocol.self]
+        let session = URLSession(configuration: config)
+
+        let service = "OhMyUsageTests-\(UUID().uuidString)"
+        let keychain = makeTestKeychain()
+        var descriptor = makeRelayDescriptor(
+            service: service,
+            adapterID: "xiaomimimo",
+            baseURL: "https://platform.xiaomimimo.com",
+            balanceAccount: "platform.xiaomimimo.com/session-cookie"
+        )
+        descriptor.relayConfig?.balanceCredentialMode = .browserPreferred
+
+        var browserCookieLookupCount = 0
+        let provider = RelayProvider(
+            descriptor: descriptor,
+            session: session,
+            keychain: keychain,
+            browserCredentialService: BrowserCredentialService(
+                cookieHeaderOverride: { host in
+                    browserCookieLookupCount += 1
+                    guard host == "platform.xiaomimimo.com" else { return nil }
+                    return BrowserDetectedCredential(
+                        value: "api-platform_serviceToken=freshCookie; userId=10001",
+                        source: "browser"
+                    )
+                }
+            )
+        )
+
+        let snapshot = try await provider.fetch()
+        XCTAssertEqual(snapshot.remaining ?? -1, 42.42, accuracy: 0.001)
+        XCTAssertEqual(snapshot.rawMeta["account.authSource"], "browserCookieHeader:browser")
+        XCTAssertEqual(snapshot.rawMeta["relay.recovery.trigger"], "missingSavedCredential")
+        XCTAssertEqual(
+            keychain.readToken(service: service, account: "platform.xiaomimimo.com/session-cookie"),
+            "api-platform_serviceToken=freshCookie; userId=10001"
+        )
+        XCTAssertGreaterThanOrEqual(browserCookieLookupCount, 1)
+    }
+
+    func testXiaomimimoBrowserCookieCompletesUserIDFromParentDomain() async throws {
+        let expectedCookie = "api-platform_serviceToken=freshCookie; api-platform_slh=slh; userId=10001"
+        RelayMockURLProtocol.requestHandler = { request in
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Cookie"), expectedCookie)
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            switch request.url?.path {
+            case "/api/v1/userProfile":
+                return (response, Data(#"{"data":{"nickname":"mimo-user"}}"#.utf8))
+            case "/api/v1/balance":
+                return (response, Data(#"{"data":{"availableBalance":"42.42"}}"#.utf8))
+            default:
+                XCTFail("Unexpected path \(request.url?.path ?? "nil")")
+                return (response, Data(#"{}"#.utf8))
+            }
+        }
+        defer { RelayMockURLProtocol.requestHandler = nil }
+
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [RelayMockURLProtocol.self]
+        let session = URLSession(configuration: config)
+
+        let service = "OhMyUsageTests-\(UUID().uuidString)"
+        let keychain = makeTestKeychain()
+        var descriptor = makeRelayDescriptor(
+            service: service,
+            adapterID: "xiaomimimo",
+            baseURL: "https://platform.xiaomimimo.com",
+            balanceAccount: "platform.xiaomimimo.com/session-cookie"
+        )
+        descriptor.relayConfig?.balanceCredentialMode = .browserPreferred
+
+        let provider = RelayProvider(
+            descriptor: descriptor,
+            session: session,
+            keychain: keychain,
+            browserCredentialService: BrowserCredentialService(
+                cookieHeaderOverride: { host in
+                    switch host {
+                    case "platform.xiaomimimo.com":
+                        return BrowserDetectedCredential(
+                            value: "api-platform_serviceToken=freshCookie; api-platform_slh=slh",
+                            source: "browser-platform"
+                        )
+                    case "xiaomimimo.com":
+                        return BrowserDetectedCredential(
+                            value: "api-platform_serviceToken=freshCookie; api-platform_slh=slh; userId=10001",
+                            source: "browser-parent"
+                        )
+                    default:
+                        return nil
+                    }
+                }
+            )
+        )
+
+        let snapshot = try await provider.fetch()
+        XCTAssertEqual(snapshot.remaining ?? -1, 42.42, accuracy: 0.001)
+        XCTAssertEqual(snapshot.rawMeta["account.authSource"], "browserCookieHeader:browser-platform+browser-parent")
+        XCTAssertEqual(snapshot.rawMeta["relay.recovery.trigger"], "missingSavedCredential")
+        XCTAssertEqual(
+            keychain.readToken(service: service, account: "platform.xiaomimimo.com/session-cookie"),
+            expectedCookie
+        )
+    }
+
+    func testXiaomimimoTokenPlanBrowserCookieCompletesUserIDFromParentDomain() async throws {
+        let expectedCookie = "api-platform_serviceToken=freshCookie; api-platform_slh=slh; userId=10001"
+        RelayMockURLProtocol.requestHandler = { request in
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Cookie"), expectedCookie)
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            switch request.url?.path {
+            case "/api/v1/tokenPlan/detail":
+                return (
+                    response,
+                    Data(#"{"code":0,"message":"","data":{"planCode":"standard","planName":"Standard","currentPeriodEnd":"2026-05-28 23:59:59","expired":false,"enableAutoRenew":false}}"#.utf8)
+                )
+            case "/api/v1/tokenPlan/usage":
+                return (
+                    response,
+                    Data(#"{"code":0,"message":"","data":{"usage":{"percent":0.0,"items":[{"name":"plan_total_token","used":7804244,"limit":200000000,"percent":0.0}]}}}"#.utf8)
+                )
+            default:
+                XCTFail("Unexpected path \(request.url?.path ?? "nil")")
+                return (response, Data(#"{}"#.utf8))
+            }
+        }
+        defer { RelayMockURLProtocol.requestHandler = nil }
+
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [RelayMockURLProtocol.self]
+        let session = URLSession(configuration: config)
+
+        let service = "OhMyUsageTests-\(UUID().uuidString)"
+        let keychain = makeTestKeychain()
+        var descriptor = makeRelayDescriptor(
+            service: service,
+            adapterID: "xiaomimimo-token-plan",
+            baseURL: "https://platform.xiaomimimo.com",
+            balanceAccount: "platform.xiaomimimo.com/session-cookie"
+        )
+        descriptor.relayConfig?.balanceCredentialMode = .browserPreferred
+
+        let provider = RelayProvider(
+            descriptor: descriptor,
+            session: session,
+            keychain: keychain,
+            browserCredentialService: BrowserCredentialService(
+                cookieHeaderOverride: { host in
+                    switch host {
+                    case "platform.xiaomimimo.com":
+                        return BrowserDetectedCredential(
+                            value: "api-platform_serviceToken=freshCookie; api-platform_slh=slh",
+                            source: "browser-platform"
+                        )
+                    case "xiaomimimo.com":
+                        return BrowserDetectedCredential(
+                            value: "api-platform_serviceToken=freshCookie; api-platform_slh=slh; userId=10001",
+                            source: "browser-parent"
+                        )
+                    default:
+                        return nil
+                    }
+                }
+            )
+        )
+
+        let snapshot = try await provider.fetch()
+        XCTAssertEqual(snapshot.used ?? -1, 3.902122, accuracy: 0.000001)
+        XCTAssertEqual(snapshot.rawMeta["account.authSource"], "browserCookieHeader:browser-platform+browser-parent")
+        XCTAssertEqual(snapshot.rawMeta["relay.recovery.trigger"], "missingSavedCredential")
+        XCTAssertEqual(
+            keychain.readToken(service: service, account: "platform.xiaomimimo.com/session-cookie"),
+            expectedCookie
+        )
     }
 
     func testAuthRecoveryFailureBackoffSkipsRepeatedBrowserLookups() async {
@@ -2064,6 +2258,10 @@ final class RelayProviderTests: XCTestCase {
 
     func testDeepseekFallsBackToBearerPlusCookieWhenBearerOnlyReturnsHTML() async throws {
         RelayMockURLProtocol.requestHandler = { request in
+            if request.url?.host == "api.deepseek.com" {
+                let notFound = HTTPURLResponse(url: request.url!, statusCode: 404, httpVersion: nil, headerFields: nil)!
+                return (notFound, Data())
+            }
             XCTAssertEqual(request.url?.path, "/api/v0/users/get_user_summary")
             let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
             let auth = request.value(forHTTPHeaderField: "Authorization")
@@ -2112,10 +2310,276 @@ final class RelayProviderTests: XCTestCase {
             )
         )
 
-        let snapshot = try await provider.fetch()
+        let snapshot = try await provider.fetch(forceRefresh: true)
         XCTAssertEqual(snapshot.remaining ?? -1, 10.0, accuracy: 0.000001)
         XCTAssertEqual(snapshot.unit, "CNY")
         XCTAssertEqual(snapshot.rawMeta["account.authSource"], "savedBearer+cookie:browser")
+    }
+
+    func testDeepseekAPIKeyFallsBackToPublicBalanceEndpoint() async throws {
+        var platformRequestCount = 0
+        RelayMockURLProtocol.requestHandler = { request in
+            if request.url?.host == "api.deepseek.com" {
+                XCTAssertEqual(request.url?.path, "/user/balance")
+                XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer sk-testkey1234567890")
+                let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+                let json = #"""
+                {
+                  "is_available": true,
+                  "balance_infos": [
+                    {
+                      "currency": "CNY",
+                      "total_balance": "8.50",
+                      "granted_balance": "0.50",
+                      "topped_up_balance": "8.00"
+                    }
+                  ]
+                }
+                """#
+                return (response, Data(json.utf8))
+            }
+            platformRequestCount += 1
+            XCTAssertEqual(request.url?.path, "/api/v0/users/get_user_summary")
+            let response = HTTPURLResponse(url: request.url!, statusCode: 401, httpVersion: nil, headerFields: nil)!
+            return (response, Data())
+        }
+        defer { RelayMockURLProtocol.requestHandler = nil }
+
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [RelayMockURLProtocol.self]
+        let session = URLSession(configuration: config)
+
+        let service = "OhMyUsageTests-\(UUID().uuidString)"
+        let keychain = makeTestKeychain()
+        XCTAssertTrue(keychain.saveToken("sk-testkey1234567890", service: service, account: "platform.deepseek.com/system-token"))
+
+        let provider = RelayProvider(
+            descriptor: makeRelayDescriptor(service: service, adapterID: "deepseek", baseURL: "https://platform.deepseek.com"),
+            session: session,
+            keychain: keychain,
+            browserCredentialService: BrowserCredentialService(
+                bearerCandidatesOverride: { _ in [] },
+                cookieHeaderOverride: { _ in nil }
+            )
+        )
+
+        let snapshot = try await provider.fetch()
+        XCTAssertEqual(snapshot.remaining ?? -1, 8.5, accuracy: 0.000001)
+        XCTAssertEqual(snapshot.unit, "CNY")
+        XCTAssertEqual(snapshot.rawMeta["relay.adapterID"], "deepseek")
+        XCTAssertEqual(platformRequestCount, 0, "API keys should bypass the browser-session endpoint")
+    }
+
+    func testDeepseekRejectedSessionTokenSurfacesHelpfulAuthError() async throws {
+        RelayMockURLProtocol.requestHandler = { request in
+            XCTAssertEqual(request.url?.path, "/api/v0/users/get_user_summary")
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            let json = #"{"code":40003,"msg":"Authorization Failed (invalid token)","data":null}"#
+            return (response, Data(json.utf8))
+        }
+        defer { RelayMockURLProtocol.requestHandler = nil }
+
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [RelayMockURLProtocol.self]
+        let session = URLSession(configuration: config)
+
+        let service = "OhMyUsageTests-\(UUID().uuidString)"
+        let keychain = makeTestKeychain()
+        XCTAssertTrue(keychain.saveToken("ok-token", service: service, account: "platform.deepseek.com/system-token"))
+
+        let provider = RelayProvider(
+            descriptor: makeRelayDescriptor(service: service, adapterID: "deepseek", baseURL: "https://platform.deepseek.com"),
+            session: session,
+            keychain: keychain,
+            browserCredentialService: BrowserCredentialService(
+                bearerCandidatesOverride: { _ in [] },
+                cookieHeaderOverride: { _ in nil }
+            )
+        )
+
+        do {
+            _ = try await provider.fetch()
+            XCTFail("Expected unauthorizedDetail for rejected session token")
+        } catch let error as ProviderError {
+            guard case .unauthorizedDetail(let message) = error else {
+                return XCTFail("Expected unauthorizedDetail, got \(error)")
+            }
+            XCTAssertTrue(message.contains("DeepSeek login missing or expired"), "message: \(message)")
+        }
+    }
+
+    func testDeepseekRejectsRefreshJWTBeforeSendingRequest() async throws {
+        RelayMockURLProtocol.requestHandler = { request in
+            XCTFail("No HTTP request expected for refresh JWT, got \(request.url?.absoluteString ?? "?")")
+            let response = HTTPURLResponse(url: request.url!, statusCode: 500, httpVersion: nil, headerFields: nil)!
+            return (response, Data())
+        }
+        defer { RelayMockURLProtocol.requestHandler = nil }
+
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [RelayMockURLProtocol.self]
+        let session = URLSession(configuration: config)
+
+        let payload = Data(#"{"typ":"refresh","exp":4102444800}"#.utf8)
+            .base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+        let refreshJWT = "header.\(payload).signature"
+        let service = "OhMyUsageTests-\(UUID().uuidString)"
+        let keychain = makeTestKeychain()
+        XCTAssertTrue(keychain.saveToken(refreshJWT, service: service, account: "platform.deepseek.com/system-token"))
+
+        let provider = RelayProvider(
+            descriptor: makeRelayDescriptor(service: service, adapterID: "deepseek", baseURL: "https://platform.deepseek.com"),
+            session: session,
+            keychain: keychain,
+            browserCredentialService: BrowserCredentialService(
+                bearerCandidatesOverride: { _ in [] },
+                cookieHeaderOverride: { _ in nil }
+            )
+        )
+
+        do {
+            _ = try await provider.fetch()
+            XCTFail("Expected rejected refresh credential")
+        } catch let error as ProviderError {
+            guard case .unauthorizedDetail(let message) = error else {
+                return XCTFail("Expected unauthorizedDetail, got \(error)")
+            }
+            XCTAssertTrue(message.contains("expired"), "message: \(message)")
+        }
+    }
+
+    func testDeepseekBrowserPreferredWithoutCredentialShowsPlatformLoginGuidance() async throws {
+        RelayMockURLProtocol.requestHandler = { request in
+            XCTFail("No HTTP request expected without credentials, got \(request.url?.absoluteString ?? "?")")
+            let response = HTTPURLResponse(url: request.url!, statusCode: 500, httpVersion: nil, headerFields: nil)!
+            return (response, Data())
+        }
+        defer { RelayMockURLProtocol.requestHandler = nil }
+
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [RelayMockURLProtocol.self]
+        let session = URLSession(configuration: config)
+
+        let service = "OhMyUsageTests-\(UUID().uuidString)"
+        var descriptor = makeRelayDescriptor(service: service, adapterID: "deepseek", baseURL: "https://platform.deepseek.com")
+        descriptor.relayConfig?.balanceCredentialMode = .browserPreferred
+
+        let provider = RelayProvider(
+            descriptor: descriptor,
+            session: session,
+            keychain: makeTestKeychain(),
+            browserCredentialService: BrowserCredentialService(
+                bearerCandidatesOverride: { _ in [] },
+                cookieHeaderOverride: { _ in nil }
+            )
+        )
+
+        do {
+            _ = try await provider.fetch()
+            XCTFail("Expected unauthorizedDetail preflight guidance")
+        } catch let error as ProviderError {
+            guard case .unauthorizedDetail(let message) = error else {
+                return XCTFail("Expected unauthorizedDetail, got \(error)")
+            }
+            XCTAssertTrue(message.contains("platform.deepseek.com"), "message: \(message)")
+            XCTAssertTrue(message.contains("chat.deepseek.com"), "message: \(message)")
+        }
+    }
+
+    func testDeepseekManualPreferredWithoutCredentialShowsPasteGuidance() async throws {
+        RelayMockURLProtocol.requestHandler = { request in
+            XCTFail("No HTTP request expected without credentials, got \(request.url?.absoluteString ?? "?")")
+            let response = HTTPURLResponse(url: request.url!, statusCode: 500, httpVersion: nil, headerFields: nil)!
+            return (response, Data())
+        }
+        defer { RelayMockURLProtocol.requestHandler = nil }
+
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [RelayMockURLProtocol.self]
+        let session = URLSession(configuration: config)
+
+        let service = "OhMyUsageTests-\(UUID().uuidString)"
+        let provider = RelayProvider(
+            descriptor: makeRelayDescriptor(service: service, adapterID: "deepseek", baseURL: "https://platform.deepseek.com"),
+            session: session,
+            keychain: makeTestKeychain(),
+            browserCredentialService: BrowserCredentialService(
+                bearerCandidatesOverride: { _ in [] },
+                cookieHeaderOverride: { _ in nil }
+            )
+        )
+
+        do {
+            _ = try await provider.fetch()
+            XCTFail("Expected unauthorizedDetail preflight guidance")
+        } catch let error as ProviderError {
+            guard case .unauthorizedDetail(let message) = error else {
+                return XCTFail("Expected unauthorizedDetail, got \(error)")
+            }
+            XCTAssertTrue(message.contains("userToken"), "message: \(message)")
+            XCTAssertTrue(message.contains("sk-"), "message: \(message)")
+        }
+    }
+
+    func testMiniMaxCodingPlanUsesSavedAPIKeyWithoutGroupID() async throws {
+        RelayMockURLProtocol.requestHandler = { request in
+            XCTAssertEqual(
+                request.url?.absoluteString,
+                "https://api.minimaxi.com/v1/api/openplatform/coding_plan/remains"
+            )
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer minimax-api-key")
+            XCTAssertNil(request.value(forHTTPHeaderField: "Cookie"))
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            let body = """
+            {
+              "base_resp": { "status_code": 0, "status_msg": "success" },
+              "model_remains": [
+                {
+                  "model_name": "general",
+                  "current_interval_remaining_percent": 72,
+                  "end_time": 1893456000000,
+                  "current_weekly_status": 1,
+                  "current_weekly_remaining_percent": 64,
+                  "weekly_end_time": 1893888000000
+                }
+              ]
+            }
+            """
+            return (response, Data(body.utf8))
+        }
+        defer { RelayMockURLProtocol.requestHandler = nil }
+
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [RelayMockURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        let service = "OhMyUsageTests-\(UUID().uuidString)"
+        let keychain = makeTestKeychain()
+        XCTAssertTrue(
+            keychain.saveToken(
+                "minimax-api-key",
+                service: service,
+                account: "platform.minimaxi.com/system-token"
+            )
+        )
+        let provider = RelayProvider(
+            descriptor: makeRelayDescriptor(
+                service: service,
+                adapterID: "minimax",
+                baseURL: "https://platform.minimaxi.com"
+            ),
+            session: session,
+            keychain: keychain,
+            browserCredentialService: BrowserCredentialService()
+        )
+
+        let snapshot = try await provider.fetch(forceRefresh: true)
+        XCTAssertEqual(snapshot.remaining ?? -1, 64, accuracy: 0.001)
+        XCTAssertEqual(snapshot.unit, "%")
+        XCTAssertEqual(snapshot.extras["planType"], "Coding Plan")
+        XCTAssertEqual(snapshot.quotaWindows.count, 2)
     }
 
     private func makeRelayDescriptor(

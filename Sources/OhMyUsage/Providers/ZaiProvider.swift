@@ -17,9 +17,10 @@ final class ZaiProvider: UsageProvider, @unchecked Sendable {
         }
 
         let apiKey = try resolveAPIKey()
-        async let subscription = request(path: "/api/biz/subscription/list", apiKey: apiKey)
-        async let quota = request(path: "/api/monitor/usage/quota/limit", apiKey: apiKey)
-        let (subscriptionRoot, quotaRoot) = try await (subscription, quota)
+        let quotaRoot = try await request(path: "/api/monitor/usage/quota/limit", apiKey: apiKey)
+        // Plan metadata is optional. A temporary failure or upstream removal of
+        // this endpoint must not hide otherwise valid quota data.
+        let subscriptionRoot = (try? await request(path: "/api/biz/subscription/list", apiKey: apiKey)) ?? [:]
         return try Self.parseSnapshot(subscriptionRoot: subscriptionRoot, quotaRoot: quotaRoot, descriptor: descriptor)
     }
 
@@ -63,7 +64,9 @@ final class ZaiProvider: UsageProvider, @unchecked Sendable {
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.timeoutInterval = 15
-        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        // The GLM quota endpoint expects the API key verbatim. Adding a Bearer
+        // prefix is accepted by some inference endpoints but rejected here.
+        request.setValue(Self.authorizationHeaderValue(apiKey: apiKey), forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
@@ -84,6 +87,10 @@ final class ZaiProvider: UsageProvider, @unchecked Sendable {
             throw ProviderError.invalidResponse("Z.ai response decode failed")
         }
         return json
+    }
+
+    internal static func authorizationHeaderValue(apiKey: String) -> String {
+        apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     internal static func parseSnapshot(
@@ -112,7 +119,7 @@ final class ZaiProvider: UsageProvider, @unchecked Sendable {
                 if unit == 3 && number == 5 {
                     kind = .session
                     title = "5h"
-                } else if unit == 6 && number == 7 {
+                } else if unit == 6 {
                     kind = .weekly
                     title = "Weekly"
                 } else {
