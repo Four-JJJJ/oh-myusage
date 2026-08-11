@@ -1,6 +1,7 @@
 import Foundation
 import XCTest
 @testable import OhMyUsage
+import OhMyUsageProviders
 
 final class CCSwitchUsageLogReaderTests: XCTestCase {
     private var temporaryDirectory: URL!

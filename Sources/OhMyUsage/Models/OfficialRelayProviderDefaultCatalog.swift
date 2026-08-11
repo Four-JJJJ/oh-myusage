@@ -2,6 +2,10 @@ import Foundation
 import OhMyUsageDomain
 
 enum OfficialRelayProviderDefaultCatalog {
+    static var allDefaultProviders: [ProviderDescriptor] {
+        OfficialRelayMetadataCatalog.defaultProviderOrder.map { provider(forProviderID: $0) }
+    }
+
     static func provider(forProviderID providerID: String) -> ProviderDescriptor {
         guard let metadata = OfficialRelayMetadataCatalog.metadata(forProviderID: providerID) else {
             preconditionFailure("Missing official relay metadata for \(providerID)")

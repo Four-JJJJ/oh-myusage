@@ -1,4 +1,5 @@
 import Foundation
+import OhMyUsageProviders
 
 final class BrowserCookieService: BrowserCookieDetecting {
     private static let defaultBrowserOrder: [KimiBrowserKind] = [.arc, .chrome, .safari, .edge, .brave, .firefox, .opera, .operaGX, .vivaldi, .chromium]

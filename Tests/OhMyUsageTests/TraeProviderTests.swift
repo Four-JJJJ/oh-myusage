@@ -2,6 +2,7 @@ import Foundation
 import OhMyUsageDomain
 import XCTest
 @testable import OhMyUsage
+import OhMyUsageProviders
 
 final class TraeProviderTests: XCTestCase {
     func testParseSnapshotParsesDollarAndAutocompleteWindows() throws {

@@ -9,19 +9,19 @@ oh-myusage 把官方订阅额度、模型使用窗口、第三方中转余额、
 
 [下载最新版本](https://github.com/Four-JJJJ/oh-myusage/releases/latest) · [安装说明](docs/DOWNLOAD.md) · [支持的服务](docs/PROVIDERS.md) · [扩展指南](docs/EXTENDING.md) · [发布清单](docs/RELEASE_CHECKLIST.md) · [English](docs/README.en.md)
 
-## V2.2.4 更新
+## V2.3.0 更新
 
-V2.2.4 的重点是提高官方模型余额与额度查询的稳定性，并修复多余额菜单栏展示。
+V2.3.0 的重点是对齐 Cursor 最新双额度模型，并完成一轮 App 分层与发布稳定性优化。
 
-本次更新集中在五件事：
+本次更新集中在这些事：
 
 | 方向 | 改进 |
 | --- | --- |
-| 官方余额 | DeepSeek 支持使用已保存的 API key 查询账户余额，并区分余额与订阅限额展示 |
-| 凭证恢复 | 优化 Kimi、MiniMax、Xiaomi MiMo 等服务的浏览器凭证、Cookie 合并和失效凭证回退 |
-| 额度解析 | 增强 Kimi Coding、MiniMax Coding Plan、Moonshot 及多种官方余额响应结构的解析兼容性 |
-| 账号刷新 | Codex 鉴权失败时自动刷新一次凭证，并改进账号切换后的状态同步 |
-| 菜单栏 | 恢复同时展示多个余额，金额统一保留两位小数并支持千分位 |
+| Cursor 额度 | 按官方仪表盘拆分为 Cursor Models / Other Models 两类额度，不再误显示为单一 Monthly |
+| 发布打包 | 修复打包脚本可能打进过期二进制的问题，确保 DMG / ZIP 使用最新 Release 产物 |
+| 架构分层 | Providers / Application / Presentation 端口化与 AppViewModel 职责拆分，降低单体耦合 |
+| 运行稳定 | 优化设置持久化反馈自动清除，并加固 Provider 刷新调度，减少挂起与测试泄漏 |
+| 工程护栏 | 补充架构边界测试与组合入口收口，减少后续改动踩线 |
 
 ## 适合谁
 

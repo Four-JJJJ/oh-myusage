@@ -3,6 +3,7 @@ import AppKit
 import Foundation
 import XCTest
 @testable import OhMyUsage
+import OhMyUsageProviders
 
 @MainActor
 final class AppViewModelCodexSwitchTests: XCTestCase {

@@ -1,5 +1,6 @@
 import Foundation
 import OhMyUsageDomain
+import OhMyUsageProviders
 
 struct RelayBalanceChannelExecutor {
     let descriptor: ProviderDescriptor

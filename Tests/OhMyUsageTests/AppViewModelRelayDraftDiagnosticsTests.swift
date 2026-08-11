@@ -1,6 +1,7 @@
 import OhMyUsageDomain
 import XCTest
 @testable import OhMyUsage
+import OhMyUsageProviders
 
 @MainActor
 final class AppViewModelRelayDraftDiagnosticsTests: XCTestCase {

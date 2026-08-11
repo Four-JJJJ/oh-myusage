@@ -1,16 +1,8 @@
 import Foundation
 import OhMyUsageDomain
+import OhMyUsagePresentation
 
-enum OfficialMonitoringHealthStatus: Equatable {
-    case unknown
-    case authError
-    case configError
-    case rateLimited
-    case disconnected
-    case sufficient
-    case tight
-    case exhausted
-}
+typealias OfficialMonitoringHealthStatus = OhMyUsagePresentation.OfficialMonitoringHealthStatus
 
 enum SettingsQuotaPresenter {
     nonisolated static func resolvedOfficialMonitoringProvider(
@@ -38,46 +30,20 @@ enum SettingsQuotaPresenter {
         for window: UsageQuotaWindow,
         displaysUsedQuota: Bool
     ) -> (displayPercent: Double, healthPercent: Double) {
-        let healthPercent = max(0, min(100, window.remainingPercent))
-        let displayPercent = displaysUsedQuota
-            ? max(0, min(100, window.usedPercent))
-            : healthPercent
-        return (displayPercent, healthPercent)
+        OfficialMonitoringHealthPresenter.quotaMetricPercents(
+            for: window,
+            displaysUsedQuota: displaysUsedQuota
+        )
     }
 
     nonisolated static func officialMonitoringHealthStatus(
         snapshot: UsageSnapshot?,
         healthPercents: [Double]
     ) -> OfficialMonitoringHealthStatus {
-        guard let snapshot else {
-            return .unknown
-        }
-
-        if snapshot.valueFreshness == .empty {
-            switch snapshot.fetchHealth {
-            case .authExpired:
-                return .authError
-            case .endpointMisconfigured:
-                return .configError
-            case .rateLimited:
-                return .rateLimited
-            case .unreachable:
-                return .disconnected
-            case .ok:
-                return .tight
-            }
-        }
-
-        guard let minimum = healthPercents.min() else {
-            return .tight
-        }
-        if minimum > 30 {
-            return .sufficient
-        }
-        if minimum > 10 {
-            return .tight
-        }
-        return .exhausted
+        OfficialMonitoringHealthPresenter.officialMonitoringHealthStatus(
+            snapshot: snapshot,
+            healthPercents: healthPercents
+        )
     }
 }
 
@@ -99,17 +65,12 @@ enum QuotaBlockagePresenter {
         currentIsAvailable: Bool = true,
         candidateWindows: [(kind: UsageQuotaKind?, remainingPercent: Double?, isAvailable: Bool)]
     ) -> Bool {
-        guard currentIsAvailable,
-              currentKind == .session,
-              (currentRemainingPercent ?? 0) > 0 else {
-            return false
-        }
-
-        return candidateWindows.contains { candidate in
-            candidate.isAvailable
-                && candidate.kind == .weekly
-                && (candidate.remainingPercent ?? 100) <= 0
-        }
+        QuotaBlockagePolicy.isBlockedByDepletedWeeklyQuota(
+            currentKind: currentKind,
+            currentRemainingPercent: currentRemainingPercent,
+            currentIsAvailable: currentIsAvailable,
+            candidateWindows: candidateWindows
+        )
     }
 
     nonisolated static func isBlockedByDepletedWeeklyQuota(

@@ -1,8 +1,10 @@
-import Foundation
 import Darwin
+import Foundation
 
-struct ShellCommand {
-    static func run(
+public struct ShellCommand: Sendable {
+    public init() {}
+
+    public static func run(
         executable: String,
         arguments: [String],
         input: String? = nil,

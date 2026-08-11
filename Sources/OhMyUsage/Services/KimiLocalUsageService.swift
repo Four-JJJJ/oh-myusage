@@ -25,6 +25,11 @@ final class KimiLocalUsageService {
         self.onWireFileParsed = onWireFileParsed
     }
 
+    static func clearCachesForTesting() {
+        wireFileEnumerationCache.removeAllEntries()
+        parsedWireFileCache.removeAllEntries()
+    }
+
     func fetchSummary(
         scope: LocalUsageTrendScope = .allAccounts,
         sessionsRootPath: String? = nil
@@ -231,6 +236,7 @@ final class KimiLocalUsageService {
     private func scanJSONLLines(
         atPath path: String,
         maxLineBytes: Int = RuntimeDiagnosticsLimits.jsonlMaxLineBytes,
+        maxFileBytes: Int = RuntimeDiagnosticsLimits.jsonlMaxFileBytes,
         onLine: (String) -> Void
     ) {
         guard let handle = FileHandle(forReadingAtPath: path) else {
@@ -243,6 +249,7 @@ final class KimiLocalUsageService {
         let newline = Data([0x0A])
         var buffer = Data()
         var droppingOversizedLine = false
+        var totalBytesRead = 0
 
         while true {
             let chunk = try? handle.read(upToCount: 64 * 1024)
@@ -256,6 +263,11 @@ final class KimiLocalUsageService {
                    let line = String(data: buffer, encoding: .utf8) {
                     onLine(line)
                 }
+                break
+            }
+
+            totalBytesRead += chunk.count
+            if totalBytesRead > maxFileBytes {
                 break
             }
 

@@ -1,5 +1,6 @@
 import OhMyUsageDomain
 import Foundation
+import OhMyUsageProviders
 
 final class GeminiProvider: UsageProvider, @unchecked Sendable {
     private static let cache = SnapshotTimestampOfficialSnapshotCache()
@@ -11,6 +12,7 @@ final class GeminiProvider: UsageProvider, @unchecked Sendable {
     private let cache: any OfficialSnapshotCaching
     private let gate: any OfficialFetchGating
     private let homeDirectory: () -> String
+    private let shell: any ShellCommandRunning
 
     let descriptor: ProviderDescriptor
 
@@ -19,13 +21,15 @@ final class GeminiProvider: UsageProvider, @unchecked Sendable {
         session: URLSession = .shared,
         cache: any OfficialSnapshotCaching = GeminiProvider.cache,
         gate: any OfficialFetchGating = GeminiProvider.gate,
-        homeDirectory: @escaping () -> String = { NSHomeDirectory() }
+        homeDirectory: @escaping () -> String = { NSHomeDirectory() },
+        shell: any ShellCommandRunning = DefaultShellCommandRunner()
     ) {
         self.descriptor = descriptor
         self.session = session
         self.cache = cache
         self.gate = gate
         self.homeDirectory = homeDirectory
+        self.shell = shell
     }
 
     func fetch() async throws -> UsageSnapshot {
@@ -346,7 +350,7 @@ final class GeminiProvider: UsageProvider, @unchecked Sendable {
         }
 
         var executableCandidates: [String] = []
-        if let discovered = ShellCommand.run(executable: "/usr/bin/which", arguments: ["gemini"], timeout: 5)?
+        if let discovered = shell.run(executable: "/usr/bin/which", arguments: ["gemini"], timeout: 5)?
             .stdout.trimmingCharacters(in: .whitespacesAndNewlines),
            !discovered.isEmpty {
             executableCandidates.append(discovered)

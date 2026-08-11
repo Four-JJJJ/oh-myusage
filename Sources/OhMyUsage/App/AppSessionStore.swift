@@ -2,6 +2,8 @@ import OhMyUsageDomain
 import Foundation
 import UserNotifications
 
+/// Provider runtime state. Physically stored on `AppSessionStore` for Observation.
+/// Logical writes must go through `AppProviderRefreshModel` (not direct VM projection assignment).
 struct ProviderStateStore {
     var snapshots: [String: UsageSnapshot] = [:]
     var errors: [String: String] = [:]

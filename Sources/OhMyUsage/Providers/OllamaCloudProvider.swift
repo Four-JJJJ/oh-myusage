@@ -1,12 +1,13 @@
 import OhMyUsageDomain
 import Foundation
+import OhMyUsageProviders
 
 final class OllamaCloudProvider: UsageProvider, @unchecked Sendable {
     private static let webReadBackoff = WebOverlayRetryBackoff()
 
     private let session: URLSession
-    private let keychain: KeychainService
-    private let browserCookieService: BrowserCookieDetecting
+    private let keychain: any TokenCredentialStoring
+    private let browserCookieService: any BrowserCookieDetecting
     private let webReadBackoff: WebOverlayRetryBackoff
     private let webRetryBackoffInterval: TimeInterval = 15 * 60
 
@@ -15,8 +16,8 @@ final class OllamaCloudProvider: UsageProvider, @unchecked Sendable {
     init(
         descriptor: ProviderDescriptor,
         session: URLSession = .shared,
-        keychain: KeychainService,
-        browserCookieService: BrowserCookieDetecting,
+        keychain: any TokenCredentialStoring,
+        browserCookieService: any BrowserCookieDetecting,
         webReadBackoff: WebOverlayRetryBackoff = OllamaCloudProvider.webReadBackoff
     ) {
         self.descriptor = descriptor

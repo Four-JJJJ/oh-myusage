@@ -2,6 +2,7 @@ import Foundation
 import XCTest
 import OhMyUsageApplication
 @testable import OhMyUsage
+import OhMyUsageProviders
 
 final class LocalSessionCompletionSignalMonitorTests: XCTestCase {
     private var temporaryDirectory: URL!

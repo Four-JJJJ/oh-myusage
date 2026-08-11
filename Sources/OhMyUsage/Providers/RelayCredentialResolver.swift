@@ -1,5 +1,6 @@
 import Foundation
 import OhMyUsageDomain
+import OhMyUsageProviders
 
 struct RelayRawTokenCandidate {
     let token: String
@@ -14,8 +15,8 @@ struct RelayCredentialCandidate {
 
 struct RelayCredentialResolver {
     let descriptor: ProviderDescriptor
-    let keychain: KeychainService
-    let browserCredentialService: BrowserCredentialService
+    let keychain: any TokenCredentialStoring
+    let browserCredentialService: any BrowserCredentialProviding
 
     func resolveTokenCandidates(
         host: String,

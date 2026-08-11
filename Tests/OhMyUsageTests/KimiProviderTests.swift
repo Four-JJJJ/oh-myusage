@@ -2,6 +2,7 @@ import Foundation
 import OhMyUsageDomain
 import XCTest
 @testable import OhMyUsage
+import OhMyUsageProviders
 
 final class KimiProviderTests: XCTestCase {
     func testParseSnapshotWithWeeklyAndFiveHourLimits() throws {
@@ -88,7 +89,7 @@ final class KimiProviderTests: XCTestCase {
             descriptor: makeDescriptor(),
             session: session,
             keychain: makeTestKeychain(),
-            browserCookieService: KimiBrowserCookieService(),
+            browserCookieService: StubKimiBrowserCookieDetector(),
             tokenResolverOverride: { ("fake.jwt.token", "manual") }
         )
 
@@ -146,7 +147,7 @@ final class KimiProviderTests: XCTestCase {
             descriptor: makeDescriptor(),
             session: session,
             keychain: makeTestKeychain(),
-            browserCookieService: KimiBrowserCookieService(),
+            browserCookieService: StubKimiBrowserCookieDetector(),
             tokenResolverOverride: { (prefixed, "manual") }
         )
 
@@ -208,7 +209,7 @@ final class KimiProviderTests: XCTestCase {
             descriptor: descriptor,
             session: session,
             keychain: keychain,
-            browserCookieService: KimiBrowserCookieService(),
+            browserCookieService: StubKimiBrowserCookieDetector(),
             browserTokenResolverOverride: { _, _ in
                 browserLookupCount += 1
                 return KimiDetectedToken(token: autoToken, source: "auto:test")
@@ -238,7 +239,7 @@ final class KimiProviderTests: XCTestCase {
             descriptor: descriptor,
             session: URLSession(configuration: .ephemeral),
             keychain: KeychainService(storageURL: keychainURL),
-            browserCookieService: KimiBrowserCookieService(),
+            browserCookieService: StubKimiBrowserCookieDetector(),
             browserTokenResolverOverride: { _, _ in
                 browserLookupCount += 1
                 return KimiDetectedToken(
@@ -307,7 +308,7 @@ final class KimiProviderTests: XCTestCase {
             descriptor: descriptor,
             session: session,
             keychain: KeychainService(storageURL: keychainURL),
-            browserCookieService: KimiBrowserCookieService(),
+            browserCookieService: StubKimiBrowserCookieDetector(),
             browserTokenResolverOverride: { _, refreshPaths in
                 browserLookupCount += 1
                 refreshPathsValues.append(refreshPaths)
@@ -419,7 +420,7 @@ final class KimiProviderTests: XCTestCase {
             descriptor: descriptor,
             session: session,
             keychain: keychain,
-            browserCookieService: KimiBrowserCookieService(),
+            browserCookieService: StubKimiBrowserCookieDetector(),
             browserTokenResolverOverride: { _, _ in nil },
             browserRefreshTokenResolverOverride: { _, _ in
                 KimiDetectedToken(token: detectedRefreshToken, source: "auto:test")
@@ -505,7 +506,7 @@ final class KimiProviderTests: XCTestCase {
             descriptor: descriptor,
             session: session,
             keychain: keychain,
-            browserCookieService: KimiBrowserCookieService(),
+            browserCookieService: StubKimiBrowserCookieDetector(),
             browserTokenResolverOverride: { _, _ in
                 browserLookupCount += 1
                 return nil
@@ -585,7 +586,7 @@ final class KimiProviderTests: XCTestCase {
             descriptor: descriptor,
             session: URLSession(configuration: config),
             keychain: keychain,
-            browserCookieService: KimiBrowserCookieService(),
+            browserCookieService: StubKimiBrowserCookieDetector(),
             browserTokenResolverOverride: { _, _ in nil },
             browserRefreshTokenResolverOverride: { _, _ in nil }
         )
@@ -660,7 +661,7 @@ final class KimiProviderTests: XCTestCase {
             descriptor: descriptor,
             session: URLSession(configuration: config),
             keychain: keychain,
-            browserCookieService: KimiBrowserCookieService()
+            browserCookieService: StubKimiBrowserCookieDetector()
         )
 
         let snapshot = try await provider.fetch(forceRefresh: false)
@@ -704,6 +705,16 @@ final class KimiProviderTests: XCTestCase {
             .replacingOccurrences(of: "+", with: "-")
             .replacingOccurrences(of: "/", with: "_")
             .replacingOccurrences(of: "=", with: "")
+    }
+}
+
+private final class StubKimiBrowserCookieDetector: KimiBrowserCookieDetecting {
+    func detectKimiAuthToken(order: [KimiBrowserKind], refreshPaths: Bool) -> KimiDetectedToken? {
+        nil
+    }
+
+    func detectKimiRefreshToken(order: [KimiBrowserKind], refreshPaths: Bool) -> KimiDetectedToken? {
+        nil
     }
 }
 

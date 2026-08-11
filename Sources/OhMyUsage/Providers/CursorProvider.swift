@@ -1,5 +1,6 @@
 import OhMyUsageDomain
 import Foundation
+import OhMyUsageProviders
 
 final class CursorProvider: UsageProvider, @unchecked Sendable {
     private static let authQuery = """
@@ -14,11 +15,17 @@ final class CursorProvider: UsageProvider, @unchecked Sendable {
     """
 
     private let session: URLSession
+    private let sqlite: any SQLiteQuerying
     let descriptor: ProviderDescriptor
 
-    init(descriptor: ProviderDescriptor, session: URLSession = .shared) {
+    init(
+        descriptor: ProviderDescriptor,
+        session: URLSession = .shared,
+        sqlite: any SQLiteQuerying = DefaultSQLiteShell()
+    ) {
         self.descriptor = descriptor
         self.session = session
+        self.sqlite = sqlite
     }
 
     func fetch() async throws -> UsageSnapshot {
@@ -77,7 +84,7 @@ final class CursorProvider: UsageProvider, @unchecked Sendable {
             throw ProviderError.missingCredential(dbPath)
         }
 
-        let result = SQLiteShell.snapshotQuery(databasePath: dbPath, query: Self.authQuery)
+        let result = sqlite.snapshotQuery(databasePath: dbPath, query: Self.authQuery)
         guard result.succeeded else {
             throw ProviderError.commandFailed(
                 "Failed to read Cursor state database at \(dbPath): \(result.errorMessage)"
@@ -136,7 +143,7 @@ final class CursorProvider: UsageProvider, @unchecked Sendable {
 
         var updated = auth
         updated.accessToken = accessToken
-        _ = SQLiteShell.execute(
+        _ = sqlite.execute(
             databasePath: auth.databasePath,
             sql: "UPDATE ItemTable SET value = '\(accessToken.replacingOccurrences(of: "'", with: "''"))' WHERE key = 'cursorAuth/accessToken';"
         )
@@ -154,20 +161,49 @@ final class CursorProvider: UsageProvider, @unchecked Sendable {
         var windows: [UsageQuotaWindow] = []
         if let plan = individual?["plan"] as? [String: Any],
            (plan["enabled"] as? Bool) == true {
-            let used = OfficialValueParser.double(plan["used"]) ?? 0
-            let limit = OfficialValueParser.double(plan["limit"] ?? (plan["breakdown"] as? [String: Any])?["total"]) ?? 0
-            if limit > 0 {
-                let remainingPercent = max(0, (limit - used) / limit * 100)
-                windows.append(
-                    UsageQuotaWindow(
-                        id: "\(descriptor.id)-monthly",
-                        title: "Monthly",
-                        remainingPercent: remainingPercent,
-                        usedPercent: max(0, 100 - remainingPercent),
-                        resetAt: resetAt,
-                        kind: .custom
+            let autoPercentUsed = OfficialValueParser.double(plan["autoPercentUsed"])
+            let apiPercentUsed = OfficialValueParser.double(plan["apiPercentUsed"])
+
+            // Cursor dashboard now tracks two included pools:
+            // autoPercentUsed → Cursor Models (Grok / Composer)
+            // apiPercentUsed → Other Models (third-party API)
+            if autoPercentUsed != nil || apiPercentUsed != nil {
+                if let autoPercentUsed {
+                    windows.append(
+                        percentWindow(
+                            id: "\(descriptor.id)-cursor-models",
+                            title: "Cursor Models",
+                            usedPercent: autoPercentUsed,
+                            resetAt: resetAt
+                        )
                     )
-                )
+                }
+                if let apiPercentUsed {
+                    windows.append(
+                        percentWindow(
+                            id: "\(descriptor.id)-other-models",
+                            title: "Other Models",
+                            usedPercent: apiPercentUsed,
+                            resetAt: resetAt
+                        )
+                    )
+                }
+            } else {
+                let used = OfficialValueParser.double(plan["used"]) ?? 0
+                let limit = OfficialValueParser.double(plan["limit"] ?? (plan["breakdown"] as? [String: Any])?["total"]) ?? 0
+                if limit > 0 {
+                    let remainingPercent = max(0, (limit - used) / limit * 100)
+                    windows.append(
+                        UsageQuotaWindow(
+                            id: "\(descriptor.id)-monthly",
+                            title: "Monthly",
+                            remainingPercent: remainingPercent,
+                            usedPercent: max(0, 100 - remainingPercent),
+                            resetAt: resetAt,
+                            kind: .custom
+                        )
+                    )
+                }
             }
         }
         if let onDemand = individual?["onDemand"] as? [String: Any],
@@ -204,6 +240,23 @@ final class CursorProvider: UsageProvider, @unchecked Sendable {
             accountLabel: accountLabel,
             extras: ["planType": membership],
             rawMeta: [:]
+        )
+    }
+
+    private static func percentWindow(
+        id: String,
+        title: String,
+        usedPercent: Double,
+        resetAt: Date?
+    ) -> UsageQuotaWindow {
+        let clampedUsed = min(100, max(0, usedPercent))
+        return UsageQuotaWindow(
+            id: id,
+            title: title,
+            remainingPercent: max(0, 100 - clampedUsed),
+            usedPercent: clampedUsed,
+            resetAt: resetAt,
+            kind: .custom
         )
     }
 

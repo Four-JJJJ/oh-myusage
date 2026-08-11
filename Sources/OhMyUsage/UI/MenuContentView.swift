@@ -15,6 +15,8 @@ struct MenuContentView: View {
     @Bindable var viewModel: AppViewModel
     var onOpenSettings: (() -> Void)?
     @State private var now = Date()
+    @State private var cachedMenuState: MenuViewState?
+    @State private var lastContentRevision: MenuPanelContentRevision?
     @State private var onboardingDiscoveryMessage: String?
     @State private var onboardingDiscoveryIsError = false
     @State private var onboardingDiscoveryInFlight = false
@@ -49,7 +51,8 @@ struct MenuContentView: View {
     private let cardsViewportCornerRadius = SettingsVisualTokens.Menu.cardsViewportCornerRadius
 
     var body: some View {
-        let state = viewModel.menuViewState(now: now)
+        let contentRevision = menuContentRevision
+        let state = menuStateForRendering(revision: contentRevision, now: now)
 
         // menubar 主面板布局：顶部 header + 下方卡片列表。
         VStack(alignment: .leading, spacing: panelContentSpacing) {
@@ -76,6 +79,7 @@ struct MenuContentView: View {
         )
         .environment(\.colorScheme, .dark)
         .onAppear {
+            rebuildMenuState(revision: contentRevision)
             restartClockIfNeeded()
         }
         .onDisappear {
@@ -84,6 +88,44 @@ struct MenuContentView: View {
         .onChange(of: viewModel.menuPanelVisible) { _, _ in
             restartClockIfNeeded()
         }
+        .onChange(of: contentRevision) { _, newRevision in
+            rebuildMenuState(revision: newRevision)
+        }
+    }
+
+    private var menuContentRevision: MenuPanelContentRevision {
+        MenuPanelContentRevision(
+            lastUpdatedAt: viewModel.lastUpdatedAt,
+            config: viewModel.config,
+            snapshots: viewModel.snapshots,
+            errors: viewModel.errors,
+            codexSlots: viewModel.codexSlots,
+            codexProfiles: viewModel.codexProfiles,
+            codexSwitchFeedback: viewModel.codexSwitchFeedback,
+            codexSwitchingSlotIDs: viewModel.codexSwitchCoordinator.activeSlotIDs,
+            claudeSlots: viewModel.claudeSlots,
+            claudeProfiles: viewModel.claudeProfiles,
+            claudeSwitchFeedback: viewModel.claudeSwitchFeedback,
+            claudeSwitchingSlotIDs: viewModel.claudeSwitchCoordinator.activeSlotIDs,
+            shouldShowPermissionGuide: viewModel.shouldShowPermissionGuide,
+            updateState: viewModel.menuUpdateDisplayState
+        )
+    }
+
+    /// Prefer cached cards when revision is unchanged; apply clock in-place for this frame.
+    /// On revision mismatch, rebuild synchronously so the current frame is not stale.
+    private func menuStateForRendering(revision: MenuPanelContentRevision, now: Date) -> MenuViewState {
+        if let cached = cachedMenuState, lastContentRevision == revision {
+            var state = cached
+            viewModel.applyMenuClock(to: &state, now: now)
+            return state
+        }
+        return viewModel.menuViewState(now: now)
+    }
+
+    private func rebuildMenuState(revision: MenuPanelContentRevision) {
+        cachedMenuState = viewModel.menuViewState(now: now)
+        lastContentRevision = revision
     }
 
     private func header(_ presentation: MenuDashboardHeaderPresentation) -> some View {
@@ -440,4 +482,23 @@ struct MenuContentView: View {
         // menubar 倒计时文案统一走 CountdownFormatter，避免与设置页实现漂移。
         CountdownFormatter.text(to: target, now: now, placeholder: "-", language: language)
     }
+}
+
+/// Data identity for full menu rebuilds. Clock ticks must not change this
+/// unless account-switch running sets change (re-read on each body eval / tick).
+private struct MenuPanelContentRevision: Equatable {
+    var lastUpdatedAt: Date?
+    var config: AppConfig
+    var snapshots: [String: UsageSnapshot]
+    var errors: [String: String]
+    var codexSlots: [CodexAccountSlot]
+    var codexProfiles: [CodexAccountProfile]
+    var codexSwitchFeedback: [CodexSlotID: CodexSwitchFeedback]
+    var codexSwitchingSlotIDs: Set<CodexSlotID>
+    var claudeSlots: [ClaudeAccountSlot]
+    var claudeProfiles: [ClaudeAccountProfile]
+    var claudeSwitchFeedback: [CodexSlotID: ClaudeSwitchFeedback]
+    var claudeSwitchingSlotIDs: Set<CodexSlotID>
+    var shouldShowPermissionGuide: Bool
+    var updateState: MenuUpdateDisplayState
 }

@@ -2,6 +2,7 @@ import OhMyUsageDomain
 import Foundation
 import XCTest
 @testable import OhMyUsage
+import OhMyUsageProviders
 
 @MainActor
 final class AppOfficialProfileRefreshCoordinatorTests: XCTestCase {

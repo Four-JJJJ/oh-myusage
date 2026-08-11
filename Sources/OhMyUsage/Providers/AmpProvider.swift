@@ -1,13 +1,20 @@
 import OhMyUsageDomain
 import Foundation
+import OhMyUsageProviders
 
 final class AmpProvider: UsageProvider, @unchecked Sendable {
     private let session: URLSession
+    private let localJSONReader: any LocalJSONFileReading
     let descriptor: ProviderDescriptor
 
-    init(descriptor: ProviderDescriptor, session: URLSession = .shared) {
+    init(
+        descriptor: ProviderDescriptor,
+        session: URLSession = .shared,
+        localJSONReader: any LocalJSONFileReading = DefaultLocalJSONFileReader()
+    ) {
         self.descriptor = descriptor
         self.session = session
+        self.localJSONReader = localJSONReader
     }
 
     func fetch() async throws -> UsageSnapshot {
@@ -39,7 +46,7 @@ final class AmpProvider: UsageProvider, @unchecked Sendable {
 
     private func resolveAPIKey() throws -> String {
         let path = "\(NSHomeDirectory())/.local/share/amp/secrets.json"
-        guard let json = LocalJSONFileReader.dictionary(atPath: path),
+        guard let json = localJSONReader.dictionary(atPath: path),
               let value = OfficialValueParser.string(json["apiKey@https://ampcode.com/"]) else {
             throw ProviderError.missingCredential(path)
         }

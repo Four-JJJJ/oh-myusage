@@ -1,7 +1,7 @@
 import Foundation
 
-enum RelayJSONExpressionEvaluator {
-    static func numericValue(for expression: String, in root: Any) -> Double? {
+public enum RelayJSONExpressionEvaluator {
+    public static func numericValue(for expression: String, in root: Any) -> Double? {
         let trimmed = expression.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
 
@@ -53,7 +53,7 @@ enum RelayJSONExpressionEvaluator {
         return value(at: trimmed, in: root).flatMap(coerceDouble)
     }
 
-    static func stringValue(for expression: String, in root: Any) -> String? {
+    public static func stringValue(for expression: String, in root: Any) -> String? {
         stringValue(for: expression, in: root, allowBareLiteral: true)
     }
 
@@ -93,7 +93,7 @@ enum RelayJSONExpressionEvaluator {
         return allowBareLiteral ? trimmed : nil
     }
 
-    static func boolValue(for expression: String, in root: Any) -> Bool? {
+    public static func boolValue(for expression: String, in root: Any) -> Bool? {
         let trimmed = expression.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
 
@@ -108,7 +108,7 @@ enum RelayJSONExpressionEvaluator {
         return value(at: trimmed, in: root).flatMap(coerceBool) ?? coerceBool(trimmed)
     }
 
-    static func value(at path: String, in root: Any) -> Any? {
+    public static func value(at path: String, in root: Any) -> Any? {
         let steps = path.split(separator: ".").map(String.init).filter { !$0.isEmpty }
         guard !steps.isEmpty else { return nil }
         var current: Any? = root
@@ -123,13 +123,13 @@ enum RelayJSONExpressionEvaluator {
         return current
     }
 
-    static func values(at path: String, in root: Any) -> [Any] {
+    public static func values(at path: String, in root: Any) -> [Any] {
         let steps = path.split(separator: ".").map(String.init).filter { !$0.isEmpty }
         guard !steps.isEmpty else { return [] }
         return collectValues(current: root, steps: steps, index: 0)
     }
 
-    static func firstNestedNumericValue(for keys: [String], in root: Any) -> Double? {
+    public static func firstNestedNumericValue(for keys: [String], in root: Any) -> Double? {
         for key in keys {
             if let value = firstNestedValue(matchingKey: key, in: root),
                let number = coerceDouble(value) {
@@ -139,7 +139,7 @@ enum RelayJSONExpressionEvaluator {
         return nil
     }
 
-    static func firstNestedStringValue(for keys: [String], in root: Any) -> String? {
+    public static func firstNestedStringValue(for keys: [String], in root: Any) -> String? {
         for key in keys {
             if let value = firstNestedValue(matchingKey: key, in: root) {
                 if let string = value as? String {
@@ -155,7 +155,7 @@ enum RelayJSONExpressionEvaluator {
         return nil
     }
 
-    static func firstNestedValue(matchingKey key: String, in root: Any) -> Any? {
+    public static func firstNestedValue(matchingKey key: String, in root: Any) -> Any? {
         if let dict = root as? [String: Any] {
             if let direct = dict[key] {
                 return direct
@@ -179,7 +179,7 @@ enum RelayJSONExpressionEvaluator {
         return nil
     }
 
-    static func coerceDouble(_ value: Any) -> Double? {
+    public static func coerceDouble(_ value: Any) -> Double? {
         if let number = value as? NSNumber { return number.doubleValue }
         if let string = value as? String {
             return Double(string.trimmingCharacters(in: .whitespacesAndNewlines))
@@ -187,7 +187,7 @@ enum RelayJSONExpressionEvaluator {
         return nil
     }
 
-    static func coerceBool(_ value: Any) -> Bool? {
+    public static func coerceBool(_ value: Any) -> Bool? {
         if let bool = value as? Bool { return bool }
         if let number = value as? NSNumber { return number.intValue != 0 }
         if let string = value as? String {
@@ -203,7 +203,7 @@ enum RelayJSONExpressionEvaluator {
         return nil
     }
 
-    static func splitArguments(_ input: String) -> [String] {
+    public static func splitArguments(_ input: String) -> [String] {
         var parts: [String] = []
         var current = ""
         var depth = 0

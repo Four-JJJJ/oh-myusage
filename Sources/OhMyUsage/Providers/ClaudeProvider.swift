@@ -1,5 +1,6 @@
 import OhMyUsageDomain
 import Foundation
+import OhMyUsageProviders
 
 final class ClaudeProvider: UsageProvider, @unchecked Sendable {
     private static let cache = FetchedAtOfficialSnapshotCache()
@@ -9,24 +10,26 @@ final class ClaudeProvider: UsageProvider, @unchecked Sendable {
     private let cacheTTL: TimeInterval = 15
     private let webRetryBackoffInterval: TimeInterval = 15 * 60
     private let session: URLSession
-    private let keychain: KeychainService
-    private let browserCookieService: BrowserCookieDetecting
+    private let keychain: any TokenCredentialStoring
+    private let browserCookieService: any BrowserCookieDetecting
     private let webReadBackoff: WebOverlayRetryBackoff
     private let cache: any OfficialSnapshotCaching
     private let gate: any OfficialFetchGating
     private let homeDirectory: () -> String
+    private let shell: any ShellCommandRunning
 
     let descriptor: ProviderDescriptor
 
     init(
         descriptor: ProviderDescriptor,
         session: URLSession = .shared,
-        keychain: KeychainService,
-        browserCookieService: BrowserCookieDetecting,
+        keychain: any TokenCredentialStoring,
+        browserCookieService: any BrowserCookieDetecting,
         webReadBackoff: WebOverlayRetryBackoff = ClaudeProvider.webReadBackoff,
         cache: any OfficialSnapshotCaching = ClaudeProvider.cache,
         gate: any OfficialFetchGating = ClaudeProvider.gate,
-        homeDirectory: @escaping () -> String = { NSHomeDirectory() }
+        homeDirectory: @escaping () -> String = { NSHomeDirectory() },
+        shell: any ShellCommandRunning = DefaultShellCommandRunner()
     ) {
         self.descriptor = descriptor
         self.session = session
@@ -36,6 +39,7 @@ final class ClaudeProvider: UsageProvider, @unchecked Sendable {
         self.cache = cache
         self.gate = gate
         self.homeDirectory = homeDirectory
+        self.shell = shell
     }
 
     func fetch() async throws -> UsageSnapshot {
@@ -390,9 +394,10 @@ final class ClaudeProvider: UsageProvider, @unchecked Sendable {
         var env = ProcessInfo.processInfo.environment
         env.removeValue(forKey: "CLAUDE_CODE_OAUTH_TOKEN")
 
-        let result = ShellCommand.run(
+        let result = shell.run(
             executable: executable,
             arguments: ["/usage", "--allowed-tools", ""],
+            input: nil,
             timeout: 25,
             environment: env,
             currentDirectory: NSHomeDirectory()
@@ -414,9 +419,10 @@ final class ClaudeProvider: UsageProvider, @unchecked Sendable {
         } catch {
             let lower = result.stdout.lowercased()
             if lower.contains("cost") || lower.contains("api usage billing") || lower.contains("subscription required") {
-                let costResult = ShellCommand.run(
+                let costResult = shell.run(
                     executable: executable,
                     arguments: ["/cost", "--allowed-tools", ""],
+                    input: nil,
                     timeout: 25,
                     environment: env,
                     currentDirectory: NSHomeDirectory()

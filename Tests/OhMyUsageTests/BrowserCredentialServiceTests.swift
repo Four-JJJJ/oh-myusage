@@ -1,5 +1,6 @@
 import XCTest
 @testable import OhMyUsage
+import OhMyUsageProviders
 
 final class BrowserCredentialServiceTests: XCTestCase {
     func testBrowserCookieDatabaseReaderReadsNamedCookieFromPlainCookiesSchema() throws {

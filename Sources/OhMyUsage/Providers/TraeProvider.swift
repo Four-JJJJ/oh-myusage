@@ -1,18 +1,19 @@
 import OhMyUsageDomain
 import Foundation
+import OhMyUsageProviders
 
 final class TraeProvider: UsageProvider, @unchecked Sendable {
     private let session: URLSession
-    private let keychain: KeychainService
-    let browserCredentialService: BrowserCredentialService
+    private let keychain: any TokenCredentialStoring
+    let browserCredentialService: any BrowserCredentialProviding
 
     let descriptor: ProviderDescriptor
 
     init(
         descriptor: ProviderDescriptor,
         session: URLSession = .shared,
-        keychain: KeychainService,
-        browserCredentialService: BrowserCredentialService = BrowserCredentialService()
+        keychain: any TokenCredentialStoring,
+        browserCredentialService: any BrowserCredentialProviding = BrowserCredentialService()
     ) {
         self.descriptor = descriptor
         self.session = session
@@ -79,7 +80,7 @@ final class TraeProvider: UsageProvider, @unchecked Sendable {
 
     private func credentialLocation() -> (service: String, account: String) {
         (
-            descriptor.auth.keychainService ?? KeychainService.defaultServiceName,
+            descriptor.auth.keychainService ?? TokenCredentialStoreServiceNames.defaultServiceName,
             descriptor.auth.keychainAccount ?? "official/trae/cloud-ide-jwt"
         )
     }

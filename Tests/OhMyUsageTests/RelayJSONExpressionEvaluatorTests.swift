@@ -1,5 +1,6 @@
 import XCTest
 @testable import OhMyUsage
+import OhMyUsageProviders
 
 final class RelayJSONExpressionEvaluatorTests: XCTestCase {
     func testNumericExpressionsSupportCoalesceSumAddAndDiv() {

@@ -3,6 +3,7 @@ import OhMyUsageApplication
 import OhMyUsageBootstrap
 import OhMyUsageDomain
 import OhMyUsageFeatures
+import OhMyUsageInfrastructure
 import OhMyUsagePresentation
 import XCTest
 
@@ -214,6 +215,14 @@ final class ArchitectureTargetBoundaryTests: XCTestCase {
         XCTAssertTrue(featureAssembly.contains("makeSummaryViewState"))
         XCTAssertTrue(compositionRoot.contains("makeUsageRefreshRequest"))
         XCTAssertTrue(compositionRoot.contains("makeUsageSummaryViewState"))
+        XCTAssertTrue(
+            compositionRoot.contains("AppCompositionFactory"),
+            "Bootstrap docs should clarify that executable App wiring lives in AppCompositionFactory"
+        )
+        XCTAssertTrue(
+            compositionRoot.contains("AppDependencyGraph"),
+            "Bootstrap docs should clarify that executable App wiring lives in AppDependencyGraph"
+        )
         XCTAssertFalse(featureAssembly.contains("refreshUseCaseTypeName"))
         XCTAssertFalse(featureAssembly.contains("summaryViewStateTypeName"))
 
@@ -257,19 +266,48 @@ final class ArchitectureTargetBoundaryTests: XCTestCase {
             ),
             (
                 "Sources/OhMyUsageInfrastructure",
-                ["UsageCredentialStore.swift"]
+                ["UsageCredentialStore.swift", "CredentialStoring.swift"]
             ),
             (
                 "Sources/OhMyUsageProviders",
-                ["UsageProviderFetching.swift"]
+                [
+                    "UsageProviderFetching.swift",
+                    "ProviderError.swift",
+                    "OfficialSnapshotFallback.swift",
+                    "OfficialProviderFetchRuntime.swift",
+                    "OfficialProviderAuthRuntime.swift",
+                    "RelayHTTPClient.swift",
+                    "OfficialValueParser.swift",
+                    "JWTInspector.swift",
+                    "WebOverlayRetryBackoff.swift",
+                    "LocalJSONFileReader.swift",
+                    "LocalJSONFileReading.swift",
+                    "ShellCommand.swift",
+                    "ShellCommandRunning.swift",
+                    "SQLiteShell.swift",
+                    "SQLiteQuerying.swift",
+                    "RelayJSONExpressionEvaluator.swift",
+                    "TokenCredentialStoring.swift",
+                    "BrowserCookieDetecting.swift",
+                    "BrowserCredentialProviding.swift",
+                    "KimiBrowserCookieDetecting.swift"
+                ]
             ),
             (
                 "Sources/OhMyUsageApplication",
-                ["ProviderRefreshScheduler.swift", "RefreshUseCaseContracts.swift"]
+                [
+                    "ProviderRefreshScheduler.swift",
+                    "RefreshUseCaseContracts.swift",
+                    "CodexQuotaDisplayNormalizer.swift"
+                ]
             ),
             (
                 "Sources/OhMyUsagePresentation",
-                ["UsagePresentationModels.swift"]
+                [
+                    "UsagePresentationModels.swift",
+                    "OfficialMonitoringHealthPresenter.swift",
+                    "QuotaBlockagePolicy.swift"
+                ]
             ),
             (
                 "Sources/OhMyUsageFeatures",
@@ -348,6 +386,35 @@ final class ArchitectureTargetBoundaryTests: XCTestCase {
             compositionRoot.makeUsageSummaryViewState(providerID: providerID, title: "Codex", snapshot: snapshot),
             summary
         )
+
+        let normalized = CodexQuotaDisplayNormalizer.normalize(
+            snapshot: usageSnapshot,
+            isActive: false,
+            now: Date(timeIntervalSince1970: 1_700_000_200)
+        )
+        XCTAssertEqual(normalized.quotaWindows.first?.kind, .session)
+
+        let healthPercents = OfficialMonitoringHealthPresenter.quotaMetricPercents(
+            for: quotaWindow,
+            displaysUsedQuota: false
+        )
+        XCTAssertEqual(healthPercents.healthPercent, 75)
+        XCTAssertEqual(
+            OfficialMonitoringHealthPresenter.officialMonitoringHealthStatus(
+                snapshot: usageSnapshot,
+                healthPercents: [healthPercents.healthPercent]
+            ),
+            .sufficient
+        )
+        XCTAssertFalse(
+            QuotaBlockagePolicy.isBlockedByDepletedWeeklyQuota(
+                currentKind: .session,
+                currentRemainingPercent: 75,
+                candidateWindows: [(kind: .weekly, remainingPercent: 40, isAvailable: true)]
+            )
+        )
+        XCTAssertEqual(CredentialStoreServiceNames.defaultServiceName, "oh-myusage")
+        XCTAssertTrue(CredentialStoreServiceNames.isLegacyServiceName("OhMyUsage"))
     }
 
     func testProviderConfigurationValueObjectsAreOwnedByDomainTarget() throws {
@@ -539,6 +606,121 @@ final class ArchitectureTargetBoundaryTests: XCTestCase {
                 XCTAssertFalse(
                     source.contains(fragment),
                     "\(relativePath(for: sourceFile, rootURL: rootURL)) should keep \(fragment) out of OhMyUsageDomain"
+                )
+            }
+        }
+    }
+
+    func testNonExecutableTargetsDoNotReferenceExecutableCompositionTypes() throws {
+        let rootURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        let targets = try packageManifestTargets()
+        let forbiddenTypeReferences = ["AppCompositionFactory", "AppDependencyGraph"]
+
+        for target in targets.values where target.kind == .regular {
+            let directoryURL = rootURL.appendingPathComponent("Sources/\(target.name)")
+            let sourceFiles = try swiftFiles(in: directoryURL)
+            for sourceFile in sourceFiles {
+                let source = try String(contentsOf: sourceFile, encoding: .utf8)
+                let codeOnlySource = source
+                    .split(separator: "\n", omittingEmptySubsequences: false)
+                    .filter { line in
+                        let trimmed = line.trimmingCharacters(in: .whitespaces)
+                        return !trimmed.hasPrefix("//") && !trimmed.hasPrefix("///") && !trimmed.hasPrefix("*")
+                    }
+                    .joined(separator: "\n")
+
+                for forbiddenType in forbiddenTypeReferences {
+                    XCTAssertFalse(
+                        codeOnlySource.contains(forbiddenType),
+                        "\(relativePath(for: sourceFile, rootURL: rootURL)) in \(target.name) should not reference executable composition type \(forbiddenType)"
+                    )
+                }
+            }
+        }
+    }
+
+    func testProviderStateStoreWritesAreOwnedByRefreshModel() throws {
+        let rootURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        let refreshModelURL = rootURL.appendingPathComponent("Sources/OhMyUsage/App/AppProviderRefreshModel.swift")
+        let appViewModelURL = rootURL.appendingPathComponent("Sources/OhMyUsage/App/AppViewModel.swift")
+        let sessionStoreURL = rootURL.appendingPathComponent("Sources/OhMyUsage/App/AppSessionStore.swift")
+        let refreshModel = try String(contentsOf: refreshModelURL, encoding: .utf8)
+        let appViewModel = try String(contentsOf: appViewModelURL, encoding: .utf8)
+        let sessionStore = try String(contentsOf: sessionStoreURL, encoding: .utf8)
+
+        XCTAssertTrue(
+            refreshModel.contains("Sole write entry"),
+            "AppProviderRefreshModel should document that it owns the sole ProviderStateStore write entry"
+        )
+        XCTAssertTrue(refreshModel.contains("func mutateProviderState("))
+        XCTAssertTrue(refreshModel.contains("func replaceProviderState("))
+        XCTAssertTrue(
+            appViewModel.contains("func applyProviderStateStorage(_ state: ProviderStateStore)"),
+            "AppViewModel must expose the physical Observation write helper for refresh-model setState"
+        )
+        XCTAssertTrue(
+            appViewModel.contains("self?.applyProviderStateStorage(state)"),
+            "Provider refresh bind setState must route through applyProviderStateStorage"
+        )
+        XCTAssertTrue(
+            sessionStore.contains("Logical writes must go through `AppProviderRefreshModel`"),
+            "ProviderStateStore should document the refresh-model write ownership boundary"
+        )
+        XCTAssertFalse(
+            appViewModel.contains("set { sessionStore.providerState"),
+            "AppViewModel provider-state projections must stay get-only; sets go through providerRefreshModel"
+        )
+
+        let appSourceFiles = try swiftFiles(in: rootURL.appendingPathComponent("Sources/OhMyUsage"))
+        let forbiddenBypassPatterns: [NSRegularExpression] = try [
+            #"providerStateStorage\s*=#"#,
+            #"host\.snapshots\[[^\]]+\]\s*="#,
+            #"host\.errors\[[^\]]+\]\s*="#,
+            #"host\.consecutiveFailures\[[^\]]+\]\s*="#,
+            #"host\.lastUpdatedAt\s*="#,
+            #"host\.snapshots\.remove"#,
+            #"host\.errors\.remove"#,
+            #"host\.consecutiveFailures\.remove"#,
+            #"host\.activeAlerts\.(remove|insert|removeAll)"#,
+            #"host\.thirdPartyBalanceBaselineTracker\.(remove|prune|restore|removeAll)"#,
+            #"self\.snapshots\.(removeAll|removeValue)"#,
+            #"self\.errors\.(removeAll|removeValue)"#,
+            #"self\.consecutiveFailures\.(removeAll|removeValue)"#,
+            #"self\.activeAlerts\.(removeAll|remove)"#,
+            #"self\.thirdPartyBalanceBaselineTracker\.(removeAll|remove|prune|restore)"#,
+            #"self\.lastUpdatedAt\s*="#,
+            #"self\.snapshots\[[^\]]+\]\s*="#,
+            #"self\.errors\[[^\]]+\]\s*="#,
+            #"self\.consecutiveFailures\[[^\]]+\]\s*="#
+        ].map { try NSRegularExpression(pattern: $0) }
+
+        for sourceFile in appSourceFiles {
+            let source = try String(contentsOf: sourceFile, encoding: .utf8)
+            let path = relativePath(for: sourceFile, rootURL: rootURL)
+
+            if source.contains("sessionStore.providerState =") {
+                XCTAssertEqual(
+                    path,
+                    "Sources/OhMyUsage/App/AppViewModel.swift",
+                    "Physical ProviderStateStore assignment must stay inside AppViewModel.applyProviderStateStorage"
+                )
+                XCTAssertTrue(
+                    appViewModel.contains("func applyProviderStateStorage(_ state: ProviderStateStore) {\n        sessionStore.providerState = state\n    }"),
+                    "sessionStore.providerState assignment must only live in applyProviderStateStorage"
+                )
+            }
+
+            // Coordinator mutates through bound getState/setState (`state.`), which is the refresh write path.
+            if path == "Sources/OhMyUsage/App/AppProviderRefreshCoordinator.swift" {
+                continue
+            }
+
+            let nsRange = NSRange(source.startIndex..<source.endIndex, in: source)
+            for pattern in forbiddenBypassPatterns {
+                XCTAssertEqual(
+                    pattern.numberOfMatches(in: source, options: [], range: nsRange),
+                    0,
+                    "\(path) bypasses AppProviderRefreshModel provider-state ownership (matched /\(pattern.pattern)/)"
                 )
             }
         }

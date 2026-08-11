@@ -2,6 +2,7 @@ import Foundation
 import OhMyUsageDomain
 import XCTest
 @testable import OhMyUsage
+import OhMyUsageProviders
 
 final class MonolithRetirementBoundaryTests: XCTestCase {
     func testCoordinatorsAndPresentersDoNotDependOnAppViewModelNestedDisplayTypes() throws {
@@ -154,6 +155,30 @@ final class MonolithRetirementBoundaryTests: XCTestCase {
         XCTAssertTrue(settingsCatalogSource.contains("credentialFields(for provider: ProviderDescriptor)"))
         XCTAssertTrue(capabilityCatalogSource.contains("static func capabilities(for provider: ProviderDescriptor)"))
         XCTAssertTrue(relayIconCatalogSource.contains("static func iconOverrideName(for provider: ProviderDescriptor)"))
+        XCTAssertTrue(
+            relayIconCatalogSource.contains("OfficialRelayMetadataCatalog.metadata"),
+            "RelayIconMetadataCatalog should prefer OfficialRelayMetadataCatalog for known relay icons"
+        )
+        XCTAssertFalse(
+            relayIconCatalogSource.contains("menu_kimi_icon"),
+            "RelayIconMetadataCatalog should not hardcode official relay icon names"
+        )
+        XCTAssertFalse(
+            relayIconCatalogSource.contains("contains(\"moonshot\")"),
+            "RelayIconMetadataCatalog should not keep parallel moonshot/kimi string heuristics"
+        )
+        XCTAssertFalse(
+            relayIconCatalogSource.contains("contains(\"deepseek\")"),
+            "RelayIconMetadataCatalog should not keep parallel deepseek string heuristics"
+        )
+        XCTAssertFalse(
+            relayIconCatalogSource.contains("contains(\"minimax\")"),
+            "RelayIconMetadataCatalog should not keep parallel minimax string heuristics"
+        )
+        XCTAssertFalse(
+            relayIconCatalogSource.contains("contains(\"mimo\")"),
+            "RelayIconMetadataCatalog should not keep parallel mimo string heuristics"
+        )
     }
 
     func testProviderModelsDoesNotOwnAppConfigDefinition() throws {
@@ -216,9 +241,7 @@ final class MonolithRetirementBoundaryTests: XCTestCase {
         let executableModelRedLines = [
             "AuthConfig+CredentialHelpers.swift",
             "ProviderModels.swift",
-            "ProviderDescriptor+Defaults.swift",
-            "ProviderDescriptor+OfficialDefaults.swift",
-            "ProviderDescriptor+RelayDefaults.swift",
+            "ProviderDescriptor+CatalogFacades.swift",
             "ProviderDefaultCatalog.swift",
             "OfficialProviderDefaultCatalog.swift",
             "OfficialRelayProviderDefaultCatalog.swift",
@@ -276,21 +299,19 @@ final class MonolithRetirementBoundaryTests: XCTestCase {
         ] {
             XCTAssertFalse(
                 providerModels.contains(defaultConstructor),
-                "ProviderModels.swift should keep default provider constructors in ProviderDescriptor+Defaults.swift"
+                "ProviderModels.swift should keep default provider constructors in ProviderDescriptor+CatalogFacades.swift"
             )
         }
 
-        let defaultsURL = rootURL.appendingPathComponent("Sources/OhMyUsage/Models/ProviderDescriptor+Defaults.swift")
-        let defaults = try String(contentsOf: defaultsURL, encoding: .utf8)
-        XCTAssertTrue(defaults.contains("defaultOfficialCodex"))
-        XCTAssertTrue(defaults.contains("defaultOpenAilinyu"))
+        let facadesURL = rootURL.appendingPathComponent("Sources/OhMyUsage/Models/ProviderDescriptor+CatalogFacades.swift")
+        let facades = try String(contentsOf: facadesURL, encoding: .utf8)
+        XCTAssertTrue(facades.contains("defaultOfficialCodex"))
+        XCTAssertTrue(facades.contains("defaultOpenAilinyu"))
     }
 
     func testProviderDescriptorDefaultsStayAsFacadesOverDefaultCatalogs() throws {
         let rootURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-        let defaultsURL = rootURL.appendingPathComponent("Sources/OhMyUsage/Models/ProviderDescriptor+Defaults.swift")
-        let officialDefaultsURL = rootURL.appendingPathComponent("Sources/OhMyUsage/Models/ProviderDescriptor+OfficialDefaults.swift")
-        let relayDefaultsURL = rootURL.appendingPathComponent("Sources/OhMyUsage/Models/ProviderDescriptor+RelayDefaults.swift")
+        let facadesURL = rootURL.appendingPathComponent("Sources/OhMyUsage/Models/ProviderDescriptor+CatalogFacades.swift")
         let providerCatalogURL = rootURL.appendingPathComponent("Sources/OhMyUsage/Models/ProviderDefaultCatalog.swift")
         let officialCatalogURL = rootURL.appendingPathComponent("Sources/OhMyUsage/Models/OfficialProviderDefaultCatalog.swift")
         let officialRelayCatalogURL = rootURL.appendingPathComponent("Sources/OhMyUsage/Models/OfficialRelayProviderDefaultCatalog.swift")
@@ -304,37 +325,68 @@ final class MonolithRetirementBoundaryTests: XCTestCase {
             )
         }
 
-        let defaults = try String(contentsOf: defaultsURL, encoding: .utf8)
-        let officialDefaults = try String(contentsOf: officialDefaultsURL, encoding: .utf8)
-        let relayDefaults = try String(contentsOf: relayDefaultsURL, encoding: .utf8)
+        let facades = try String(contentsOf: facadesURL, encoding: .utf8)
         let providerCatalog = try String(contentsOf: providerCatalogURL, encoding: .utf8)
         let officialCatalog = try String(contentsOf: officialCatalogURL, encoding: .utf8)
         let officialRelayCatalog = try String(contentsOf: officialRelayCatalogURL, encoding: .utf8)
         let relayCatalog = try String(contentsOf: relayCatalogURL, encoding: .utf8)
         let appConfigModels = try String(contentsOf: appConfigURL, encoding: .utf8)
 
-        XCTAssertFalse(defaults.contains("ProviderDescriptor("))
-        XCTAssertFalse(defaults.contains("OfficialRelayMetadataCatalog.metadata"))
-        XCTAssertFalse(officialDefaults.contains("switch type"))
-        XCTAssertFalse(relayDefaults.contains("RelayProviderDescriptorModelAdapter.live"))
-        XCTAssertFalse(relayDefaults.contains("URLComponents("))
+        XCTAssertFalse(facades.contains("ProviderDescriptor("))
+        XCTAssertFalse(facades.contains("OfficialRelayMetadataCatalog.metadata"))
+        XCTAssertFalse(facades.contains("switch type"))
+        XCTAssertFalse(facades.contains("RelayProviderDescriptorModelAdapter.live"))
+        XCTAssertFalse(facades.contains("URLComponents("))
+        XCTAssertTrue(facades.contains("defaultOfficialConfig"))
+        XCTAssertTrue(facades.contains("defaultRelayConfig"))
+        XCTAssertTrue(facades.contains("normalizeRelayBaseURL"))
 
         XCTAssertTrue(providerCatalog.contains("enum ProviderDefaultCatalog"))
         XCTAssertTrue(providerCatalog.contains("allDefaultProviders"))
         XCTAssertTrue(providerCatalog.contains("OfficialProviderDefaultCatalog.codex()"))
+        XCTAssertTrue(
+            providerCatalog.contains("OfficialRelayProviderDefaultCatalog.allDefaultProviders"),
+            "ProviderDefaultCatalog should expand official relays from OfficialRelayProviderDefaultCatalog.allDefaultProviders"
+        )
+        XCTAssertFalse(
+            providerCatalog.contains("OfficialRelayProviderDefaultCatalog.moonshot()"),
+            "ProviderDefaultCatalog should not hand-enumerate official relay defaults"
+        )
+        XCTAssertFalse(providerCatalog.contains("OfficialRelayProviderDefaultCatalog.miniMax()"))
+        XCTAssertFalse(providerCatalog.contains("OfficialRelayProviderDefaultCatalog.deepSeek()"))
+        XCTAssertFalse(providerCatalog.contains("OfficialRelayProviderDefaultCatalog.xiaomiMIMO()"))
         XCTAssertTrue(officialCatalog.contains("enum OfficialProviderDefaultCatalog"))
         XCTAssertTrue(officialCatalog.contains("static func config(for type: ProviderType)"))
         XCTAssertTrue(officialCatalog.contains("switch type"))
         XCTAssertTrue(officialRelayCatalog.contains("enum OfficialRelayProviderDefaultCatalog"))
         XCTAssertTrue(officialRelayCatalog.contains("OfficialRelayMetadataCatalog.metadata(forProviderID:"))
+        XCTAssertTrue(
+            officialRelayCatalog.contains("static var allDefaultProviders"),
+            "OfficialRelayProviderDefaultCatalog should expose allDefaultProviders driven by metadata order"
+        )
+        XCTAssertTrue(
+            officialRelayCatalog.contains("OfficialRelayMetadataCatalog.defaultProviderOrder"),
+            "Official relay default list should be driven by OfficialRelayMetadataCatalog.defaultProviderOrder"
+        )
+        XCTAssertTrue(officialRelayCatalog.contains("static func moonshot()"))
+        XCTAssertTrue(officialRelayCatalog.contains("static func miniMax()"))
+        XCTAssertTrue(officialRelayCatalog.contains("static func deepSeek()"))
+        XCTAssertTrue(officialRelayCatalog.contains("static func xiaomiMIMO()"))
         XCTAssertTrue(relayCatalog.contains("enum RelayProviderDefaultCatalog"))
         XCTAssertTrue(relayCatalog.contains("RelayProviderDescriptorModelAdapter.live"))
         XCTAssertTrue(relayCatalog.contains("URLComponents("))
         XCTAssertTrue(appConfigModels.contains("ProviderDefaultCatalog.allDefaultProviders"))
     }
 
-    func testDefaultProviderCatalogPreservesDefaultOrderAndCredentialAccounts() {
+    func testDefaultProviderCatalogPreservesDefaultOrderAndCredentialAccounts() throws {
         let providers = AppConfig.default.providers
+        let officialRelayOrder = OfficialRelayMetadataCatalog.defaultProviderOrder
+
+        XCTAssertEqual(
+            OfficialRelayProviderDefaultCatalog.allDefaultProviders.map(\.id),
+            officialRelayOrder,
+            "Official relay defaults should follow OfficialRelayMetadataCatalog.defaultProviderOrder"
+        )
 
         XCTAssertEqual(
             providers.map(\.id),
@@ -350,17 +402,24 @@ final class MonolithRetirementBoundaryTests: XCTestCase {
                 "jetbrains-official",
                 "kiro-official",
                 "windsurf-official",
-                "kimi-official",
-                "moonshot-official",
-                "minimax-official",
-                "deepseek-official",
-                "xiaomi-mimo-official",
-                "trae-official",
-                "openrouter-credits-official",
-                "openrouter-api-official",
-                "ollama-cloud-official",
-                "opencode-go-official"
+                "kimi-official"
             ]
+                + officialRelayOrder
+                + [
+                    "trae-official",
+                    "openrouter-credits-official",
+                    "openrouter-api-official",
+                    "ollama-cloud-official",
+                    "opencode-go-official"
+                ]
+        )
+
+        let kimiIndex = try XCTUnwrap(providers.firstIndex(where: { $0.id == "kimi-official" }))
+        let traeIndex = try XCTUnwrap(providers.firstIndex(where: { $0.id == "trae-official" }))
+        XCTAssertEqual(
+            providers[(kimiIndex + 1)..<traeIndex].map(\.id),
+            officialRelayOrder,
+            "Official relays remain inserted between kimi and trae in metadata order"
         )
 
         let providersByID = Dictionary(uniqueKeysWithValues: providers.map { ($0.id, $0) })
@@ -369,7 +428,7 @@ final class MonolithRetirementBoundaryTests: XCTestCase {
         XCTAssertEqual(providersByID["openrouter-api-official"]?.auth.keychainAccount, "official/openrouter/api-key")
         XCTAssertEqual(providersByID["opencode-go-official"]?.auth.keychainAccount, "official/opencode-go/workspace-id")
 
-        for providerID in ["moonshot-official", "minimax-official", "deepseek-official", "xiaomi-mimo-official"] {
+        for providerID in officialRelayOrder {
             let provider = providersByID[providerID]
             let metadata = OfficialRelayMetadataCatalog.metadata(forProviderID: providerID)
             XCTAssertEqual(provider?.name, metadata?.displayName)
@@ -406,14 +465,14 @@ final class MonolithRetirementBoundaryTests: XCTestCase {
         ] {
             XCTAssertFalse(
                 providerModels.contains(defaultHelper),
-                "ProviderModels.swift should keep provider default configuration helpers in ProviderDescriptor+OfficialDefaults.swift"
+                "ProviderModels.swift should keep provider default configuration helpers in ProviderDescriptor+CatalogFacades.swift"
             )
         }
 
-        let officialDefaultsURL = rootURL.appendingPathComponent("Sources/OhMyUsage/Models/ProviderDescriptor+OfficialDefaults.swift")
-        let officialDefaults = try String(contentsOf: officialDefaultsURL, encoding: .utf8)
-        XCTAssertTrue(officialDefaults.contains("defaultOfficialConfig"))
-        XCTAssertTrue(officialDefaults.contains("defaultKimiConfig"))
+        let facadesURL = rootURL.appendingPathComponent("Sources/OhMyUsage/Models/ProviderDescriptor+CatalogFacades.swift")
+        let facades = try String(contentsOf: facadesURL, encoding: .utf8)
+        XCTAssertTrue(facades.contains("defaultOfficialConfig"))
+        XCTAssertTrue(facades.contains("defaultKimiConfig"))
     }
 
     func testProviderModelsDoesNotOwnOfficialRelayMetadataPolicy() throws {
@@ -460,10 +519,10 @@ final class MonolithRetirementBoundaryTests: XCTestCase {
             )
         }
 
-        let relayDefaultsURL = rootURL.appendingPathComponent("Sources/OhMyUsage/Models/ProviderDescriptor+RelayDefaults.swift")
-        let relayDefaults = try String(contentsOf: relayDefaultsURL, encoding: .utf8)
-        XCTAssertTrue(relayDefaults.contains("static func defaultRelayConfig"))
-        XCTAssertTrue(relayDefaults.contains("static func normalizeRelayBaseURL"))
+        let facadesURL = rootURL.appendingPathComponent("Sources/OhMyUsage/Models/ProviderDescriptor+CatalogFacades.swift")
+        let facades = try String(contentsOf: facadesURL, encoding: .utf8)
+        XCTAssertTrue(facades.contains("static func defaultRelayConfig"))
+        XCTAssertTrue(facades.contains("static func normalizeRelayBaseURL"))
 
         let relayOverrideURL = rootURL.appendingPathComponent("Sources/OhMyUsage/Models/ProviderDescriptor+RelayOverrideMigration.swift")
         let relayOverride = try String(contentsOf: relayOverrideURL, encoding: .utf8)
@@ -615,12 +674,83 @@ final class MonolithRetirementBoundaryTests: XCTestCase {
         }
     }
 
+    func testAppViewModelDelegatesDependencyCompositionToExecutableFactory() throws {
+        let rootURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        let appViewModelURL = rootURL.appendingPathComponent("Sources/OhMyUsage/App/AppViewModel.swift")
+        let compositionFactoryURL = rootURL.appendingPathComponent("Sources/OhMyUsage/App/AppCompositionFactory.swift")
+        let dependencyGraphURL = rootURL.appendingPathComponent("Sources/OhMyUsage/App/AppDependencyGraph.swift")
+        let compositionRootURL = rootURL.appendingPathComponent("Sources/OhMyUsageBootstrap/OhMyUsageCompositionRoot.swift")
+        let appViewModel = try String(contentsOf: appViewModelURL, encoding: .utf8)
+        let compositionFactory = try String(contentsOf: compositionFactoryURL, encoding: .utf8)
+        let dependencyGraph = try String(contentsOf: dependencyGraphURL, encoding: .utf8)
+        let compositionRoot = try String(contentsOf: compositionRootURL, encoding: .utf8)
+
+        XCTAssertTrue(
+            FileManager.default.fileExists(atPath: compositionFactoryURL.path),
+            "Executable App dependency assembly should live in AppCompositionFactory.swift"
+        )
+        XCTAssertTrue(
+            FileManager.default.fileExists(atPath: dependencyGraphURL.path),
+            "Executable App dependency graph should live in AppDependencyGraph.swift"
+        )
+        XCTAssertTrue(compositionFactory.contains("enum AppCompositionFactory"))
+        XCTAssertTrue(compositionFactory.contains("static func makeDependencyGraph("))
+        XCTAssertTrue(compositionFactory.contains("static func loadProductionConfig("))
+        XCTAssertTrue(compositionFactory.contains("ProviderFactory(keychain:"))
+        XCTAssertTrue(compositionFactory.contains("AppProviderRefreshModel("))
+        XCTAssertTrue(compositionFactory.contains("AppUpdateModel("))
+        XCTAssertTrue(compositionFactory.contains("AppConfigurationModel("))
+        XCTAssertTrue(compositionFactory.contains("AppUsageAnalyticsModel("))
+        XCTAssertTrue(dependencyGraph.contains("struct AppDependencyGraph"))
+        XCTAssertTrue(dependencyGraph.contains("let providerRefreshModel: AppProviderRefreshModel"))
+        XCTAssertTrue(dependencyGraph.contains("let updateModel: AppUpdateModel"))
+        XCTAssertTrue(appViewModel.contains("AppCompositionFactory.makeDependencyGraph("))
+        XCTAssertTrue(appViewModel.contains("AppCompositionFactory.loadProductionConfig("))
+        XCTAssertTrue(appViewModel.contains("private init(\n        dependencyGraph: AppDependencyGraph,"))
+        XCTAssertGreaterThanOrEqual(
+            appViewModel.components(separatedBy: "AppCompositionFactory.makeDependencyGraph(").count - 1,
+            2,
+            "Production and DEBUG AppViewModel init should both build through AppCompositionFactory"
+        )
+        for inlineAssembly in [
+            "CredentialAccessService(keychain:",
+            "ProviderFactory(keychain:",
+            "AppProviderRefreshModel(",
+            "AppUpdateModel(",
+            "AppConfigurationModel(",
+            "AppUsageAnalyticsModel(coordinator:"
+        ] {
+            XCTAssertFalse(
+                appViewModel.contains(inlineAssembly),
+                "AppViewModel.swift should not inline dependency assembly \(inlineAssembly)"
+            )
+        }
+        XCTAssertTrue(
+            compositionRoot.contains("AppCompositionFactory"),
+            "Bootstrap composition docs should point executable App wiring at AppCompositionFactory"
+        )
+        XCTAssertFalse(
+            compositionRoot.contains("makeAppViewModel"),
+            "OhMyUsageCompositionRoot must not claim executable host construction"
+        )
+    }
+
     func testAppViewModelDelegatesUsageAnalyticsRefresh() throws {
         let rootURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
         let appViewModelURL = rootURL.appendingPathComponent("Sources/OhMyUsage/App/AppViewModel.swift")
+        let usageAnalyticsModelURL = rootURL.appendingPathComponent("Sources/OhMyUsage/App/AppUsageAnalyticsModel.swift")
         let appViewModel = try String(contentsOf: appViewModelURL, encoding: .utf8)
 
+        XCTAssertTrue(
+            FileManager.default.fileExists(atPath: usageAnalyticsModelURL.path),
+            "Usage analytics session boundary should live in AppUsageAnalyticsModel.swift"
+        )
+        XCTAssertTrue(appViewModel.contains("AppUsageAnalyticsModel"))
         XCTAssertTrue(appViewModel.contains("UsageAnalyticsRefreshCoordinator"))
+        XCTAssertFalse(
+            appViewModel.contains("usageAnalyticsRefreshCoordinator.refreshUsageAnalyticsIfNeeded"),
+            "AppViewModel.swift should forward usage analytics refresh through AppUsageAnalyticsModel"
+        )
         for directDependency in [
             "UsageAnalyticsRepository",
             "UsageAnalyticsSnapshotCacheStore",
@@ -798,6 +928,14 @@ final class MonolithRetirementBoundaryTests: XCTestCase {
 
         let providerConfiguration = try String(contentsOf: providerConfigurationURL, encoding: .utf8)
         for focusedResponsibility in [
+            "func setLanguage(",
+            "func setResourceMode(",
+            "func setLaunchAtLoginEnabled(",
+            "func setGlobalRefreshIntervalSeconds(",
+            "func persistConfiguration(",
+            "func resetConfiguration(",
+            "func applyConfigurationPersistenceOutcome(",
+            "func pruneThirdPartyBalanceBaselines()",
             "func setEnabled(",
             "func reorderEnabledProviders(",
             "func setLowThreshold(",

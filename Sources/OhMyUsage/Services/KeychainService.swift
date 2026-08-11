@@ -31,13 +31,9 @@ final class KeychainService: @unchecked Sendable {
         )
     }
 
-    static let defaultServiceName = "oh-myusage"
-    static let legacyServiceName = "OhMyUsage"
-    static let historicalLegacyServiceNames = [
-        "OhMyUsage",
-        "AI Plan Monitor",
-        "AIPlanMonitor"
-    ]
+    static let defaultServiceName = CredentialStoreServiceNames.defaultServiceName
+    static let legacyServiceName = CredentialStoreServiceNames.legacyServiceName
+    static let historicalLegacyServiceNames = CredentialStoreServiceNames.historicalLegacyServiceNames
     private static let vaultAccount = "__credential_vault__"
     private static let legacyMigrationDefaultsKey = "OhMyUsage.Keychain.LegacyMigrationComplete"
     private static let secureAccessPreparedDefaultsKey = "OhMyUsage.Keychain.SecureAccessPrepared"
@@ -224,8 +220,7 @@ final class KeychainService: @unchecked Sendable {
     }
 
     static func isLegacyServiceName(_ service: String) -> Bool {
-        let trimmed = service.trimmingCharacters(in: .whitespacesAndNewlines)
-        return historicalLegacyServiceNames.contains(trimmed)
+        CredentialStoreServiceNames.isLegacyServiceName(service)
     }
 
     private func readFromVault(service: String, account: String) -> String? {
@@ -745,6 +740,8 @@ final class KeychainService: @unchecked Sendable {
         return context
     }
 }
+
+extension KeychainService: CredentialStoring {}
 
 extension KeychainService: UsageCredentialStore {
     func credential(for providerID: UsageProviderIdentity) async throws -> String? {

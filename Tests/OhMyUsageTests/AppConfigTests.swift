@@ -127,21 +127,17 @@ final class AppConfigTests: XCTestCase {
 
     func testDefaultProvidersIncludeNewOfficialSourcesWithStableOrder() {
         let ids = AppConfig.default.providers.map(\.id)
-        XCTAssertEqual(
-            ids.suffix(10),
-            [
-                "kimi-official",
-                "moonshot-official",
-                "minimax-official",
-                "deepseek-official",
-                "xiaomi-mimo-official",
+        let expectedSuffix =
+            ["kimi-official"]
+            + OfficialRelayMetadataCatalog.defaultProviderOrder
+            + [
                 "trae-official",
                 "openrouter-credits-official",
                 "openrouter-api-official",
                 "ollama-cloud-official",
                 "opencode-go-official"
             ]
-        )
+        XCTAssertEqual(Array(ids.suffix(expectedSuffix.count)), expectedSuffix)
 
         let trae = AppConfig.default.providers.first(where: { $0.id == "trae-official" })
         XCTAssertEqual(trae?.family, .official)

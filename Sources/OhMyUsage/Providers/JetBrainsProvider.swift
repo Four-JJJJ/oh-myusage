@@ -1,11 +1,17 @@
 import OhMyUsageDomain
 import Foundation
+import OhMyUsageProviders
 
 final class JetBrainsProvider: UsageProvider, @unchecked Sendable {
+    private let localJSONReader: any LocalJSONFileReading
     let descriptor: ProviderDescriptor
 
-    init(descriptor: ProviderDescriptor) {
+    init(
+        descriptor: ProviderDescriptor,
+        localJSONReader: any LocalJSONFileReading = DefaultLocalJSONFileReader()
+    ) {
         self.descriptor = descriptor
+        self.localJSONReader = localJSONReader
     }
 
     func fetch() async throws -> UsageSnapshot {
@@ -14,7 +20,7 @@ final class JetBrainsProvider: UsageProvider, @unchecked Sendable {
             throw ProviderError.unavailable("JetBrains 官方来源当前仅支持本地配额缓存检测")
         }
         let path = try findLatestQuotaPath()
-        guard let xml = LocalJSONFileReader.text(atPath: path) else {
+        guard let xml = localJSONReader.text(atPath: path) else {
             throw ProviderError.invalidResponse("failed to read JetBrains quota xml")
         }
         return try Self.parseSnapshot(xml: xml, descriptor: descriptor)
@@ -30,7 +36,7 @@ final class JetBrainsProvider: UsageProvider, @unchecked Sendable {
         for entry in entries {
             guard productPrefixes.contains(where: { entry.hasPrefix($0) }) else { continue }
             let path = "\(base)/\(entry)/options/AIAssistantQuotaManager2.xml"
-            guard let xml = LocalJSONFileReader.text(atPath: path),
+            guard let xml = localJSONReader.text(atPath: path),
                   let parsed = try? Self.extractQuota(xml: xml) else { continue }
             let ratio = parsed.maximum > 0 ? parsed.current / parsed.maximum : 0
             if let currentBest = best {

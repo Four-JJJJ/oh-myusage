@@ -1,5 +1,6 @@
 import OhMyUsageDomain
 import Foundation
+import OhMyUsageProviders
 
 final class KimiSmartProvider: UsageProvider, @unchecked Sendable {
     let descriptor: ProviderDescriptor
@@ -9,8 +10,8 @@ final class KimiSmartProvider: UsageProvider, @unchecked Sendable {
 
     init(
         descriptor: ProviderDescriptor,
-        keychain: KeychainService,
-        browserCookieService: KimiBrowserCookieService,
+        keychain: any TokenCredentialStoring,
+        browserCookieService: any KimiBrowserCookieDetecting,
         session: URLSession = .shared
     ) {
         self.descriptor = descriptor
@@ -61,7 +62,7 @@ final class KimiSmartProvider: UsageProvider, @unchecked Sendable {
     }
 
     private static func makeLegacyDescriptor(from descriptor: ProviderDescriptor) -> ProviderDescriptor {
-        let authService = descriptor.auth.keychainService ?? KeychainService.defaultServiceName
+        let authService = descriptor.auth.keychainService ?? TokenCredentialStoreServiceNames.defaultServiceName
         let authAccount = descriptor.auth.keychainAccount ?? "kimi.com/kimi-auth-manual"
         let auth = AuthConfig(
             kind: .bearer,

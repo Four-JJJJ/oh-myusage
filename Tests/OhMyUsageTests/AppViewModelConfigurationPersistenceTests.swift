@@ -51,17 +51,39 @@ final class AppViewModelConfigurationPersistenceTests: XCTestCase {
             quotaDisplayMode: .used
         )
 
-        XCTAssertEqual(viewModel.settingsPersistenceDisplayState.kind, .saved)
+        // Raw stored status (not deadline-resolved) — persistAndRestart can exceed a short clear delay.
+        XCTAssertEqual(viewModel.settingsPersistenceStatus.kind, .saved)
         XCTAssertEqual(
-            viewModel.settingsPersistenceDisplayState.statusText,
+            viewModel.settingsPersistenceStatus.statusText,
             viewModel.localizedText("已保存", "Saved")
         )
         XCTAssertEqual(viewModel.config.providers.first?.officialConfig?.quotaDisplayMode, .used)
 
-        await assertEventually("saved status should auto clear", timeout: 5) {
-            viewModel.settingsPersistenceDisplayState.kind == .idle
-                && viewModel.settingsPersistenceErrorMessage == nil
-        }
+        // Starve MainActor briefly so the clear Task cannot run; deadline reconcile must still idle.
+        let busyUntil = Date().addingTimeInterval(0.08)
+        while Date() < busyUntil {}
+        XCTAssertEqual(viewModel.settingsPersistenceDisplayState.kind, .idle)
+        XCTAssertNil(viewModel.settingsPersistenceErrorMessageForDisplay)
+    }
+
+    func testLanguageSaveShowsSavedStateThenAutoClears() async {
+        var config = AppConfig.default
+        config.language = .zhHans
+        let repository = StubConfigurationRepository(initialConfig: config)
+        let viewModel = AppViewModel(
+            testingConfig: config,
+            configurationRepository: repository,
+            appUpdateService: NoopPersistenceUpdateService(),
+            settingsPersistenceStatusClearDelaySeconds: 0.05
+        )
+
+        viewModel.setLanguage(.en)
+        XCTAssertEqual(viewModel.settingsPersistenceStatus.kind, .saved)
+
+        let busyUntil = Date().addingTimeInterval(0.08)
+        while Date() < busyUntil {}
+        XCTAssertEqual(viewModel.settingsPersistenceDisplayState.kind, .idle)
+        XCTAssertNil(viewModel.settingsPersistenceErrorMessageForDisplay)
     }
 
     func testGlobalRefreshIntervalPersistsAcrossProviders() {

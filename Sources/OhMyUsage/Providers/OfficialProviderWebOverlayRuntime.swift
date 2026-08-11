@@ -1,5 +1,6 @@
 import OhMyUsageDomain
 import Foundation
+import OhMyUsageProviders
 
 struct OfficialBrowserCookieImportStrategy {
     let providerKey: String
@@ -17,14 +18,14 @@ enum OfficialProviderWebOverlayRuntime {
     static func resolveCookieHeader(
         official: OfficialProviderConfig,
         descriptorID: String,
-        keychain: KeychainService,
-        browserCookieService: BrowserCookieDetecting,
+        keychain: any TokenCredentialStoring,
+        browserCookieService: any BrowserCookieDetecting,
         webReadBackoff: WebOverlayRetryBackoff? = nil,
         webRetryBackoffInterval: TimeInterval? = nil,
         forceRefresh: Bool,
         strategy: OfficialBrowserCookieImportStrategy
     ) async throws -> BrowserCookieHeader {
-        let service = KeychainService.defaultServiceName
+        let service = TokenCredentialStoreServiceNames.defaultServiceName
         let browserAccessIntent: BrowserCredentialAccessIntent = forceRefresh ? .interactiveImport : .background
 
         if let account = official.manualCookieAccount,
@@ -113,11 +114,11 @@ enum OfficialProviderWebOverlayRuntime {
 
     static func hasStoredManualCookie(
         official: OfficialProviderConfig,
-        keychain: KeychainService,
+        keychain: any TokenCredentialStoring,
         normalizeManualHeader: (String) -> String?
     ) -> Bool {
         guard let account = official.manualCookieAccount,
-              let stored = keychain.readToken(service: KeychainService.defaultServiceName, account: account),
+              let stored = keychain.readToken(service: TokenCredentialStoreServiceNames.defaultServiceName, account: account),
               let header = normalizeManualHeader(stored),
               !header.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return false

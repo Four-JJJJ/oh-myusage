@@ -1,12 +1,25 @@
 import OhMyUsageDomain
 import Foundation
+import OhMyUsageProviders
 
 final class KiroProvider: UsageProvider, @unchecked Sendable {
     let descriptor: ProviderDescriptor
     private static let stateKey = "kiro.kiroAgent"
 
-    init(descriptor: ProviderDescriptor) {
+    private let shell: any ShellCommandRunning
+    private let sqlite: any SQLiteQuerying
+    private let localJSONReader: any LocalJSONFileReading
+
+    init(
+        descriptor: ProviderDescriptor,
+        shell: any ShellCommandRunning = DefaultShellCommandRunner(),
+        sqlite: any SQLiteQuerying = DefaultSQLiteShell(),
+        localJSONReader: any LocalJSONFileReading = DefaultLocalJSONFileReader()
+    ) {
         self.descriptor = descriptor
+        self.shell = shell
+        self.sqlite = sqlite
+        self.localJSONReader = localJSONReader
     }
 
     func fetch() async throws -> UsageSnapshot {
@@ -27,14 +40,16 @@ final class KiroProvider: UsageProvider, @unchecked Sendable {
     }
 
     private func loadFromCLI() throws -> UsageSnapshot {
-        guard ShellCommand.run(executable: "/usr/bin/env", arguments: ["which", "kiro-cli"], timeout: 5)?.status == 0 else {
+        guard shell.run(executable: "/usr/bin/env", arguments: ["which", "kiro-cli"], timeout: 5)?.status == 0 else {
             throw ProviderError.unavailable("未检测到 kiro-cli")
         }
-        guard let result = ShellCommand.run(
+        guard let result = shell.run(
             executable: "/usr/bin/env",
             arguments: ["kiro-cli"],
             input: "/usage\n/quit\n",
-            timeout: 20
+            timeout: 20,
+            environment: nil,
+            currentDirectory: nil
         ), result.status == 0 || !result.stdout.isEmpty else {
             throw ProviderError.commandFailed("kiro-cli /usage 执行失败")
         }
@@ -48,7 +63,7 @@ final class KiroProvider: UsageProvider, @unchecked Sendable {
             guard FileManager.default.fileExists(atPath: stateDatabasePath) else { continue }
             sawStateDatabase = true
 
-            let result = SQLiteShell.snapshotQuery(
+            let result = sqlite.snapshotQuery(
                 databasePath: stateDatabasePath,
                 query: "SELECT value FROM ItemTable WHERE key = '\(Self.stateKey.replacingOccurrences(of: "'", with: "''"))' LIMIT 1;"
             )
@@ -64,8 +79,8 @@ final class KiroProvider: UsageProvider, @unchecked Sendable {
             }
 
             let accountLabel = Self.extractIDEAccountLabel(
-                token: LocalJSONFileReader.dictionary(atPath: Self.ideTokenPath),
-                profile: Self.loadIDEProfile(stateDatabasePath: stateDatabasePath)
+                token: localJSONReader.dictionary(atPath: Self.ideTokenPath),
+                profile: loadIDEProfile(stateDatabasePath: stateDatabasePath)
             )
             return try Self.parseIDESnapshot(
                 stateJSON: stateRaw,
@@ -86,8 +101,8 @@ final class KiroProvider: UsageProvider, @unchecked Sendable {
     private func enrichAccountLabel(snapshot: UsageSnapshot) -> UsageSnapshot {
         guard snapshot.accountLabel == nil else { return snapshot }
         guard let accountLabel = Self.extractIDEAccountLabel(
-            token: LocalJSONFileReader.dictionary(atPath: Self.ideTokenPath),
-            profile: Self.loadIDEProfile(stateDatabasePath: nil)
+            token: localJSONReader.dictionary(atPath: Self.ideTokenPath),
+            profile: loadIDEProfile(stateDatabasePath: nil)
         ) else {
             return snapshot
         }
@@ -480,9 +495,9 @@ final class KiroProvider: UsageProvider, @unchecked Sendable {
         return dot
     }
 
-    private static func loadIDEProfile(stateDatabasePath: String?) -> [String: Any]? {
-        for path in ideProfilePaths(stateDatabasePath: stateDatabasePath) {
-            if let profile = LocalJSONFileReader.dictionary(atPath: path) {
+    private func loadIDEProfile(stateDatabasePath: String?) -> [String: Any]? {
+        for path in Self.ideProfilePaths(stateDatabasePath: stateDatabasePath) {
+            if let profile = localJSONReader.dictionary(atPath: path) {
                 return profile
             }
         }

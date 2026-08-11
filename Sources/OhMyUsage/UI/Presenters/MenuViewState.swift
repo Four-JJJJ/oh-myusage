@@ -13,10 +13,17 @@ struct MenuViewLocalization: Equatable {
     var claudeSwitchAction: String
 }
 
+struct MenuViewClockContext: Equatable {
+    var lastUpdatedAt: Date?
+    var language: AppLanguage
+    var updatedAgoLabel: String
+}
+
 struct MenuViewState: Equatable {
     var header: MenuDashboardHeaderPresentation
     var shouldShowPermissionGuide: Bool
     var cards: [MenuCardViewState]
+    var clockContext: MenuViewClockContext
 }
 
 enum MenuCardViewState: Identifiable, Equatable {

@@ -2,6 +2,7 @@ import Foundation
 import OhMyUsageDomain
 import XCTest
 @testable import OhMyUsage
+import OhMyUsageProviders
 
 final class OpenCodeGoProviderTests: XCTestCase {
     func testParseRemoteStreamingBodyBuildsThreeWindows() throws {

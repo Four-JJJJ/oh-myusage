@@ -1,5 +1,6 @@
 import OhMyUsageDomain
 import Foundation
+import OhMyUsageProviders
 
 struct AlertEngine {
     static func shouldAlertLowRemaining(

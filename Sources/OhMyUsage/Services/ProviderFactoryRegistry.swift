@@ -1,12 +1,13 @@
 import Foundation
 import OhMyUsageDomain
+import OhMyUsageProviders
 
 struct ProviderFactoryRegistry {
     struct Dependencies {
-        let keychain: KeychainService
-        let kimiCookieService: KimiBrowserCookieService
-        let browserCookieService: BrowserCookieService
-        let browserCredentialService: BrowserCredentialService
+        let keychain: any TokenCredentialStoring
+        let kimiCookieService: any KimiBrowserCookieDetecting
+        let browserCookieService: any BrowserCookieDetecting
+        let browserCredentialService: any BrowserCredentialProviding
     }
 
     typealias Maker = (ProviderDescriptor, Dependencies) -> UsageProvider
@@ -48,35 +49,41 @@ struct ProviderFactoryRegistry {
                 ClaudeProvider(
                     descriptor: descriptor,
                     keychain: dependencies.keychain,
-                    browserCookieService: dependencies.browserCookieService
+                    browserCookieService: dependencies.browserCookieService,
+                    shell: DefaultShellCommandRunner()
                 )
             },
             .gemini: { descriptor, _ in
-                GeminiProvider(descriptor: descriptor)
+                GeminiProvider(descriptor: descriptor, shell: DefaultShellCommandRunner())
             },
             .copilot: { descriptor, _ in
-                CopilotProvider(descriptor: descriptor)
+                CopilotProvider(descriptor: descriptor, shell: DefaultShellCommandRunner())
             },
             .microsoftCopilot: { descriptor, _ in
-                MicrosoftCopilotProvider(descriptor: descriptor)
+                MicrosoftCopilotProvider(descriptor: descriptor, shell: DefaultShellCommandRunner())
             },
             .zai: { descriptor, _ in
-                ZaiProvider(descriptor: descriptor)
+                ZaiProvider(descriptor: descriptor, localJSONReader: DefaultLocalJSONFileReader())
             },
             .amp: { descriptor, _ in
-                AmpProvider(descriptor: descriptor)
+                AmpProvider(descriptor: descriptor, localJSONReader: DefaultLocalJSONFileReader())
             },
             .cursor: { descriptor, _ in
-                CursorProvider(descriptor: descriptor)
+                CursorProvider(descriptor: descriptor, sqlite: DefaultSQLiteShell())
             },
             .jetbrains: { descriptor, _ in
-                JetBrainsProvider(descriptor: descriptor)
+                JetBrainsProvider(descriptor: descriptor, localJSONReader: DefaultLocalJSONFileReader())
             },
             .kiro: { descriptor, _ in
-                KiroProvider(descriptor: descriptor)
+                KiroProvider(
+                    descriptor: descriptor,
+                    shell: DefaultShellCommandRunner(),
+                    sqlite: DefaultSQLiteShell(),
+                    localJSONReader: DefaultLocalJSONFileReader()
+                )
             },
             .windsurf: { descriptor, _ in
-                WindsurfProvider(descriptor: descriptor)
+                WindsurfProvider(descriptor: descriptor, sqlite: DefaultSQLiteShell())
             },
             .trae: { descriptor, dependencies in
                 TraeProvider(
@@ -102,7 +109,8 @@ struct ProviderFactoryRegistry {
                 OpenCodeGoProvider(
                     descriptor: descriptor,
                     keychain: dependencies.keychain,
-                    browserCookieService: dependencies.browserCookieService
+                    browserCookieService: dependencies.browserCookieService,
+                    sqlite: DefaultSQLiteShell()
                 )
             },
             .relay: ProviderFactoryRegistry.makeRelayProvider,

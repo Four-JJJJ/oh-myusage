@@ -14,16 +14,15 @@ enum ProviderDefaultCatalog {
             OfficialProviderDefaultCatalog.jetBrains(),
             OfficialProviderDefaultCatalog.kiro(),
             OfficialProviderDefaultCatalog.windsurf(),
-            OfficialProviderDefaultCatalog.kimi(),
-            OfficialRelayProviderDefaultCatalog.moonshot(),
-            OfficialRelayProviderDefaultCatalog.miniMax(),
-            OfficialRelayProviderDefaultCatalog.deepSeek(),
-            OfficialRelayProviderDefaultCatalog.xiaomiMIMO(),
-            OfficialProviderDefaultCatalog.trae(),
-            OfficialProviderDefaultCatalog.openRouterCredits(),
-            OfficialProviderDefaultCatalog.openRouterAPI(),
-            OfficialProviderDefaultCatalog.ollamaCloud(),
-            OfficialProviderDefaultCatalog.openCodeGo()
+            OfficialProviderDefaultCatalog.kimi()
         ]
+            + OfficialRelayProviderDefaultCatalog.allDefaultProviders
+            + [
+                OfficialProviderDefaultCatalog.trae(),
+                OfficialProviderDefaultCatalog.openRouterCredits(),
+                OfficialProviderDefaultCatalog.openRouterAPI(),
+                OfficialProviderDefaultCatalog.ollamaCloud(),
+                OfficialProviderDefaultCatalog.openCodeGo()
+            ]
     }
 }

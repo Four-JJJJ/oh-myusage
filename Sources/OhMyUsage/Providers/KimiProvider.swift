@@ -1,10 +1,11 @@
 import OhMyUsageDomain
 import Foundation
+import OhMyUsageProviders
 
 final class KimiProvider: UsageProvider, @unchecked Sendable {
     private let session: URLSession
-    private let keychain: KeychainService
-    private let browserCookieService: KimiBrowserCookieService
+    private let keychain: any TokenCredentialStoring
+    private let browserCookieService: any KimiBrowserCookieDetecting
     private let tokenResolverOverride: (() throws -> (token: String, source: String))?
     private let browserTokenResolverOverride: (([KimiBrowserKind], Bool) -> KimiDetectedToken?)?
     private let browserRefreshTokenResolverOverride: (([KimiBrowserKind], Bool) -> KimiDetectedToken?)?
@@ -14,8 +15,8 @@ final class KimiProvider: UsageProvider, @unchecked Sendable {
     init(
         descriptor: ProviderDescriptor,
         session: URLSession = .shared,
-        keychain: KeychainService,
-        browserCookieService: KimiBrowserCookieService = KimiBrowserCookieService(),
+        keychain: any TokenCredentialStoring,
+        browserCookieService: any KimiBrowserCookieDetecting,
         tokenResolverOverride: (() throws -> (token: String, source: String))? = nil,
         browserTokenResolverOverride: (([KimiBrowserKind], Bool) -> KimiDetectedToken?)? = nil,
         browserRefreshTokenResolverOverride: (([KimiBrowserKind], Bool) -> KimiDetectedToken?)? = nil

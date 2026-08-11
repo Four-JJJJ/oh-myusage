@@ -1,7 +1,7 @@
 import Foundation
 
-enum JWTInspector {
-    static func payload(_ token: String) -> [String: Any]? {
+public enum JWTInspector {
+    public static func payload(_ token: String) -> [String: Any]? {
         let parts = token.split(separator: ".")
         guard parts.count >= 2 else { return nil }
         var payload = String(parts[1])
@@ -17,15 +17,15 @@ enum JWTInspector {
         return json
     }
 
-    static func email(_ token: String) -> String? {
+    public static func email(_ token: String) -> String? {
         OfficialValueParser.string(payload(token)?["email"])
     }
 
-    static func subject(_ token: String) -> String? {
+    public static func subject(_ token: String) -> String? {
         OfficialValueParser.string(payload(token)?["sub"])
     }
 
-    static func expirationDate(_ token: String) -> Date? {
+    public static func expirationDate(_ token: String) -> Date? {
         guard let exp = OfficialValueParser.double(payload(token)?["exp"]) else { return nil }
         return Date(timeIntervalSince1970: exp)
     }

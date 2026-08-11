@@ -6,23 +6,21 @@ enum RelayIconMetadataCatalog {
         guard provider.type == .relay || provider.type == .open || provider.type == .dragon else {
             return nil
         }
-        let relayID = (provider.relayConfig?.adapterID ?? provider.relayManifest?.id ?? "").lowercased()
-        let relayBaseURL = provider.relayConfig?.baseURL ?? provider.baseURL ?? ""
-        let host = URL(string: relayBaseURL)?.host?.lowercased() ?? ""
-        let providerName = provider.name.lowercased()
-        let relaySignals = "\(relayID)|\(host)|\(providerName)"
-        if relaySignals.contains("moonshot") || relaySignals.contains("moonsho") || relaySignals.contains("kimi") {
-            return "menu_kimi_icon"
+
+        let adapterID = provider.relayConfig?.adapterID ?? provider.relayManifest?.id ?? ""
+        if let iconName = OfficialRelayMetadataCatalog.metadata(forAdapterID: adapterID)?.iconName {
+            return iconName
         }
-        if relaySignals.contains("deepseek") {
-            return "menu_deepseek_icon"
+        if let iconName = OfficialRelayMetadataCatalog.metadata(forProviderID: provider.id)?.iconName {
+            return iconName
         }
-        if relaySignals.contains("xiaomimimo") || relaySignals.contains("mimo") {
-            return "menu_mimo_icon"
+        let baseURL = provider.relayConfig?.baseURL ?? provider.baseURL ?? ""
+        if let iconName = OfficialRelayMetadataCatalog.metadata(forBaseURL: baseURL)?.iconName {
+            return iconName
         }
-        if relaySignals.contains("minimax") || relaySignals.contains("minimaxi") {
-            return "menu_minimax_icon"
-        }
+
+        // Official catalog covers known adapter / provider / baseURL icons.
+        // Keep no parallel string heuristics for moonshot/kimi/deepseek/mimo/minimax.
         return nil
     }
 }

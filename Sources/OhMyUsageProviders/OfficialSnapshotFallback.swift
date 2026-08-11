@@ -1,8 +1,8 @@
-import OhMyUsageDomain
 import Foundation
+import OhMyUsageDomain
 
-enum OfficialSnapshotFallback {
-    static func make(from snapshot: UsageSnapshot) -> UsageSnapshot {
+public enum OfficialSnapshotFallback {
+    public static func make(from snapshot: UsageSnapshot) -> UsageSnapshot {
         var fallback = snapshot
         fallback.status = .warning
         fallback.valueFreshness = .cachedFallback

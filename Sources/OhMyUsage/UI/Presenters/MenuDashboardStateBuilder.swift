@@ -38,8 +38,60 @@ enum MenuDashboardStateBuilder {
         return MenuViewState(
             header: header,
             shouldShowPermissionGuide: shouldShowPermissionGuide,
-            cards: cards
+            cards: cards,
+            clockContext: MenuViewClockContext(
+                lastUpdatedAt: lastUpdatedAt,
+                language: config.language,
+                updatedAgoLabel: localization.updatedAgoLabel
+            )
         )
+    }
+
+    /// Updates only clock-derived copy (`updatedText` / metric `resetText`).
+    /// Must not rebuild cards or touch slot view models / prefetch.
+    static func applyClock(to state: inout MenuViewState, now: Date) {
+        let context = state.clockContext
+        state.header.updatedText = MenuDashboardPresenter.updatedText(
+            lastUpdatedAt: context.lastUpdatedAt,
+            language: context.language,
+            now: now,
+            updatedAgoLabel: context.updatedAgoLabel
+        )
+
+        for index in state.cards.indices {
+            switch state.cards[index] {
+            case var .percentage(card):
+                applyClock(to: &card.metrics, now: now, language: context.language)
+                state.cards[index] = .percentage(card)
+            case var .officialGroup(card):
+                applyClock(to: &card.group.primary.metricDisplays, now: now, language: context.language)
+                for secondaryIndex in card.group.secondary.indices {
+                    applyClock(
+                        to: &card.group.secondary[secondaryIndex].metricDisplays,
+                        now: now,
+                        language: context.language
+                    )
+                }
+                state.cards[index] = .officialGroup(card)
+            case .amount:
+                break
+            }
+        }
+    }
+
+    private static func applyClock(
+        to metrics: inout [MenuQuotaMetricDisplayPresentation],
+        now: Date,
+        language: AppLanguage
+    ) {
+        for index in metrics.indices {
+            metrics[index].resetText = CountdownFormatter.text(
+                to: metrics[index].resetAt,
+                now: now,
+                placeholder: "-",
+                language: language
+            )
+        }
     }
 
     private static func displayProviders(from providers: [ProviderDescriptor]) -> [ProviderDescriptor] {

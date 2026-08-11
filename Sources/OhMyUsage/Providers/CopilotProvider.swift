@@ -1,5 +1,6 @@
 import OhMyUsageDomain
 import Foundation
+import OhMyUsageProviders
 
 final class CopilotProvider: UsageProvider, @unchecked Sendable {
     private struct ResolvedCredential {
@@ -10,7 +11,7 @@ final class CopilotProvider: UsageProvider, @unchecked Sendable {
     private let session: URLSession
     private let environment: () -> [String: String]
     private let keychainReader: (String, String?) -> String?
-    private let shellRunner: (String, [String], TimeInterval) -> (status: Int32, stdout: String, stderr: String)?
+    private let shell: any ShellCommandRunning
     let descriptor: ProviderDescriptor
 
     init(
@@ -20,18 +21,13 @@ final class CopilotProvider: UsageProvider, @unchecked Sendable {
         keychainReader: @escaping (String, String?) -> String? = { service, account in
             SecurityCredentialReader.readGenericPassword(service: service, account: account)
         },
-        shellRunner: @escaping (String, [String], TimeInterval) -> (status: Int32, stdout: String, stderr: String)? = {
-            executable,
-            arguments,
-            timeout in
-            ShellCommand.run(executable: executable, arguments: arguments, timeout: timeout)
-        }
+        shell: any ShellCommandRunning = DefaultShellCommandRunner()
     ) {
         self.descriptor = descriptor
         self.session = session
         self.environment = environment
         self.keychainReader = keychainReader
-        self.shellRunner = shellRunner
+        self.shell = shell
     }
 
     func fetch() async throws -> UsageSnapshot {
@@ -91,7 +87,7 @@ final class CopilotProvider: UsageProvider, @unchecked Sendable {
             return ResolvedCredential(token: value, sourceLabel: "GitHub CLI")
         }
 
-        if let result = shellRunner("/usr/bin/env", ["gh", "auth", "token"], 8),
+        if let result = shell.run(executable: "/usr/bin/env", arguments: ["gh", "auth", "token"], timeout: 8),
            result.status == 0,
            let value = Self.normalizedCredential(result.stdout) {
             return ResolvedCredential(token: value, sourceLabel: "GitHub CLI")

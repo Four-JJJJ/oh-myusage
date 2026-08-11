@@ -1,13 +1,20 @@
 import OhMyUsageDomain
 import Foundation
+import OhMyUsageProviders
 
 final class ZaiProvider: UsageProvider, @unchecked Sendable {
     private let session: URLSession
+    private let localJSONReader: any LocalJSONFileReading
     let descriptor: ProviderDescriptor
 
-    init(descriptor: ProviderDescriptor, session: URLSession = .shared) {
+    init(
+        descriptor: ProviderDescriptor,
+        session: URLSession = .shared,
+        localJSONReader: any LocalJSONFileReading = DefaultLocalJSONFileReader()
+    ) {
         self.descriptor = descriptor
         self.session = session
+        self.localJSONReader = localJSONReader
     }
 
     func fetch() async throws -> UsageSnapshot {
@@ -33,7 +40,7 @@ final class ZaiProvider: UsageProvider, @unchecked Sendable {
         }
 
         let settingsPath = "\(NSHomeDirectory())/.claude/settings.json"
-        if let text = LocalJSONFileReader.text(atPath: settingsPath),
+        if let text = localJSONReader.text(atPath: settingsPath),
            let data = text.data(using: .utf8),
            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
             if let env = json["env"] as? [String: Any],

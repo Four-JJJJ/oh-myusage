@@ -1,9 +1,5 @@
 import Foundation
-
-struct BrowserDetectedCredential: Equatable {
-    let value: String
-    let source: String
-}
+import OhMyUsageProviders
 
 final class BrowserCredentialService {
     private struct ExpiringCacheEntry<T> {

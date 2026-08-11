@@ -103,13 +103,16 @@ final class LocalUsageFileEnumerationCache: @unchecked Sendable {
             cutoffRef: cutoff.timeIntervalSinceReferenceDate
         )
 
+        // Validate filesystem metadata outside the lock. Holding the lock during
+        // pathSnapshot I/O can stall other callers (including tests) for a long time
+        // when a prior enumeration cached a large directory tree.
         lock.lock()
-        if let entry = entries[key], isValid(entry: entry, fileManager: fileManager) {
-            let files = entry.files
-            lock.unlock()
-            return files
-        }
+        let cached = entries[key]
         lock.unlock()
+
+        if let entry = cached, isValid(entry: entry, fileManager: fileManager) {
+            return entry.files
+        }
 
         let entry = buildEntry(
             roots: normalizedRoots,
@@ -124,6 +127,12 @@ final class LocalUsageFileEnumerationCache: @unchecked Sendable {
         lock.unlock()
 
         return entry.files
+    }
+
+    func removeAllEntries() {
+        lock.lock()
+        entries.removeAll(keepingCapacity: false)
+        lock.unlock()
     }
 
     private func isValid(entry: Entry, fileManager: FileManager) -> Bool {
@@ -165,7 +174,13 @@ final class LocalUsageFileEnumerationCache: @unchecked Sendable {
 
             guard let enumerator = fileManager.enumerator(
                 at: rootURL,
-                includingPropertiesForKeys: [.isDirectoryKey, .isRegularFileKey, .fileSizeKey, .contentModificationDateKey],
+                includingPropertiesForKeys: [
+                    .isDirectoryKey,
+                    .isRegularFileKey,
+                    .isSymbolicLinkKey,
+                    .fileSizeKey,
+                    .contentModificationDateKey
+                ],
                 options: [.skipsHiddenFiles, .skipsPackageDescendants]
             ) else {
                 continue
@@ -173,8 +188,22 @@ final class LocalUsageFileEnumerationCache: @unchecked Sendable {
 
             for case let fileURL as URL in enumerator {
                 guard let values = try? fileURL.resourceValues(
-                    forKeys: [.isDirectoryKey, .isRegularFileKey, .fileSizeKey, .contentModificationDateKey]
+                    forKeys: [
+                        .isDirectoryKey,
+                        .isRegularFileKey,
+                        .isSymbolicLinkKey,
+                        .fileSizeKey,
+                        .contentModificationDateKey
+                    ]
                 ) else {
+                    continue
+                }
+
+                // Avoid symlink cycles / accidental traversal into huge external trees.
+                if values.isSymbolicLink == true {
+                    if values.isDirectory == true {
+                        enumerator.skipDescendants()
+                    }
                     continue
                 }
 
@@ -327,6 +356,14 @@ final class LocalUsageParsedFileCache<Value>: @unchecked Sendable {
         lock.unlock()
 
         return parsed
+    }
+
+    func removeAllEntries() {
+        lock.lock()
+        entries.removeAll(keepingCapacity: false)
+        accessOrder.removeAll(keepingCapacity: false)
+        cachedValueCount = 0
+        lock.unlock()
     }
 
     private func markAccessedLocked(_ key: CacheKey) {

@@ -1,6 +1,7 @@
 import Foundation
 import XCTest
 @testable import OhMyUsage
+import OhMyUsageProviders
 
 final class ClaudeProfileSnapshotServiceTests: XCTestCase {
     override func tearDown() {

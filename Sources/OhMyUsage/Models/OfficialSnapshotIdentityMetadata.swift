@@ -1,5 +1,6 @@
 import OhMyUsageDomain
 import Foundation
+import OhMyUsageProviders
 
 struct CodexSnapshotIdentityMetadata: Equatable {
     var accountID: String?

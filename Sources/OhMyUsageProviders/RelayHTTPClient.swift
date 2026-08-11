@@ -1,9 +1,13 @@
 import Foundation
 
-struct RelayHTTPClient {
-    let session: URLSession
+public struct RelayHTTPClient {
+    public let session: URLSession
 
-    func requestJSON(url: URL, headers: [String: String], method: String?, bodyJSON: String?) async throws -> Any {
+    public init(session: URLSession) {
+        self.session = session
+    }
+
+    public func requestJSON(url: URL, headers: [String: String], method: String?, bodyJSON: String?) async throws -> Any {
         var req = URLRequest(url: url)
         let normalizedMethod = (method ?? "GET").trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
         req.httpMethod = normalizedMethod.isEmpty ? "GET" : normalizedMethod
@@ -60,7 +64,7 @@ struct RelayHTTPClient {
         }
     }
 
-    func request<T: Decodable>(url: URL, bearerToken: String, type: T.Type) async throws -> T {
+    public func request<T: Decodable>(url: URL, bearerToken: String, type: T.Type) async throws -> T {
         var req = URLRequest(url: url)
         req.httpMethod = "GET"
         req.setValue("Bearer \(bearerToken)", forHTTPHeaderField: "Authorization")

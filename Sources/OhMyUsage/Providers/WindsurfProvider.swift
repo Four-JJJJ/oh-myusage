@@ -1,5 +1,6 @@
 import OhMyUsageDomain
 import Foundation
+import OhMyUsageProviders
 
 final class WindsurfProvider: UsageProvider, @unchecked Sendable {
     struct StateVariant: Sendable {
@@ -7,27 +8,23 @@ final class WindsurfProvider: UsageProvider, @unchecked Sendable {
         let dbPath: String
     }
 
-    typealias StateQueryRunner = @Sendable (_ databasePath: String, _ query: String) -> SQLiteShell.QueryResult
-
     private static let authStatusQuery = "SELECT value FROM ItemTable WHERE key = 'windsurfAuthStatus' LIMIT 1"
 
     private let session: URLSession
     private let stateVariants: [StateVariant]
-    private let stateQueryRunner: StateQueryRunner
+    private let sqlite: any SQLiteQuerying
     let descriptor: ProviderDescriptor
 
     init(
         descriptor: ProviderDescriptor,
         session: URLSession = .shared,
         stateVariants: [StateVariant] = WindsurfProvider.defaultStateVariants(),
-        stateQueryRunner: @escaping StateQueryRunner = { databasePath, query in
-            SQLiteShell.snapshotQuery(databasePath: databasePath, query: query)
-        }
+        sqlite: any SQLiteQuerying = DefaultSQLiteShell()
     ) {
         self.descriptor = descriptor
         self.session = session
         self.stateVariants = stateVariants
-        self.stateQueryRunner = stateQueryRunner
+        self.sqlite = sqlite
     }
 
     func fetch() async throws -> UsageSnapshot {
@@ -41,7 +38,7 @@ final class WindsurfProvider: UsageProvider, @unchecked Sendable {
         for variant in stateVariants {
             guard FileManager.default.fileExists(atPath: variant.dbPath) else { continue }
 
-            let result = stateQueryRunner(variant.dbPath, Self.authStatusQuery)
+            let result = sqlite.snapshotQuery(databasePath: variant.dbPath, query: Self.authStatusQuery)
             guard result.succeeded else {
                 lastReadError = .commandFailed(
                     "Failed to read Windsurf state database at \(variant.dbPath): \(result.errorMessage)"

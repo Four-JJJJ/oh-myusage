@@ -2,6 +2,7 @@ import Foundation
 import XCTest
 @testable import OhMyUsageApplication
 @testable import OhMyUsage
+import OhMyUsageProviders
 
 final class UsageAnalyticsRepositoryTests: XCTestCase {
     override func setUp() {

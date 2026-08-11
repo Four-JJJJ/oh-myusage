@@ -1,5 +1,6 @@
 import Foundation
 import OhMyUsageDomain
+import OhMyUsageProviders
 
 struct TokenChannelResult {
     let remaining: Double?

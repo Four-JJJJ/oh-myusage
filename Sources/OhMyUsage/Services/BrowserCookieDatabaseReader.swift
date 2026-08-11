@@ -1,5 +1,6 @@
 import CommonCrypto
 import Foundation
+import OhMyUsageProviders
 
 final class BrowserCookieDatabaseReader {
     private struct CookiePathCacheKey: Hashable {

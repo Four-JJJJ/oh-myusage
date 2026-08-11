@@ -2,6 +2,7 @@ import OhMyUsageDomain
 import Foundation
 import Dispatch
 import CryptoKit
+import OhMyUsageProviders
 
 final class CodexProvider: UsageProvider, @unchecked Sendable {
     private static let cache = FetchedAtOfficialSnapshotCache()
@@ -13,8 +14,8 @@ final class CodexProvider: UsageProvider, @unchecked Sendable {
     private let webRetryBackoffInterval: TimeInterval = 15 * 60
     let descriptor: ProviderDescriptor
     private let session: URLSession
-    private let keychain: KeychainService
-    private let browserCookieService: BrowserCookieDetecting
+    private let keychain: any TokenCredentialStoring
+    private let browserCookieService: any BrowserCookieDetecting
     private let webReadBackoff: WebOverlayRetryBackoff
     private let cache: any OfficialSnapshotCaching
     private let gate: any OfficialFetchGating
@@ -24,8 +25,8 @@ final class CodexProvider: UsageProvider, @unchecked Sendable {
     init(
         descriptor: ProviderDescriptor,
         session: URLSession = .shared,
-        keychain: KeychainService,
-        browserCookieService: BrowserCookieDetecting,
+        keychain: any TokenCredentialStoring,
+        browserCookieService: any BrowserCookieDetecting,
         webReadBackoff: WebOverlayRetryBackoff = CodexProvider.webReadBackoff,
         cache: any OfficialSnapshotCaching = CodexProvider.cache,
         gate: any OfficialFetchGating = CodexProvider.gate,
@@ -288,7 +289,7 @@ final class CodexProvider: UsageProvider, @unchecked Sendable {
     private func currentManualCookieCacheIdentity(for official: OfficialProviderConfig) -> String? {
         guard let account = official.manualCookieAccount,
               !account.isEmpty,
-              let header = keychain.readToken(service: KeychainService.defaultServiceName, account: account),
+              let header = keychain.readToken(service: TokenCredentialStoreServiceNames.defaultServiceName, account: account),
               !header.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return nil
         }

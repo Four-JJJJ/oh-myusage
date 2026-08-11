@@ -1,18 +1,29 @@
 import Foundation
 
-struct OfficialOAuthRefreshResponse {
-    let accessToken: String
-    let json: [String: Any]
+public struct OfficialOAuthRefreshResponse {
+    public let accessToken: String
+    public let json: [String: Any]
+
+    public init(accessToken: String, json: [String: Any]) {
+        self.accessToken = accessToken
+        self.json = json
+    }
 }
 
-struct OfficialProviderAuthRequestResult<State, Response> {
-    let state: State
-    let response: Response
-    let didRefresh: Bool
+public struct OfficialProviderAuthRequestResult<State, Response> {
+    public let state: State
+    public let response: Response
+    public let didRefresh: Bool
+
+    public init(state: State, response: Response, didRefresh: Bool) {
+        self.state = state
+        self.response = response
+        self.didRefresh = didRefresh
+    }
 }
 
-enum OfficialProviderAuthRuntime {
-    static func urlEncodedFormData(_ fields: [String: String]) -> Data? {
+public enum OfficialProviderAuthRuntime {
+    public static func urlEncodedFormData(_ fields: [String: String]) -> Data? {
         let allowed = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
         return fields
             .map { key, value in
@@ -24,7 +35,7 @@ enum OfficialProviderAuthRuntime {
             .data(using: .utf8)
     }
 
-    static func requestOAuthRefresh(
+    public static func requestOAuthRefresh(
         session: URLSession,
         request: URLRequest,
         invalidResponseMessage: String,
@@ -52,7 +63,7 @@ enum OfficialProviderAuthRuntime {
         )
     }
 
-    static func requestWithExpiringCredentialRefresh<State, Response>(
+    public static func requestWithExpiringCredentialRefresh<State, Response>(
         initialState: State,
         shouldRefresh: (State) -> Bool,
         request: (State) async throws -> Response,
@@ -85,7 +96,7 @@ enum OfficialProviderAuthRuntime {
         }
     }
 
-    static func updateJSONObjectFile(
+    public static func updateJSONObjectFile(
         path: String,
         mutate: (inout [String: Any]) -> Void
     ) {

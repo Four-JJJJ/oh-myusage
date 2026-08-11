@@ -3,6 +3,12 @@ import OhMyUsageDomain
 import OhMyUsageFeatures
 import OhMyUsagePresentation
 
+/// Pure Usage composition root for layered targets.
+///
+/// Responsibilities stop at Usage feature descriptors / refresh requests / summary view state.
+/// Executable menu-bar host dependency wiring belongs in `AppCompositionFactory` /
+/// `AppDependencyGraph` inside the `OhMyUsage` executable. This module must not import
+/// `OhMyUsage` or claim complete runtime integration.
 public struct OhMyUsageCompositionRoot: Sendable {
     public let featureAssembly: UsageFeatureAssembly
 

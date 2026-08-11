@@ -1,9 +1,5 @@
 import Foundation
-
-struct KimiDetectedToken: Equatable {
-    let token: String
-    let source: String
-}
+import OhMyUsageProviders
 
 final class KimiBrowserCookieService {
     private let cookieReader: BrowserCookieDatabaseReader

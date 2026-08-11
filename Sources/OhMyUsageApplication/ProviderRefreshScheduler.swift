@@ -205,14 +205,28 @@ package final class ProviderRefreshScheduler {
         localSessionMonitorTask = nil
     }
 
+    deinit {
+        pollLoopTask?.cancel()
+        inFlightRefreshTasks.values.forEach { $0.cancel() }
+        localSessionMonitorTask?.cancel()
+    }
+
     package func refreshNow(providers: [ProviderRefreshScheduleDescriptor]) {
         let enabled = providers.filter(\.isEnabled)
         guard !enabled.isEmpty else { return }
 
         Task { @MainActor [weak self] in
             guard let self else { return }
+            var tasks: [Task<Void, Never>] = []
+            tasks.reserveCapacity(enabled.count)
             for descriptor in enabled {
-                await refreshAction(descriptor.id, true)
+                let providerID = descriptor.id
+                tasks.append(Task { @MainActor in
+                    await self.refreshAction(providerID, true)
+                })
+            }
+            for task in tasks {
+                await task.value
             }
         }
     }

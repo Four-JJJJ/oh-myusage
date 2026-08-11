@@ -1,5 +1,6 @@
 import Foundation
 import OhMyUsageDomain
+import OhMyUsageProviders
 
 enum RelayBrowserRecoveryChannel: String {
     case balance

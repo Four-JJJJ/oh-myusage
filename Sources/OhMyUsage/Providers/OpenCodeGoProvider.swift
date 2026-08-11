@@ -1,5 +1,6 @@
 import OhMyUsageDomain
 import Foundation
+import OhMyUsageProviders
 
 final class OpenCodeGoProvider: UsageProvider, @unchecked Sendable {
     internal struct LocalUsageRow: Equatable {
@@ -90,24 +91,26 @@ final class OpenCodeGoProvider: UsageProvider, @unchecked Sendable {
     )
 
     private let session: URLSession
-    private let keychain: KeychainService
-    private let browserCookieService: BrowserCookieDetecting
+    private let keychain: any TokenCredentialStoring
+    private let browserCookieService: any BrowserCookieDetecting
     private let localDatabasePath: String
     private let nowProvider: @Sendable () -> Date
     private let environment: [String: String]
     private let localRowsProvider: (@Sendable () -> [LocalUsageRow]?)?
+    private let sqlite: any SQLiteQuerying
 
     let descriptor: ProviderDescriptor
 
     init(
         descriptor: ProviderDescriptor,
         session: URLSession = .shared,
-        keychain: KeychainService,
-        browserCookieService: BrowserCookieDetecting,
+        keychain: any TokenCredentialStoring,
+        browserCookieService: any BrowserCookieDetecting,
         localDatabasePath: String = OpenCodeGoProvider.localDatabaseDefaultPath,
         nowProvider: @escaping @Sendable () -> Date = { Date() },
         environment: [String: String] = ProcessInfo.processInfo.environment,
-        localRowsProvider: (@Sendable () -> [LocalUsageRow]?)? = nil
+        localRowsProvider: (@Sendable () -> [LocalUsageRow]?)? = nil,
+        sqlite: any SQLiteQuerying = DefaultSQLiteShell()
     ) {
         self.descriptor = descriptor
         self.session = session
@@ -117,6 +120,7 @@ final class OpenCodeGoProvider: UsageProvider, @unchecked Sendable {
         self.nowProvider = nowProvider
         self.environment = environment
         self.localRowsProvider = localRowsProvider
+        self.sqlite = sqlite
     }
 
     func fetch() async throws -> UsageSnapshot {
@@ -325,7 +329,7 @@ final class OpenCodeGoProvider: UsageProvider, @unchecked Sendable {
 
     private func readStoredManualCookie(official: OfficialProviderConfig) -> String? {
         guard let account = official.manualCookieAccount else { return nil }
-        return keychain.readToken(service: KeychainService.defaultServiceName, account: account)
+        return keychain.readToken(service: TokenCredentialStoreServiceNames.defaultServiceName, account: account)
     }
 
     private func resolveAuthCookieHeader(
@@ -360,7 +364,7 @@ final class OpenCodeGoProvider: UsageProvider, @unchecked Sendable {
         ),
            let header = Self.normalizedAuthCookieHeader(named.header) {
             if let account = official.manualCookieAccount {
-                _ = keychain.saveToken(header, service: KeychainService.defaultServiceName, account: account)
+                _ = keychain.saveToken(header, service: TokenCredentialStoreServiceNames.defaultServiceName, account: account)
             }
             return header
         }
@@ -372,7 +376,7 @@ final class OpenCodeGoProvider: UsageProvider, @unchecked Sendable {
         ),
            let header = Self.normalizedAuthCookieHeader(detected.header) {
             if let account = official.manualCookieAccount {
-                _ = keychain.saveToken(header, service: KeychainService.defaultServiceName, account: account)
+                _ = keychain.saveToken(header, service: TokenCredentialStoreServiceNames.defaultServiceName, account: account)
             }
             return header
         }
@@ -388,7 +392,7 @@ final class OpenCodeGoProvider: UsageProvider, @unchecked Sendable {
             return []
         }
 
-        let rawRows = SQLiteShell.rows(databasePath: localDatabasePath, query: Self.localHistoryRowsSQL)
+        let rawRows = sqlite.rows(databasePath: localDatabasePath, query: Self.localHistoryRowsSQL)
         var rows: [LocalUsageRow] = []
         rows.reserveCapacity(rawRows.count)
 

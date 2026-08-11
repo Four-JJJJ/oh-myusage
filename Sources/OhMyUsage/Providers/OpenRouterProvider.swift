@@ -1,16 +1,17 @@
 import OhMyUsageDomain
 import Foundation
+import OhMyUsageProviders
 
 final class OpenRouterProvider: UsageProvider, @unchecked Sendable {
     private let session: URLSession
-    private let keychain: KeychainService
+    private let keychain: any TokenCredentialStoring
 
     let descriptor: ProviderDescriptor
 
     init(
         descriptor: ProviderDescriptor,
         session: URLSession = .shared,
-        keychain: KeychainService
+        keychain: any TokenCredentialStoring
     ) {
         self.descriptor = descriptor
         self.session = session
@@ -90,7 +91,7 @@ final class OpenRouterProvider: UsageProvider, @unchecked Sendable {
             fallbackAccount = "official/openrouter/api-key"
         }
 
-        let service = descriptor.auth.keychainService ?? KeychainService.defaultServiceName
+        let service = descriptor.auth.keychainService ?? TokenCredentialStoreServiceNames.defaultServiceName
         let account = descriptor.auth.keychainAccount ?? fallbackAccount
         guard let token = keychain.readToken(service: service, account: account) else {
             throw ProviderError.missingCredential(account)

@@ -235,17 +235,9 @@ final class ProviderDefinitionRegistryTests: XCTestCase {
             ),
             (
                 .makeOpenRelay(
-                    name: "Kimi Relay",
-                    baseURL: "https://proxy.example.com",
-                    preferredAdapterID: "generic"
-                ),
-                "menu_kimi_icon"
-            ),
-            (
-                .makeOpenRelay(
                     name: "Relay X",
-                    baseURL: "https://deepseek.proxy.example.com",
-                    preferredAdapterID: "generic"
+                    baseURL: "https://proxy.example.com",
+                    preferredAdapterID: "deepseek"
                 ),
                 "menu_deepseek_icon"
             ),
@@ -259,9 +251,9 @@ final class ProviderDefinitionRegistryTests: XCTestCase {
             ),
             (
                 .makeOpenRelay(
-                    name: "MIMO Relay",
+                    name: "Relay X",
                     baseURL: "https://proxy.example.com",
-                    preferredAdapterID: "generic"
+                    preferredAdapterID: "xiaomimimo"
                 ),
                 "menu_mimo_icon"
             ),
@@ -274,23 +266,95 @@ final class ProviderDefinitionRegistryTests: XCTestCase {
                 "menu_minimax_icon"
             ),
             (
-                .makeOpenRelay(
-                    name: "Relay X",
-                    baseURL: "https://minimaxi.proxy.example.com",
-                    preferredAdapterID: "generic"
+                makeUnofficialSameSiteRelay(
+                    name: "Custom Moonshot Mirror",
+                    baseURL: "https://platform.moonshot.cn"
+                ),
+                "menu_kimi_icon"
+            ),
+            (
+                makeUnofficialSameSiteRelay(
+                    name: "Custom DeepSeek Mirror",
+                    baseURL: "https://platform.deepseek.com"
+                ),
+                "menu_deepseek_icon"
+            ),
+            (
+                makeUnofficialSameSiteRelay(
+                    name: "Custom MiniMax Mirror",
+                    baseURL: "https://platform.minimaxi.com"
                 ),
                 "menu_minimax_icon"
+            ),
+            (
+                makeUnofficialSameSiteRelay(
+                    name: "Custom MIMO Mirror",
+                    baseURL: "https://platform.xiaomimimo.com"
+                ),
+                "menu_mimo_icon"
             )
         ]
 
         for item in cases {
             XCTAssertFalse(item.provider.isOfficialRelayProvider, item.provider.name)
             XCTAssertEqual(
+                RelayIconMetadataCatalog.iconOverrideName(for: item.provider),
+                item.icon,
+                item.provider.name
+            )
+            XCTAssertEqual(
                 ProviderDefinitionRegistry.presentation(for: item.provider).iconName,
                 item.icon,
                 item.provider.name
             )
         }
+    }
+
+    func testRelayIconOverridePrefersOfficialMetadataCatalogSignals() {
+        let byAdapter = ProviderDescriptor.makeOpenRelay(
+            name: "Adapter Mirror",
+            baseURL: "https://proxy.example.com",
+            preferredAdapterID: "moonshot"
+        )
+        let byBaseURL = makeUnofficialSameSiteRelay(
+            name: "Same-site Mirror",
+            baseURL: "https://platform.moonshot.cn"
+        )
+        let unknown = ProviderDescriptor.makeOpenRelay(
+            name: "Unknown Relay",
+            baseURL: "https://relay.example.com",
+            preferredAdapterID: "generic"
+        )
+
+        XCTAssertEqual(RelayIconMetadataCatalog.iconOverrideName(for: byAdapter), "menu_kimi_icon")
+        XCTAssertEqual(RelayIconMetadataCatalog.iconOverrideName(for: byBaseURL), "menu_kimi_icon")
+        XCTAssertNil(RelayIconMetadataCatalog.iconOverrideName(for: unknown))
+    }
+
+    private func makeUnofficialSameSiteRelay(name: String, baseURL: String) -> ProviderDescriptor {
+        let auth = AuthConfig(
+            kind: .bearer,
+            keychainService: KeychainService.defaultServiceName,
+            keychainAccount: "custom-mirror/sk-token"
+        )
+        return ProviderDescriptor(
+            id: "open-custom-mirror-\(name.lowercased().replacingOccurrences(of: " ", with: "-"))",
+            name: name,
+            family: .thirdParty,
+            type: .relay,
+            enabled: true,
+            pollIntervalSec: 60,
+            threshold: AlertRule(lowRemaining: 10, maxConsecutiveFailures: 2, notifyOnAuthError: true),
+            auth: auth,
+            baseURL: baseURL,
+            relayConfig: RelayProviderConfig(
+                adapterID: "custom-mirror",
+                baseURL: baseURL,
+                tokenChannelEnabled: false,
+                balanceChannelEnabled: true,
+                balanceAuth: auth
+            )
+        )
     }
 
     func testOfficialRelayDefaultsAreDerivedFromMetadataCatalog() throws {

@@ -43,6 +43,8 @@ struct MenuQuotaMetricDisplayPresentation: Identifiable, Equatable {
     var percent: Double?
     var barTone: BarTone
     var isBlockedByDepletedQuota: Bool
+    /// Retained so menu clock ticks can refresh `resetText` without rebuilding cards.
+    var resetAt: Date? = nil
 }
 
 enum MenuQuotaPresenter {
@@ -149,10 +151,13 @@ enum MenuQuotaPresenter {
                 valueText = displayPercent.map { "\($0)%" } ?? "-"
             }
 
+            let resetAt: Date?
             let resetText: String
             if disconnected || !metric.isAvailable {
+                resetAt = nil
                 resetText = "-"
             } else {
+                resetAt = metric.resetAt
                 resetText = CountdownFormatter.text(
                     to: metric.resetAt,
                     now: now,
@@ -173,7 +178,8 @@ enum MenuQuotaPresenter {
                     metric,
                     in: blockageCandidates,
                     disconnected: disconnected
-                )
+                ),
+                resetAt: resetAt
             )
         }
     }
@@ -236,8 +242,8 @@ enum MenuQuotaPresenter {
             ]
         case .cursor:
             return [
-                MenuQuotaMetric(id: "\(provider.id)-placeholder-monthly", title: "Monthly", displayPercent: 0, healthPercent: 0, resetAt: nil, isAvailable: true, valueTextOverride: nil, kind: nil),
-                MenuQuotaMetric(id: "\(provider.id)-placeholder-ondemand", title: "On-Demand", displayPercent: 0, healthPercent: 0, resetAt: nil, isAvailable: true, valueTextOverride: nil, kind: nil)
+                MenuQuotaMetric(id: "\(provider.id)-placeholder-cursor-models", title: "Cursor Models", displayPercent: 0, healthPercent: 0, resetAt: nil, isAvailable: true, valueTextOverride: nil, kind: nil),
+                MenuQuotaMetric(id: "\(provider.id)-placeholder-other-models", title: "Other Models", displayPercent: 0, healthPercent: 0, resetAt: nil, isAvailable: true, valueTextOverride: nil, kind: nil)
             ]
         case .jetbrains:
             return [

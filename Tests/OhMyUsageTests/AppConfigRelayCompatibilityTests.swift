@@ -81,13 +81,13 @@ final class AppConfigRelayCompatibilityTests: XCTestCase {
 
     func testLegacyDefaultProviderConstructorsAreIsolatedFromCurrentDefaults() throws {
         let rootURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-        let defaultsURL = rootURL.appendingPathComponent("Sources/OhMyUsage/Models/ProviderDescriptor+Defaults.swift")
+        let facadesURL = rootURL.appendingPathComponent("Sources/OhMyUsage/Models/ProviderDescriptor+CatalogFacades.swift")
         let legacyDefaultsURL = rootURL.appendingPathComponent("Sources/OhMyUsage/Models/ProviderDescriptor+LegacyDefaults.swift")
-        let defaultsSource = try String(contentsOf: defaultsURL, encoding: .utf8)
+        let facadesSource = try String(contentsOf: facadesURL, encoding: .utf8)
         let legacyDefaultsSource = try String(contentsOf: legacyDefaultsURL, encoding: .utf8)
 
-        XCTAssertFalse(defaultsSource.contains("defaultDragon"))
-        XCTAssertFalse(defaultsSource.contains("defaultHongmacc"))
+        XCTAssertFalse(facadesSource.contains("defaultDragon"))
+        XCTAssertFalse(facadesSource.contains("defaultHongmacc"))
         XCTAssertTrue(legacyDefaultsSource.contains("legacyDefaultDragon"))
         XCTAssertTrue(legacyDefaultsSource.contains("legacyDefaultHongmacc"))
         XCTAssertTrue(legacyDefaultsSource.contains("Legacy migration/test fixtures only"))

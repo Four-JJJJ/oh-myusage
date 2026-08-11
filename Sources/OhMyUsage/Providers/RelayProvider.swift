@@ -1,11 +1,12 @@
 import OhMyUsageDomain
 import Foundation
+import OhMyUsageProviders
 
 final class RelayProvider: UsageProvider, @unchecked Sendable {
     let descriptor: ProviderDescriptor
     private let session: URLSession
-    private let keychain: KeychainService
-    private let browserCredentialService: BrowserCredentialService
+    private let keychain: any TokenCredentialStoring
+    private let browserCredentialService: any BrowserCredentialProviding
     private let registry: RelayAdapterRegistry
     private let browserRecoveryBackoffInterval: TimeInterval = 10 * 60
     private var credentialResolver: RelayCredentialResolver {
@@ -45,8 +46,8 @@ final class RelayProvider: UsageProvider, @unchecked Sendable {
     init(
         descriptor: ProviderDescriptor,
         session: URLSession = .shared,
-        keychain: KeychainService,
-        browserCredentialService: BrowserCredentialService = BrowserCredentialService(),
+        keychain: any TokenCredentialStoring,
+        browserCredentialService: any BrowserCredentialProviding = BrowserCredentialService(),
         registry: RelayAdapterRegistry = .shared
     ) {
         self.descriptor = descriptor

@@ -1,5 +1,6 @@
 import OhMyUsageDomain
 import Foundation
+import OhMyUsageProviders
 
 final class DragonProvider: UsageProvider, @unchecked Sendable {
     let descriptor: ProviderDescriptor

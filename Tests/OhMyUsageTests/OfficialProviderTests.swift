@@ -2,6 +2,7 @@ import Foundation
 import OhMyUsageDomain
 import XCTest
 @testable import OhMyUsage
+import OhMyUsageProviders
 
 final class OfficialProviderTests: XCTestCase {
     func testConfigMigrationInjectsOfficialProviders() {
@@ -595,6 +596,7 @@ final class OfficialProviderTests: XCTestCase {
         let provider = KimiOfficialProvider(
             descriptor: descriptor,
             session: session,
+            keychain: makeTestKeychain(),
             cache: SnapshotTimestampOfficialSnapshotCache(),
             gate: PassthroughOfficialFetchGate(),
             homeDirectory: { homeDirectory.path }
@@ -1523,7 +1525,49 @@ final class OfficialProviderTests: XCTestCase {
         XCTAssertEqual(snapshot.extras["creditsBalance"], "8.25")
     }
 
-    func testCursorResponseParsesMonthlyAndOnDemand() throws {
+    func testCursorResponseParsesCursorModelsAndOtherModels() throws {
+        let json = """
+        {
+          "membershipType": "pro",
+          "billingCycleEnd": "2026-05-01T00:00:00Z",
+          "individualUsage": {
+            "plan": {
+              "enabled": true,
+              "used": 2000,
+              "limit": 2000,
+              "remaining": 0,
+              "autoPercentUsed": 80,
+              "apiPercentUsed": 100,
+              "totalPercentUsed": 100
+            },
+            "onDemand": { "enabled": true, "used": 10, "limit": 100, "remaining": 90 }
+          }
+        }
+        """
+
+        let snapshot = try CursorProvider.parseSnapshot(
+            data: Data(json.utf8),
+            descriptor: ProviderDescriptor.defaultOfficialCursor(),
+            accountLabel: "cursor@example.com"
+        )
+
+        XCTAssertEqual(snapshot.accountLabel, "cursor@example.com")
+        XCTAssertEqual(snapshot.extras["planType"], "pro")
+        XCTAssertEqual(snapshot.quotaWindows.count, 3)
+
+        let cursorModels = try XCTUnwrap(snapshot.quotaWindows.first(where: { $0.title == "Cursor Models" }))
+        XCTAssertEqual(cursorModels.usedPercent, 80, accuracy: 0.001)
+        XCTAssertEqual(cursorModels.remainingPercent, 20, accuracy: 0.001)
+
+        let otherModels = try XCTUnwrap(snapshot.quotaWindows.first(where: { $0.title == "Other Models" }))
+        XCTAssertEqual(otherModels.usedPercent, 100, accuracy: 0.001)
+        XCTAssertEqual(otherModels.remainingPercent, 0, accuracy: 0.001)
+
+        let onDemand = try XCTUnwrap(snapshot.quotaWindows.first(where: { $0.title == "On-Demand" }))
+        XCTAssertEqual(onDemand.remainingPercent, 90, accuracy: 0.001)
+    }
+
+    func testCursorResponseFallsBackToMonthlyWithoutPoolPercents() throws {
         let json = """
         {
           "membershipType": "ultra",
@@ -1541,8 +1585,8 @@ final class OfficialProviderTests: XCTestCase {
             accountLabel: "cursor@example.com"
         )
 
-        XCTAssertEqual(snapshot.accountLabel, "cursor@example.com")
         XCTAssertEqual(snapshot.quotaWindows.count, 2)
+        XCTAssertEqual(snapshot.quotaWindows.first?.title, "Monthly")
         XCTAssertEqual(snapshot.extras["planType"], "ultra")
     }
 

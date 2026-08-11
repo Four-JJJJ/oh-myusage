@@ -19,6 +19,7 @@ package enum RuntimeDiagnosticsLimits {
     package static let claudePrefetchMaxConcurrent = 2
     package static let claudeSignalMaxTrackedFiles = 200
     package static let jsonlMaxLineBytes = 512 * 1024
+    package static let jsonlMaxFileBytes = 64 * 1024 * 1024
 }
 
 package struct RuntimeMemoryDiagnostics: Equatable {

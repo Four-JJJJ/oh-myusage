@@ -1,4 +1,5 @@
 import Foundation
+import OhMyUsageProviders
 
 enum LaunchAtLoginError: LocalizedError {
     case missingBundlePath

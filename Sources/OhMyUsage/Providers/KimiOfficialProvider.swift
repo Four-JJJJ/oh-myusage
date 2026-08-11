@@ -1,5 +1,6 @@
 import OhMyUsageDomain
 import Foundation
+import OhMyUsageProviders
 
 final class KimiOfficialProvider: UsageProvider, @unchecked Sendable {
     private static let cache = SnapshotTimestampOfficialSnapshotCache()
@@ -8,7 +9,7 @@ final class KimiOfficialProvider: UsageProvider, @unchecked Sendable {
     private let cacheTTL: TimeInterval = 15
     private let refreshBuffer: TimeInterval = 5 * 60
     private let session: URLSession
-    private let keychain: KeychainService
+    private let keychain: any TokenCredentialStoring
     private let cache: any OfficialSnapshotCaching
     private let gate: any OfficialFetchGating
     private let homeDirectory: () -> String
@@ -18,7 +19,7 @@ final class KimiOfficialProvider: UsageProvider, @unchecked Sendable {
     init(
         descriptor: ProviderDescriptor,
         session: URLSession = .shared,
-        keychain: KeychainService = KeychainService(),
+        keychain: any TokenCredentialStoring,
         cache: any OfficialSnapshotCaching = KimiOfficialProvider.cache,
         gate: any OfficialFetchGating = KimiOfficialProvider.gate,
         homeDirectory: @escaping () -> String = { NSHomeDirectory() }

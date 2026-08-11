@@ -8,6 +8,9 @@ final class KimiLocalUsageServiceTests: XCTestCase {
 
     override func setUpWithError() throws {
         try super.setUpWithError()
+        // Fail fast instead of hanging the full suite if filesystem/cache stalls.
+        executionTimeAllowance = 15
+        KimiLocalUsageService.clearCachesForTesting()
         temporaryDirectory = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("kimi-local-usage-tests-\(UUID().uuidString)", isDirectory: true)
         sessionsRoot = temporaryDirectory.appendingPathComponent("sessions", isDirectory: true)
@@ -15,6 +18,7 @@ final class KimiLocalUsageServiceTests: XCTestCase {
     }
 
     override func tearDownWithError() throws {
+        KimiLocalUsageService.clearCachesForTesting()
         if let temporaryDirectory {
             try? FileManager.default.removeItem(at: temporaryDirectory)
         }

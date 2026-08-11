@@ -1,30 +1,48 @@
 import Foundation
 
-enum SQLiteShell {
-    enum ReadMode: Equatable {
+public enum SQLiteShell {
+    public enum ReadMode: Equatable {
         case direct
         case readOnlySnapshot
     }
 
-    struct QueryResult {
-        let databasePath: String
-        let executedPath: String
-        let mode: ReadMode
-        let status: Int32
-        let stdout: String
-        let stderr: String
-        let rows: [[String]]
+    public struct QueryResult {
+        public let databasePath: String
+        public let executedPath: String
+        public let mode: ReadMode
+        public let status: Int32
+        public let stdout: String
+        public let stderr: String
+        public let rows: [[String]]
 
-        var succeeded: Bool {
+        public init(
+            databasePath: String,
+            executedPath: String,
+            mode: ReadMode,
+            status: Int32,
+            stdout: String,
+            stderr: String,
+            rows: [[String]]
+        ) {
+            self.databasePath = databasePath
+            self.executedPath = executedPath
+            self.mode = mode
+            self.status = status
+            self.stdout = stdout
+            self.stderr = stderr
+            self.rows = rows
+        }
+
+        public var succeeded: Bool {
             status == 0
         }
 
-        var singleValue: String? {
+        public var singleValue: String? {
             guard succeeded else { return nil }
             return rows.first?.first?.trimmingCharacters(in: .whitespacesAndNewlines)
         }
 
-        var errorMessage: String {
+        public var errorMessage: String {
             let trimmed = stderr.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty {
                 return trimmed
@@ -33,7 +51,7 @@ enum SQLiteShell {
         }
     }
 
-    static func rows(databasePath: String, query: String, separator: String = "\t") -> [[String]] {
+    public static func rows(databasePath: String, query: String, separator: String = "\t") -> [[String]] {
         let result = Self.query(databasePath: databasePath, query: query, separator: separator)
         guard result.succeeded else {
             return []
@@ -41,20 +59,20 @@ enum SQLiteShell {
         return result.rows
     }
 
-    static func singleValue(databasePath: String, query: String) -> String? {
+    public static func singleValue(databasePath: String, query: String) -> String? {
         Self.query(databasePath: databasePath, query: query, separator: "\t").singleValue
     }
 
-    static func query(databasePath: String, query: String, separator: String = "\t") -> QueryResult {
+    public static func query(databasePath: String, query: String, separator: String = "\t") -> QueryResult {
         performQuery(databasePath: databasePath, query: query, separator: separator, mode: .direct)
     }
 
-    static func snapshotQuery(databasePath: String, query: String, separator: String = "\t") -> QueryResult {
+    public static func snapshotQuery(databasePath: String, query: String, separator: String = "\t") -> QueryResult {
         performQuery(databasePath: databasePath, query: query, separator: separator, mode: .readOnlySnapshot)
     }
 
     @discardableResult
-    static func execute(databasePath: String, sql: String) -> Bool {
+    public static func execute(databasePath: String, sql: String) -> Bool {
         guard FileManager.default.fileExists(atPath: databasePath),
               let result = ShellCommand.run(
                 executable: "/usr/bin/sqlite3",

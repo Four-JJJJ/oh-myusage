@@ -1,13 +1,20 @@
 import OhMyUsageDomain
 import Foundation
+import OhMyUsageProviders
 
 final class MicrosoftCopilotProvider: UsageProvider, @unchecked Sendable {
     private let session: URLSession
+    private let shell: any ShellCommandRunning
     let descriptor: ProviderDescriptor
 
-    init(descriptor: ProviderDescriptor, session: URLSession = .shared) {
+    init(
+        descriptor: ProviderDescriptor,
+        session: URLSession = .shared,
+        shell: any ShellCommandRunning = DefaultShellCommandRunner()
+    ) {
         self.descriptor = descriptor
         self.session = session
+        self.shell = shell
     }
 
     func fetch() async throws -> UsageSnapshot {
@@ -35,7 +42,7 @@ final class MicrosoftCopilotProvider: UsageProvider, @unchecked Sendable {
         }
 
         if let value = SecurityCredentialReader.readGenericPassword(
-            service: KeychainService.defaultServiceName,
+            service: TokenCredentialStoreServiceNames.defaultServiceName,
             account: "official/microsoft-copilot/graph-token"
         )?.trimmingCharacters(in: .whitespacesAndNewlines),
            !value.isEmpty {
@@ -70,7 +77,7 @@ final class MicrosoftCopilotProvider: UsageProvider, @unchecked Sendable {
     }
 
     private func tokenFromAzureCLI(arguments: [String]) -> String? {
-        guard let result = ShellCommand.run(
+        guard let result = shell.run(
             executable: "/usr/bin/env",
             arguments: ["az"] + arguments,
             timeout: 12

@@ -79,6 +79,21 @@ final class AppLifecycleDelegate: NSObject, NSApplicationDelegate {
         stopActivationBridgeObservation()
     }
 
+    /// Intercept the system Settings menu / ⌘, so macOS does not show the
+    /// blank SwiftUI `Settings { EmptyView() }` scene instead of our AppKit window.
+    @objc
+    func showSettingsWindow(_ sender: Any?) {
+        statusBarController?.showSettingsWindow()
+    }
+
+    func applicationShouldHandleReopen(
+        _ sender: NSApplication,
+        hasVisibleWindows flag: Bool
+    ) -> Bool {
+        statusBarController?.showSettingsWindow()
+        return false
+    }
+
     @MainActor
     private func applyBundledAppIcon() {
         AppIconImageProvider.applyApplicationIcon(size: 256)

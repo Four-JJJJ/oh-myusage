@@ -43,61 +43,27 @@ extension AppViewModel {
     }
 
     func setStatusBarMultiUsageEnabled(_ enabled: Bool) {
-        let outcome = statusBarPreferencesCoordinator.setStatusBarMultiUsageEnabled(
-            enabled,
-            config: &config,
-            visibleClaudeMonitoringSlotIDs: AppOfficialProfileStateCoordinator.visibleClaudeMonitoringSlotIDs(
-                profiles: claudeProfiles
-            )
-        )
-        applyStatusBarPreferencesMutation(outcome)
+        configurationModel.setStatusBarMultiUsageEnabled(enabled)
     }
 
     func setStatusBarDisplayStyle(_ style: StatusBarDisplayStyle) {
-        let outcome = statusBarPreferencesCoordinator.setStatusBarDisplayStyle(
-            style,
-            config: &config
-        )
-        applyStatusBarPreferencesMutation(outcome)
+        configurationModel.setStatusBarDisplayStyle(style)
     }
 
     func setStatusBarAppearanceMode(_ mode: StatusBarAppearanceMode) {
-        let outcome = statusBarPreferencesCoordinator.setStatusBarAppearanceMode(
-            mode,
-            config: &config
-        )
-        applyStatusBarPreferencesMutation(outcome)
+        configurationModel.setStatusBarAppearanceMode(mode)
     }
 
     func setStatusBarDisplayEnabled(_ enabled: Bool, providerID: String) {
-        let outcome = statusBarPreferencesCoordinator.setStatusBarDisplayEnabled(
-            enabled,
-            providerID: providerID,
-            config: &config,
-            visibleClaudeMonitoringSlotIDs: AppOfficialProfileStateCoordinator.visibleClaudeMonitoringSlotIDs(
-                profiles: claudeProfiles
-            )
-        )
-        applyStatusBarPreferencesMutation(outcome)
+        configurationModel.setStatusBarDisplayEnabled(enabled, providerID: providerID)
     }
 
     func setStatusBarProvider(providerID: String?) {
-        let outcome = statusBarPreferencesCoordinator.setStatusBarProvider(
-            providerID: providerID,
-            config: &config,
-            visibleClaudeMonitoringSlotIDs: AppOfficialProfileStateCoordinator.visibleClaudeMonitoringSlotIDs(
-                profiles: claudeProfiles
-            )
-        )
-        applyStatusBarPreferencesMutation(outcome)
+        configurationModel.setStatusBarProvider(providerID: providerID)
     }
 
     func setShowOfficialAccountEmailInMenuBar(_ enabled: Bool) {
-        let outcome = statusBarPreferencesCoordinator.setShowOfficialAccountEmailInMenuBar(
-            enabled,
-            config: &config
-        )
-        applyStatusBarPreferencesMutation(outcome)
+        configurationModel.setShowOfficialAccountEmailInMenuBar(enabled)
     }
 
     func showOfficialPlanTypeInMenuBar(providerID: String) -> Bool {
@@ -112,12 +78,7 @@ extension AppViewModel {
     }
 
     func setShowOfficialPlanTypeInMenuBar(_ enabled: Bool, providerID: String) {
-        let outcome = statusBarPreferencesCoordinator.setShowOfficialPlanTypeInMenuBar(
-            enabled,
-            providerID: providerID,
-            config: &config
-        )
-        applyStatusBarPreferencesMutation(outcome)
+        configurationModel.setShowOfficialPlanTypeInMenuBar(enabled, providerID: providerID)
     }
 
     func showExpirationTimeInMenuBar(providerID: String) -> Bool {
@@ -128,12 +89,7 @@ extension AppViewModel {
     }
 
     func setShowExpirationTimeInMenuBar(_ enabled: Bool, providerID: String) {
-        let outcome = statusBarPreferencesCoordinator.setShowExpirationTimeInMenuBar(
-            enabled,
-            providerID: providerID,
-            config: &config
-        )
-        applyStatusBarPreferencesMutation(outcome)
+        configurationModel.setShowExpirationTimeInMenuBar(enabled, providerID: providerID)
     }
 
     func claudeStatusBarResolvedDisplaySlotID() -> CodexSlotID? {
@@ -196,34 +152,15 @@ extension AppViewModel {
     }
 
     func refreshDisplayedStatusBarProviders(forceRefresh: Bool = false) {
-        providerRefreshCoordinator.refreshDisplayedStatusBarProviders(
-            providers: statusBarProvidersForDisplay(),
-            forceRefresh: forceRefresh
-        ) { [weak self] descriptor, forceRefresh in
-            await self?.refreshProvider(descriptor, forceRefresh: forceRefresh)
-        }
+        providerRefreshModel.refreshDisplayedStatusBarProviders(forceRefresh: forceRefresh)
     }
 
     func applyStatusBarPreferencesMutation(_ outcome: StatusBarPreferencesMutationOutcome) {
-        guard outcome != .none else { return }
-        if outcome.shouldPersist {
-            _ = persistConfiguration(showFeedback: true)
-        }
-        if outcome.shouldNotifyDisplayConfigChange {
-            notifyStatusBarDisplayConfigChanged()
-        }
-        if outcome.shouldRefreshDisplayedProviders {
-            refreshDisplayedStatusBarProviders()
-        }
+        configurationModel.applyStatusBarPreferencesMutation(outcome)
     }
 
     func normalizeStatusBarSelections() {
-        statusBarPreferencesCoordinator.normalizeSelections(
-            config: &config,
-            visibleClaudeMonitoringSlotIDs: AppOfficialProfileStateCoordinator.visibleClaudeMonitoringSlotIDs(
-                profiles: claudeProfiles
-            )
-        )
+        configurationModel.normalizeStatusBarSelections()
     }
 
     func notifyStatusBarDisplayConfigChanged() {

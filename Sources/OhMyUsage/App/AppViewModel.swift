@@ -28,36 +28,79 @@ final class AppViewModel {
     let providerFactory: any ProviderFactorying
     @ObservationIgnored private let localSessionRefreshCoordinator: LocalSessionRefreshCoordinator
     @ObservationIgnored private let localUsageHistoryRepository: LocalUsageHistoryRepository
-    @ObservationIgnored private let usageAnalyticsRefreshCoordinator: UsageAnalyticsRefreshCoordinator
-    @ObservationIgnored var refreshScheduler: ProviderRefreshScheduler?
-    @ObservationIgnored let providerRefreshCoordinator: AppProviderRefreshCoordinator
-    @ObservationIgnored let officialAccountImportCoordinator = AppOfficialAccountImportCoordinator()
-    @ObservationIgnored let officialAccountSwitchCoordinator = AppOfficialAccountSwitchCoordinator()
-    @ObservationIgnored let officialProfileLifecycleCoordinator = AppOfficialProfileLifecycleCoordinator()
-    @ObservationIgnored let officialProfileRefreshCoordinator = AppOfficialProfileRefreshCoordinator()
-    @ObservationIgnored let officialProfileDisplayCoordinator = AppOfficialProfileDisplayCoordinator()
-    @ObservationIgnored let officialProfileSyncCoordinator = AppOfficialProfileSyncCoordinator()
-    @ObservationIgnored let codexFeedbackCoordinator = AppTransientFeedbackCoordinator<CodexSlotID, CodexSwitchFeedback>()
-    @ObservationIgnored let claudeFeedbackCoordinator = AppTransientFeedbackCoordinator<CodexSlotID, ClaudeSwitchFeedback>()
-    @ObservationIgnored let officialProviderSettingsCoordinator = AppOfficialProviderSettingsCoordinator()
-    @ObservationIgnored let providerListMutationCoordinator = AppProviderListMutationCoordinator()
-    @ObservationIgnored let providerCredentialCoordinator = AppProviderCredentialCoordinator()
-    @ObservationIgnored let credentialLookupCoordinator = AppCredentialLookupCoordinator()
-    @ObservationIgnored let permissionCoordinator = AppPermissionCoordinator()
+    @ObservationIgnored private let detectsInstalledAppVersionForUpdates: Bool
+    @ObservationIgnored let usageAnalyticsModel: AppUsageAnalyticsModel
+    @ObservationIgnored let providerRefreshModel: AppProviderRefreshModel
+    @ObservationIgnored let officialProfilesModel = AppOfficialProfilesModel()
+    @ObservationIgnored let configurationModel: AppConfigurationModel
     @ObservationIgnored let resetCoordinator = AppResetCoordinator()
-    @ObservationIgnored let relayProviderSettingsCoordinator = AppRelayProviderSettingsCoordinator()
-    @ObservationIgnored let relayDescriptorPreviewBuilder = RelayDescriptorPreviewBuilder()
-    @ObservationIgnored let statusBarPreferencesCoordinator = AppStatusBarPreferencesCoordinator()
-    @ObservationIgnored let configurationMutationCoordinator = AppConfigurationMutationCoordinator()
-    @ObservationIgnored let settingsPersistenceFeedbackCoordinator: AppSettingsPersistenceFeedbackCoordinator
     @ObservationIgnored private let localProviderDiscoveryCoordinator = LocalProviderDiscoveryCoordinator()
     @ObservationIgnored private let localUsageHistoryRefreshCoordinator = LocalUsageHistoryRefreshCoordinator()
     @ObservationIgnored let codexOfficialProfileRefreshRuntime = CodexOfficialProfileRefreshRuntime()
     @ObservationIgnored let claudeOfficialProfileRefreshRuntime = ClaudeOfficialProfileRefreshRuntime()
-    @ObservationIgnored let updateCoordinator: AppUpdateCoordinator
-    @ObservationIgnored let codexSwitchCoordinator = AccountSwitchTransactionCoordinator<CodexSlotID>()
-    @ObservationIgnored let claudeSwitchCoordinator = AccountSwitchTransactionCoordinator<CodexSlotID>()
+    @ObservationIgnored let permissionModel: AppPermissionModel
+    @ObservationIgnored let updateModel: AppUpdateModel
     private var sessionStore = AppSessionStore()
+
+    var officialProviderSettingsCoordinator: AppOfficialProviderSettingsCoordinator {
+        configurationModel.officialProviderSettingsCoordinator
+    }
+    var providerListMutationCoordinator: AppProviderListMutationCoordinator {
+        configurationModel.providerListMutationCoordinator
+    }
+    var providerCredentialCoordinator: AppProviderCredentialCoordinator {
+        configurationModel.providerCredentialCoordinator
+    }
+    var credentialLookupCoordinator: AppCredentialLookupCoordinator {
+        configurationModel.credentialLookupCoordinator
+    }
+    var relayProviderSettingsCoordinator: AppRelayProviderSettingsCoordinator {
+        configurationModel.relayProviderSettingsCoordinator
+    }
+    var relayDescriptorPreviewBuilder: RelayDescriptorPreviewBuilder {
+        configurationModel.relayDescriptorPreviewBuilder
+    }
+    var statusBarPreferencesCoordinator: AppStatusBarPreferencesCoordinator {
+        configurationModel.statusBarPreferencesCoordinator
+    }
+    var configurationMutationCoordinator: AppConfigurationMutationCoordinator {
+        configurationModel.configurationMutationCoordinator
+    }
+    var settingsPersistenceFeedbackCoordinator: AppSettingsPersistenceFeedbackCoordinator {
+        configurationModel.settingsPersistenceFeedbackCoordinator
+    }
+
+    var officialAccountImportCoordinator: AppOfficialAccountImportCoordinator {
+        officialProfilesModel.accountImportCoordinator
+    }
+    var officialAccountSwitchCoordinator: AppOfficialAccountSwitchCoordinator {
+        officialProfilesModel.accountSwitchCoordinator
+    }
+    var officialProfileLifecycleCoordinator: AppOfficialProfileLifecycleCoordinator {
+        officialProfilesModel.lifecycleCoordinator
+    }
+    var officialProfileRefreshCoordinator: AppOfficialProfileRefreshCoordinator {
+        officialProfilesModel.refreshCoordinator
+    }
+    var officialProfileDisplayCoordinator: AppOfficialProfileDisplayCoordinator {
+        officialProfilesModel.displayCoordinator
+    }
+    var officialProfileSyncCoordinator: AppOfficialProfileSyncCoordinator {
+        officialProfilesModel.syncCoordinator
+    }
+    var codexFeedbackCoordinator: AppTransientFeedbackCoordinator<CodexSlotID, CodexSwitchFeedback> {
+        officialProfilesModel.codexFeedbackCoordinator
+    }
+    var claudeFeedbackCoordinator: AppTransientFeedbackCoordinator<CodexSlotID, ClaudeSwitchFeedback> {
+        officialProfilesModel.claudeFeedbackCoordinator
+    }
+    var codexSwitchCoordinator: AccountSwitchTransactionCoordinator<CodexSlotID> {
+        officialProfilesModel.codexSwitchCoordinator
+    }
+    var claudeSwitchCoordinator: AccountSwitchTransactionCoordinator<CodexSlotID> {
+        officialProfilesModel.claudeSwitchCoordinator
+    }
+
 
     var settingsPersistenceStatus = SettingsPersistenceDisplayState(
         kind: .idle,
@@ -67,9 +110,9 @@ final class AppViewModel {
     var settingsPersistenceErrorMessage: String?
 
     var config: AppConfig
+    // Provider-state projections below are read-only; writes go through `providerRefreshModel`.
     var snapshots: [String: UsageSnapshot] {
-        get { sessionStore.providerState.snapshots }
-        set { sessionStore.providerState.snapshots = newValue }
+        sessionStore.providerState.snapshots
     }
     var codexSlots: [CodexAccountSlot] {
         get { sessionStore.accountState.codexSlots }
@@ -104,12 +147,10 @@ final class AppViewModel {
         set { sessionStore.accountState.claudeOAuthImportState = newValue }
     }
     var errors: [String: String] {
-        get { sessionStore.providerState.errors }
-        set { sessionStore.providerState.errors = newValue }
+        sessionStore.providerState.errors
     }
     var lastUpdatedAt: Date? {
-        get { sessionStore.providerState.lastUpdatedAt }
-        set { sessionStore.providerState.lastUpdatedAt = newValue }
+        sessionStore.providerState.lastUpdatedAt
     }
     var notificationAuthorizationStatus: UNAuthorizationStatus {
         get { sessionStore.permissionState.notificationAuthorizationStatus }
@@ -175,9 +216,8 @@ final class AppViewModel {
         get { sessionStore.updateState.updateInstallErrorMessage }
         set { sessionStore.updateState.updateInstallErrorMessage = newValue }
     }
-    private(set) var localUsageHistoryVersion: Int {
-        get { sessionStore.providerState.localUsageHistoryVersion }
-        set { sessionStore.providerState.localUsageHistoryVersion = newValue }
+    var localUsageHistoryVersion: Int {
+        sessionStore.providerState.localUsageHistoryVersion
     }
     var usageAnalyticsFilter = UsageAnalyticsFilter()
     private(set) var usageAnalyticsSnapshot = UsageAnalyticsSnapshot.empty(filter: UsageAnalyticsFilter())
@@ -194,27 +234,34 @@ final class AppViewModel {
         get { sessionStore.updateState }
         set { sessionStore.updateState = newValue }
     }
+    var permissionStateStorage: PermissionStore {
+        get { sessionStore.permissionState }
+        set { sessionStore.permissionState = newValue }
+    }
+    var providerStateStorage: ProviderStateStore {
+        sessionStore.providerState
+    }
+
+    /// Physical Observation write used only by `AppProviderRefreshModel` setState binding.
+    func applyProviderStateStorage(_ state: ProviderStateStore) {
+        sessionStore.providerState = state
+    }
 
     var codexOAuthImportTask: Task<Void, Never>?
     var claudeOAuthImportTask: Task<Void, Never>?
     var didRunClaudeAutoCaptureCompaction = false
-    var notificationPermissionPollingTask: Task<Void, Never>?
-    @ObservationIgnored var permissionRefreshTask: Task<Void, Never>?
     var credentialLookupVersion: Int {
         get { sessionStore.credentialLookupVersion }
         set { sessionStore.credentialLookupVersion = newValue }
     }
     var consecutiveFailures: [String: Int] {
-        get { sessionStore.providerState.consecutiveFailures }
-        set { sessionStore.providerState.consecutiveFailures = newValue }
+        sessionStore.providerState.consecutiveFailures
     }
     var activeAlerts: Set<String> {
-        get { sessionStore.providerState.activeAlerts }
-        set { sessionStore.providerState.activeAlerts = newValue }
+        sessionStore.providerState.activeAlerts
     }
     var thirdPartyBalanceBaselineTracker: ThirdPartyBalanceBaselineTracker {
-        get { sessionStore.providerState.thirdPartyBalanceBaselineTracker }
-        set { sessionStore.providerState.thirdPartyBalanceBaselineTracker = newValue }
+        sessionStore.providerState.thirdPartyBalanceBaselineTracker
     }
     var hasStarted: Bool {
         get { sessionStore.hasStarted }
@@ -224,20 +271,7 @@ final class AppViewModel {
         get { sessionStore.permissionState.lastPermissionStatusRefreshAt }
         set { sessionStore.permissionState.lastPermissionStatusRefreshAt = newValue }
     }
-    private var preparedUpdate: PreparedAppUpdate? {
-        get { sessionStore.updateState.preparedUpdate }
-        set { sessionStore.updateState.preparedUpdate = newValue }
-    }
-    private var preparedUpdateInfo: AppUpdateInfo? {
-        get { sessionStore.updateState.preparedUpdateInfo }
-        set { sessionStore.updateState.preparedUpdateInfo = newValue }
-    }
-    private var updateFlowVersionInFlight: String? {
-        get { sessionStore.updateState.updateFlowVersionInFlight }
-        set { sessionStore.updateState.updateFlowVersionInFlight = newValue }
-    }
-
-    init(
+    convenience init(
         configurationRepository: any AppConfigurationRepositorying = AppConfigurationRepository(),
         appUpdateService: any AppUpdateServicing = AppUpdateService(),
         postUpdateReleaseNotesStore: any PostUpdateReleaseNotesStoring = PostUpdateReleaseNotesStore(),
@@ -255,74 +289,38 @@ final class AppViewModel {
         updateCheckStatusClearDelaySeconds: TimeInterval = 10,
         settingsPersistenceStatusClearDelaySeconds: TimeInterval = 4
     ) {
-        self.keychain = keychain
-        self.configurationRepository = configurationRepository
-        self.credentialAccessService = CredentialAccessService(keychain: keychain)
-        self.codexSlotStore = codexSlotStore
-        self.codexProfileStore = codexProfileStore
-        self.codexDesktopAuthService = codexDesktopAuthService
-        self.codexDesktopAppService = codexDesktopAppService
-        self.codexProfileSnapshotService = codexProfileSnapshotService
-        self.notifications = notificationService
-        let resolvedProviderFactory = providerFactory ?? ProviderFactory(keychain: keychain)
-        self.providerRefreshCoordinator = AppProviderRefreshCoordinator(
-            providerFactory: resolvedProviderFactory,
-            notifications: notificationService
-        )
-        self.updateCoordinator = AppUpdateCoordinator(
+        let dependencyGraph = AppCompositionFactory.makeDependencyGraph(
+            configurationRepository: configurationRepository,
             appUpdateService: appUpdateService,
             postUpdateReleaseNotesStore: postUpdateReleaseNotesStore,
+            codexSlotStore: codexSlotStore,
+            codexProfileStore: codexProfileStore,
+            codexDesktopAuthService: codexDesktopAuthService,
+            codexDesktopAppService: codexDesktopAppService,
+            codexProfileSnapshotService: codexProfileSnapshotService,
+            notificationService: notificationService,
+            providerFactory: providerFactory,
+            keychain: keychain,
+            localUsageHistoryRepository: localUsageHistoryRepository,
+            usageAnalyticsRefreshCoordinator: usageAnalyticsRefreshCoordinator,
             updateInstallBufferDelaySeconds: updateInstallBufferDelaySeconds,
-            updateCheckStatusClearDelaySeconds: updateCheckStatusClearDelaySeconds
+            updateCheckStatusClearDelaySeconds: updateCheckStatusClearDelaySeconds,
+            settingsPersistenceStatusClearDelaySeconds: settingsPersistenceStatusClearDelaySeconds
         )
-        self.settingsPersistenceFeedbackCoordinator = AppSettingsPersistenceFeedbackCoordinator(
-            clearDelaySeconds: settingsPersistenceStatusClearDelaySeconds
+        let configBootstrap = AppCompositionFactory.loadProductionConfig(
+            from: dependencyGraph.configurationRepository
         )
-        let shouldPersistConfigDuringBootstrap: Bool
-        var loadedConfig: AppConfig
-        do {
-            loadedConfig = try configurationRepository.load()
-            shouldPersistConfigDuringBootstrap = !configurationRepository.lastLoadWasLossy
-        } catch {
-            loadedConfig = .default
-            shouldPersistConfigDuringBootstrap = false
-        }
-        self.config = loadedConfig
-        self.providerFactory = resolvedProviderFactory
-        self.localUsageHistoryRepository = localUsageHistoryRepository
-        self.usageAnalyticsRefreshCoordinator = usageAnalyticsRefreshCoordinator
-        self.localSessionRefreshCoordinator = LocalSessionRefreshCoordinator(
-            signalSource: localSessionSignalMonitor
+        self.init(
+            dependencyGraph: dependencyGraph,
+            config: configBootstrap.config,
+            currentAppVersion: AppVersionResolver.detectCurrentAppVersion(),
+            shouldPersistConfigDuringBootstrap: configBootstrap.shouldPersistDuringBootstrap,
+            performsProductionBootstrapSideEffects: true
         )
-        self.refreshScheduler = makeRefreshScheduler()
-        self.currentAppVersion = AppVersionResolver.detectCurrentAppVersion()
-        self.codexSlots = codexSlotStore.visibleSlots()
-        self.claudeSlots = claudeSlotStore.visibleSlots()
-        self.codexProfiles = []
-        self.claudeProfiles = []
-        thirdPartyBalanceBaselineTracker.restore(entries: thirdPartyBalanceBaselineStore.load())
-        let preNormalizedConfig = self.config
-        normalizeStatusBarSelections()
-        pruneThirdPartyBalanceBaselines()
-        if shouldPersistConfigDuringBootstrap && self.config != preNormalizedConfig {
-            _ = configurationRepository.saveDuringBootstrapResult(self.config)
-        }
-        launchAtLoginService.migrateLegacyLaunchAgentsIfNeeded()
-        let launchAtLoginEnabled = launchAtLoginService.isEnabled()
-        if self.config.launchAtLoginEnabled != launchAtLoginEnabled {
-            self.config.launchAtLoginEnabled = launchAtLoginEnabled
-            if shouldPersistConfigDuringBootstrap {
-                _ = configurationRepository.saveDuringBootstrapResult(self.config)
-            }
-        }
-        syncCodexProfilesCurrentState()
-        bootstrapClaudeProfileState()
-        restorePersistedOfficialProvidersIfNeeded()
-        refreshPermissionStatuses(force: true)
     }
 
 #if DEBUG
-    init(
+    convenience init(
         testingConfig: AppConfig = .default,
         testingCurrentAppVersion: String = "0.0.0",
         configurationRepository: any AppConfigurationRepositorying = AppViewModel.makeTestingConfigurationRepository(),
@@ -342,47 +340,31 @@ final class AppViewModel {
         updateCheckStatusClearDelaySeconds: TimeInterval = 10,
         settingsPersistenceStatusClearDelaySeconds: TimeInterval = 4
     ) {
-        self.keychain = keychain
-        self.configurationRepository = configurationRepository
-        self.credentialAccessService = CredentialAccessService(keychain: keychain)
-        self.codexSlotStore = codexSlotStore
-        self.codexProfileStore = codexProfileStore
-        self.codexDesktopAuthService = codexDesktopAuthService
-        self.codexDesktopAppService = codexDesktopAppService
-        self.codexProfileSnapshotService = codexProfileSnapshotService
-        self.notifications = notificationService
-        let resolvedProviderFactory = providerFactory ?? ProviderFactory(keychain: keychain)
-        self.providerRefreshCoordinator = AppProviderRefreshCoordinator(
-            providerFactory: resolvedProviderFactory,
-            notifications: notificationService
-        )
-        self.updateCoordinator = AppUpdateCoordinator(
+        let dependencyGraph = AppCompositionFactory.makeDependencyGraph(
+            configurationRepository: configurationRepository,
             appUpdateService: appUpdateService,
             postUpdateReleaseNotesStore: postUpdateReleaseNotesStore,
+            codexSlotStore: codexSlotStore,
+            codexProfileStore: codexProfileStore,
+            codexDesktopAuthService: codexDesktopAuthService,
+            codexDesktopAppService: codexDesktopAppService,
+            codexProfileSnapshotService: codexProfileSnapshotService,
+            notificationService: notificationService,
+            providerFactory: providerFactory,
+            keychain: keychain,
+            localUsageHistoryRepository: localUsageHistoryRepository,
+            usageAnalyticsRefreshCoordinator: usageAnalyticsRefreshCoordinator,
             updateInstallBufferDelaySeconds: updateInstallBufferDelaySeconds,
-            updateCheckStatusClearDelaySeconds: updateCheckStatusClearDelaySeconds
+            updateCheckStatusClearDelaySeconds: updateCheckStatusClearDelaySeconds,
+            settingsPersistenceStatusClearDelaySeconds: settingsPersistenceStatusClearDelaySeconds
         )
-        self.settingsPersistenceFeedbackCoordinator = AppSettingsPersistenceFeedbackCoordinator(
-            clearDelaySeconds: settingsPersistenceStatusClearDelaySeconds
+        self.init(
+            dependencyGraph: dependencyGraph,
+            config: testingConfig.migratedWithSiteDefaults(),
+            currentAppVersion: testingCurrentAppVersion,
+            shouldPersistConfigDuringBootstrap: false,
+            performsProductionBootstrapSideEffects: false
         )
-        self.config = testingConfig.migratedWithSiteDefaults()
-        self.providerFactory = resolvedProviderFactory
-        self.localUsageHistoryRepository = localUsageHistoryRepository
-        self.usageAnalyticsRefreshCoordinator = usageAnalyticsRefreshCoordinator
-        self.localSessionRefreshCoordinator = LocalSessionRefreshCoordinator(
-            signalSource: localSessionSignalMonitor
-        )
-        self.refreshScheduler = makeRefreshScheduler()
-        self.currentAppVersion = testingCurrentAppVersion
-        self.codexSlots = codexSlotStore.visibleSlots()
-        self.claudeSlots = claudeSlotStore.visibleSlots()
-        self.codexProfiles = []
-        self.claudeProfiles = []
-        normalizeStatusBarSelections()
-        pruneThirdPartyBalanceBaselines()
-        syncCodexProfilesCurrentState()
-        bootstrapClaudeProfileState()
-        restorePersistedOfficialProvidersIfNeeded()
     }
 
     private static func makeTestingConfigurationRepository() -> AppConfigurationRepository {
@@ -393,29 +375,176 @@ final class AppViewModel {
     }
 #endif
 
-    private func makeRefreshScheduler() -> ProviderRefreshScheduler {
-        ProviderRefreshScheduler(
-            descriptorProvider: { [weak self] providerID in
-                guard let descriptor = self?.descriptor(for: providerID) else {
-                    return nil
+    private init(
+        dependencyGraph: AppDependencyGraph,
+        config: AppConfig,
+        currentAppVersion: String,
+        shouldPersistConfigDuringBootstrap: Bool,
+        performsProductionBootstrapSideEffects: Bool
+    ) {
+        self.keychain = dependencyGraph.keychain
+        self.configurationRepository = dependencyGraph.configurationRepository
+        self.credentialAccessService = dependencyGraph.credentialAccessService
+        self.codexSlotStore = dependencyGraph.codexSlotStore
+        self.codexProfileStore = dependencyGraph.codexProfileStore
+        self.codexDesktopAuthService = dependencyGraph.codexDesktopAuthService
+        self.codexDesktopAppService = dependencyGraph.codexDesktopAppService
+        self.codexProfileSnapshotService = dependencyGraph.codexProfileSnapshotService
+        self.notifications = dependencyGraph.notifications
+        self.providerRefreshModel = dependencyGraph.providerRefreshModel
+        self.permissionModel = dependencyGraph.permissionModel
+        self.updateModel = dependencyGraph.updateModel
+        self.configurationModel = dependencyGraph.configurationModel
+        self.config = config
+        self.providerFactory = dependencyGraph.providerFactory
+        self.localUsageHistoryRepository = dependencyGraph.localUsageHistoryRepository
+        self.usageAnalyticsModel = dependencyGraph.usageAnalyticsModel
+        self.localSessionRefreshCoordinator = LocalSessionRefreshCoordinator(
+            signalSource: localSessionSignalMonitor
+        )
+        self.detectsInstalledAppVersionForUpdates = performsProductionBootstrapSideEffects
+        self.currentAppVersion = currentAppVersion
+        self.codexSlots = dependencyGraph.codexSlotStore.visibleSlots()
+        self.claudeSlots = claudeSlotStore.visibleSlots()
+        self.codexProfiles = []
+        self.claudeProfiles = []
+        bindConfigurationModel()
+        bindProviderRefreshModel()
+        if performsProductionBootstrapSideEffects {
+            providerRefreshModel.mutateProviderState { state in
+                state.thirdPartyBalanceBaselineTracker.restore(
+                    entries: self.thirdPartyBalanceBaselineStore.load()
+                )
+            }
+        }
+        let preNormalizedConfig = self.config
+        normalizeStatusBarSelections()
+        pruneThirdPartyBalanceBaselines()
+        if shouldPersistConfigDuringBootstrap && self.config != preNormalizedConfig {
+            _ = configurationRepository.saveDuringBootstrapResult(self.config)
+        }
+        if performsProductionBootstrapSideEffects {
+            launchAtLoginService.migrateLegacyLaunchAgentsIfNeeded()
+            let launchAtLoginEnabled = launchAtLoginService.isEnabled()
+            if self.config.launchAtLoginEnabled != launchAtLoginEnabled {
+                self.config.launchAtLoginEnabled = launchAtLoginEnabled
+                if shouldPersistConfigDuringBootstrap {
+                    _ = configurationRepository.saveDuringBootstrapResult(self.config)
                 }
-                return self?.providerRefreshCoordinator.refreshScheduleDescriptor(for: descriptor)
-            },
-            providersProvider: { [weak self] in
-                self?.providerRefreshCoordinator.refreshScheduleDescriptors(from: self?.config.providers ?? []) ?? []
-            },
-            activeProviderIDsProvider: { [weak self] in
-                Set(self?.statusBarProvidersForDisplay().map(\.id) ?? [])
-            },
-            failureCountProvider: { [weak self] providerID in
-                self?.consecutiveFailures[providerID, default: 0] ?? 0
-            },
-            refreshAction: { [weak self] providerID, forceRefresh in
-                guard let descriptor = self?.descriptor(for: providerID) else { return }
-                await self?.refreshProvider(descriptor, forceRefresh: forceRefresh)
-            },
+            }
+        }
+        bindOfficialProfilesModel()
+        syncCodexProfilesCurrentState()
+        bootstrapClaudeProfileState()
+        restorePersistedOfficialProvidersIfNeeded()
+        bindPermissionModel()
+        bindUpdateModel()
+        bindUsageAnalyticsModel()
+        if performsProductionBootstrapSideEffects {
+            refreshPermissionStatuses(force: true)
+        }
+    }
+
+    private func bindConfigurationModel() {
+        configurationModel.bind(host: self)
+    }
+
+    private func bindProviderRefreshModel() {
+        providerRefreshModel.bind(
+            host: self,
             localSessionRefreshCoordinator: localSessionRefreshCoordinator,
-            config: config.resourceMode.refreshSchedulerConfig
+            getState: { [weak self] in
+                self?.providerStateStorage ?? ProviderStateStore()
+            },
+            setState: { [weak self] state in
+                self?.applyProviderStateStorage(state)
+            }
+        )
+        providerRefreshModel.installRefreshScheduler()
+    }
+
+    private func bindOfficialProfilesModel() {
+        officialProfilesModel.bind(host: self)
+    }
+
+    private func bindPermissionModel() {
+        permissionModel.bind(
+            getState: { [weak self] in
+                self?.permissionStateStorage ?? PermissionStore()
+            },
+            setState: { [weak self] state in
+                self?.permissionStateStorage = state
+            },
+            requestPermissionIfNeeded: { [weak self] in
+                self?.notifications.requestPermissionIfNeeded()
+            },
+            fetchNotificationAuthorizationStatus: { [weak self] in
+                await self?.notifications.authorizationStatus() ?? .notDetermined
+            },
+            checkSecureStorageReady: { [weak self] in
+                await withCheckedContinuation { continuation in
+                    DispatchQueue.global(qos: .utility).async {
+                        continuation.resume(returning: self?.keychain.isSecureStoreReady() ?? false)
+                    }
+                }
+            },
+            onSecureStorageBecameReady: { [weak self] in
+                self?.invalidateCredentialLookupCache()
+            },
+            prepareSecureStoreAccess: { [weak self] in
+                self?.keychain.prepareSecureStoreAccess() ?? false
+            },
+            presentSecureStorageAccessUI: { [weak self] in
+                guard let self else { return }
+                NSApp.activate(ignoringOtherApps: true)
+                SettingsWindowController.shared.show(viewModel: self)
+                NSApp.activate(ignoringOtherApps: true)
+                NSApp.windows.first(where: { $0.isVisible })?.makeKeyAndOrderFront(nil)
+            }
+        )
+    }
+
+    private func bindUpdateModel() {
+        updateModel.bind(
+            getState: { [weak self] in
+                self?.updateStateStorage ?? UpdateStore()
+            },
+            setState: { [weak self] state in
+                self?.updateStateStorage = state
+            },
+            effectiveInstalledVersion: { [weak self] in
+                guard let self else { return "" }
+                if self.detectsInstalledAppVersionForUpdates {
+                    return AppVersionResolver.detectNewestInstalledAppVersion(
+                        fallbackVersion: self.currentAppVersion
+                    )
+                }
+                return self.currentAppVersion
+            },
+            localizedText: { [weak self] zhHans, en in
+                self?.localizedText(zhHans, en) ?? zhHans
+            }
+        )
+    }
+
+    private func bindUsageAnalyticsModel() {
+        usageAnalyticsModel.bind(
+            getFilter: { [weak self] in
+                self?.usageAnalyticsFilter ?? UsageAnalyticsFilter()
+            },
+            getSnapshot: { [weak self] in
+                self?.usageAnalyticsSnapshot
+                    ?? UsageAnalyticsSnapshot.empty(filter: UsageAnalyticsFilter())
+            },
+            setSnapshot: { [weak self] snapshot in
+                self?.usageAnalyticsSnapshot = snapshot
+            },
+            setLoading: { [weak self] isLoading in
+                self?.usageAnalyticsLoading = isLoading
+            },
+            claudeAllConfigDirs: { [weak self] in
+                self?.usageAnalyticsClaudeAllConfigDirs() ?? []
+            }
         )
     }
 
@@ -425,18 +554,6 @@ final class AppViewModel {
         refreshPermissionStatuses(force: true)
         restartPolling()
         refreshDisplayedStatusBarProviders()
-    }
-
-    func restartPolling() {
-        refreshScheduler?.restart(
-            providers: providerRefreshCoordinator.refreshScheduleDescriptors(from: config.providers)
-        )
-    }
-
-    func refreshNow() {
-        refreshScheduler?.refreshNow(
-            providers: providerRefreshCoordinator.refreshScheduleDescriptors(from: config.providers)
-        )
     }
 
     func setMenuPanelVisible(_ visible: Bool) {
@@ -494,97 +611,6 @@ final class AppViewModel {
         thirdPartyBalanceBaselineTracker.percent(for: providerID)
     }
 
-    var hasNotificationPermission: Bool {
-        switch notificationAuthorizationStatus {
-        case .authorized, .provisional, .ephemeral:
-            return true
-        case .notDetermined, .denied:
-            return false
-        @unknown default:
-            return false
-        }
-    }
-
-    var shouldShowPermissionGuide: Bool {
-        let hasEnabledProviders = config.providers.contains(where: \.enabled)
-        return AppPermissionCoordinator.shouldShowPermissionGuide(
-            hasEnabledProviders: hasEnabledProviders,
-            hasPersistedOfficialMonitoringState: hasPersistedOfficialMonitoringState,
-            hasNotificationPermission: hasNotificationPermission,
-            secureStorageReady: secureStorageReady,
-            fullDiskAccessRelevant: fullDiskAccessRelevant,
-            fullDiskAccessRequested: fullDiskAccessRequested,
-            fullDiskAccessGranted: fullDiskAccessGranted
-        )
-    }
-
-    var canRunLocalDiscoveryFromOnboarding: Bool {
-        guard secureStorageReady else { return false }
-        if fullDiskAccessRelevant || fullDiskAccessRequested {
-            return fullDiskAccessGranted
-        }
-        return true
-    }
-
-    func setLanguage(_ language: AppLanguage) {
-        guard let outcome = configurationMutationCoordinator.setLanguage(
-            language,
-            config: &config,
-            repository: configurationRepository,
-            showFeedback: true,
-            successText: localizedText("已保存", "Saved"),
-            failureText: localizedText("保存失败", "Save Failed")
-        ) else { return }
-        applyConfigurationPersistenceOutcome(outcome)
-    }
-
-    func setResourceMode(_ resourceMode: ResourceMode) {
-        guard let outcome = configurationMutationCoordinator.setResourceMode(
-            resourceMode,
-            config: &config,
-            repository: configurationRepository,
-            showFeedback: true,
-            successText: localizedText("已保存", "Saved"),
-            failureText: localizedText("保存失败", "Save Failed")
-        ) else { return }
-        if applyConfigurationPersistenceOutcome(outcome) {
-            refreshScheduler = makeRefreshScheduler()
-            restartPolling()
-        }
-    }
-
-    func setLaunchAtLoginEnabled(_ enabled: Bool) {
-        guard let outcome = configurationMutationCoordinator.setLaunchAtLoginEnabled(
-            enabled,
-            config: &config,
-            setLaunchAtLogin: { try launchAtLoginService.setEnabled($0) },
-            repository: configurationRepository,
-            showFeedback: true,
-            successText: localizedText("已保存", "Saved"),
-            failureText: localizedText("保存失败", "Save Failed")
-        ) else { return }
-        if let persistence = outcome.persistence {
-            _ = applyConfigurationPersistenceOutcome(persistence)
-        }
-        if let errorMessage = outcome.errorMessage {
-            errors["launch-at-login"] = errorMessage
-        }
-    }
-
-    func setGlobalRefreshIntervalSeconds(_ seconds: Int) {
-        let supported = [15, 30, 60, 300]
-        let normalized = supported.contains(seconds) ? seconds : 60
-        guard config.providers.contains(where: { $0.pollIntervalSec != normalized }) else { return }
-
-        for index in config.providers.indices {
-            config.providers[index].pollIntervalSec = normalized
-        }
-
-        if persistConfiguration(showFeedback: true) {
-            restartPolling()
-        }
-    }
-
     func text(_ key: L10nKey) -> String {
         Localizer.text(key, language: config.language)
     }
@@ -606,6 +632,10 @@ final class AppViewModel {
             claudeSlots: claudeSlotViewModels(),
             localization: menuViewLocalization
         )
+    }
+
+    func applyMenuClock(to state: inout MenuViewState, now: Date) {
+        MenuDashboardStateBuilder.applyClock(to: &state, now: now)
     }
 
     private var menuViewLocalization: MenuViewLocalization {
@@ -647,7 +677,7 @@ final class AppViewModel {
             codexPrefetchInFlightCount: codexOfficialProfileRefreshRuntime.inFlightCount,
             claudePrefetchAttemptedIdentityCount: claudeOfficialProfileRefreshRuntime.attemptedIdentityCount,
             claudePrefetchInFlightCount: claudeOfficialProfileRefreshRuntime.inFlightCount,
-            pollTaskCount: refreshScheduler?.pollTaskCount ?? 0,
+            pollTaskCount: providerRefreshModel.pollTaskCount,
             enabledProviderCount: config.providers.filter(\.enabled).count,
             providerErrorCount: errors.count,
             consecutiveFailureTotal: consecutiveFailures.values.reduce(0, +)
@@ -655,7 +685,25 @@ final class AppViewModel {
     }
 
     var settingsPersistenceDisplayState: SettingsPersistenceDisplayState {
-        settingsPersistenceStatus
+        reconcileSettingsPersistenceFeedbackIfNeeded()
+        return settingsPersistenceFeedbackCoordinator.resolvedDisplayState(
+            stored: settingsPersistenceStatus
+        )
+    }
+
+    var settingsPersistenceErrorMessageForDisplay: String? {
+        reconcileSettingsPersistenceFeedbackIfNeeded()
+        return settingsPersistenceFeedbackCoordinator.resolvedErrorMessage(
+            stored: settingsPersistenceErrorMessage,
+            storedKind: settingsPersistenceStatus.kind
+        )
+    }
+
+    private func reconcileSettingsPersistenceFeedbackIfNeeded() {
+        settingsPersistenceFeedbackCoordinator.reconcileIfNeeded { [weak self] state, errorMessage in
+            self?.settingsPersistenceStatus = state
+            self?.settingsPersistenceErrorMessage = errorMessage
+        }
     }
 
     func aggregateStatusTitle(_ status: AggregateStatus) -> String {
@@ -700,27 +748,10 @@ final class AppViewModel {
             claudeAllConfigDirs: claudeAllConfigDirs,
             force: force
         ) { [weak self] in
-            self?.localUsageHistoryVersion += 1
-        }
-    }
-
-    func refreshUsageAnalytics() {
-        refreshUsageAnalyticsIfNeeded(force: true)
-    }
-
-    func refreshUsageAnalyticsIfNeeded(force: Bool = false) {
-        usageAnalyticsRefreshCoordinator.refreshUsageAnalyticsIfNeeded(
-            filter: usageAnalyticsFilter,
-            currentSnapshotFilter: usageAnalyticsSnapshot.filter,
-            claudeAllConfigDirs: usageAnalyticsClaudeAllConfigDirs(),
-            force: force,
-            onSnapshotChange: { [weak self] snapshot in
-                self?.usageAnalyticsSnapshot = snapshot
-            },
-            onLoadingChange: { [weak self] isLoading in
-                self?.usageAnalyticsLoading = isLoading
+            self?.providerRefreshModel.mutateProviderState { state in
+                state.localUsageHistoryVersion += 1
             }
-        )
+        }
     }
 
     private func usageAnalyticsClaudeAllConfigDirs() -> [String] {
@@ -738,18 +769,36 @@ final class AppViewModel {
                 if descriptor.type == .codex {
                     let snapshot = self.markCodexSnapshotActive(fetched)
                     self.codexSlots = self.codexSlotStore.upsertActive(snapshot: snapshot)
-                    self.snapshots[descriptor.id] = self.boundedSnapshot(snapshot)
+                    self.providerRefreshModel.mutateProviderState { state in
+                        state.snapshots[descriptor.id] = self.boundedSnapshot(snapshot)
+                    }
                 } else if descriptor.type == .claude {
                     let snapshot = self.markClaudeSnapshotActive(fetched)
                     self.claudeSlots = self.claudeSlotStore.upsertActive(snapshot: snapshot)
-                    self.snapshots[descriptor.id] = self.boundedSnapshot(snapshot)
+                    self.providerRefreshModel.mutateProviderState { state in
+                        state.snapshots[descriptor.id] = self.boundedSnapshot(snapshot)
+                    }
                 } else {
-                    self.snapshots[descriptor.id] = self.boundedSnapshot(fetched)
+                    self.providerRefreshModel.mutateProviderState { state in
+                        state.snapshots[descriptor.id] = self.boundedSnapshot(fetched)
+                    }
                 }
             },
-            clearProviderError: { self.errors.removeValue(forKey: $0) },
-            clearProviderFailures: { self.consecutiveFailures[$0] = 0 },
-            markLastUpdatedAt: { self.lastUpdatedAt = $0 },
+            clearProviderError: { providerID in
+                self.providerRefreshModel.mutateProviderState { state in
+                    state.errors.removeValue(forKey: providerID)
+                }
+            },
+            clearProviderFailures: { providerID in
+                self.providerRefreshModel.mutateProviderState { state in
+                    state.consecutiveFailures[providerID] = 0
+                }
+            },
+            markLastUpdatedAt: { date in
+                self.providerRefreshModel.mutateProviderState { state in
+                    state.lastUpdatedAt = date
+                }
+            },
             setProviderEnabled: { providerID in
                 if let index = self.config.providers.firstIndex(where: { $0.id == providerID }) {
                     self.config.providers[index].enabled = true
@@ -781,95 +830,6 @@ final class AppViewModel {
         }
 
         return .normal
-    }
-
-    func refreshProvider(_ descriptor: ProviderDescriptor, forceRefresh: Bool = false) async {
-        await providerRefreshCoordinator.refreshProvider(
-            descriptor: descriptor,
-            forceRefresh: forceRefresh,
-            getState: { self.sessionStore.providerState },
-            setState: { self.sessionStore.providerState = $0 },
-            beforeRefresh: { descriptor in
-                if descriptor.type == .codex, descriptor.family == .official {
-                    self.syncCodexProfilesCurrentState()
-                }
-                if descriptor.type == .claude, descriptor.family == .official {
-                    self.syncClaudeProfilesCurrentState()
-                }
-            },
-            transformFetchedSnapshot: { descriptor, fetched in
-                if descriptor.type == .codex, descriptor.family == .official {
-                    let snapshot = self.markCodexSnapshotActive(fetched)
-                    self.codexSlots = self.codexSlotStore.upsertActive(snapshot: snapshot)
-                    return snapshot
-                }
-                if descriptor.type == .claude, descriptor.family == .official {
-                    let snapshot = self.markClaudeSnapshotActive(fetched)
-                    self.claudeSlots = self.claudeSlotStore.upsertActive(snapshot: snapshot)
-                    return snapshot
-                }
-                return fetched
-            },
-            postOfficialRefresh: { descriptor, forceRefresh in
-                guard descriptor.family == .official else { return }
-                if forceRefresh {
-                    await self.refreshOfficialProfileCardsAfterManualRefresh(for: descriptor)
-                } else {
-                    await self.refreshOfficialInactiveProfileCardInBackgroundIfNeeded(for: descriptor)
-                }
-            },
-            persistBaselineEntries: { entries in
-                self.thirdPartyBalanceBaselineStore.save(entries)
-            },
-            afterRefresh: {
-                self.pruneThirdPartyBalanceBaselines()
-            },
-            notifyStatusBarDisplayConfigChanged: {
-                self.notifyStatusBarDisplayConfigChanged()
-            },
-            text: { key in
-                self.text(key)
-            },
-            localizedText: { zhHans, en in
-                self.localizedText(zhHans, en)
-            },
-            language: {
-                self.config.language
-            },
-            boundedSnapshot: { snapshot in
-                self.boundedSnapshot(snapshot)
-            }
-        )
-    }
-
-    nonisolated static func diagnosticCode(for health: FetchHealth) -> String {
-        AppProviderRefreshCoordinator.diagnosticCode(for: health)
-    }
-
-    nonisolated static func emptySnapshotForFetchFailure(
-        descriptor: ProviderDescriptor,
-        health: FetchHealth,
-        message: String,
-        now: Date = Date()
-    ) -> UsageSnapshot? {
-        AppProviderRefreshCoordinator.emptySnapshotForFetchFailure(
-            descriptor: descriptor,
-            health: health,
-            message: message,
-            now: now
-        )
-    }
-
-    nonisolated static func resolvedThirdPartyRemainingForBaseline(
-        remaining: Double?,
-        used: Double?,
-        limit: Double?
-    ) -> Double? {
-        AppProviderRefreshCoordinator.resolvedThirdPartyRemainingForBaseline(
-            remaining: remaining,
-            used: used,
-            limit: limit
-        )
     }
 
 }

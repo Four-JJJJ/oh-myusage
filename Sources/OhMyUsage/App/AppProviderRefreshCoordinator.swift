@@ -1,6 +1,7 @@
 import OhMyUsageDomain
 import OhMyUsageApplication
 import Foundation
+import OhMyUsageProviders
 
 @MainActor
 final class AppProviderRefreshCoordinator {
@@ -19,6 +20,7 @@ final class AppProviderRefreshCoordinator {
 
     private let providerFactory: any ProviderFactorying
     private let notifications: NotificationService
+    private var inFlightRefreshTasks: [String: Task<Void, Never>] = [:]
 
     init(
         providerFactory: any ProviderFactorying,
@@ -26,6 +28,31 @@ final class AppProviderRefreshCoordinator {
     ) {
         self.providerFactory = providerFactory
         self.notifications = notifications
+    }
+
+    /// Per-provider in-flight gate shared by poll / refreshNow / displayed / local-session paths
+    /// (all enter via `refreshProvider`).
+    ///
+    /// Strategy: if a refresh for `providerID` is already running, await that task and return
+    /// without starting another fetch — including when the new caller requested `forceRefresh`.
+    /// No cancel+rerun; joiners reuse the in-flight result.
+    func runExclusiveRefresh(
+        providerID: String,
+        action: @escaping @MainActor () async -> Void
+    ) async {
+        if let existing = inFlightRefreshTasks[providerID] {
+            await existing.value
+            return
+        }
+
+        let task = Task { @MainActor in
+            await action()
+        }
+        inFlightRefreshTasks[providerID] = task
+        await task.value
+        if inFlightRefreshTasks[providerID] == task {
+            inFlightRefreshTasks.removeValue(forKey: providerID)
+        }
     }
 
     func refreshScheduleDescriptors(from providers: [ProviderDescriptor]) -> [ProviderRefreshScheduleDescriptor] {
@@ -70,13 +97,56 @@ final class AppProviderRefreshCoordinator {
         guard !providersToRefresh.isEmpty else { return }
 
         Task { @MainActor in
+            var tasks: [Task<Void, Never>] = []
+            tasks.reserveCapacity(providersToRefresh.count)
             for descriptor in providersToRefresh {
-                await refreshAction(descriptor, forceRefresh)
+                tasks.append(Task { @MainActor in
+                    await refreshAction(descriptor, forceRefresh)
+                })
+            }
+            for task in tasks {
+                await task.value
             }
         }
     }
 
     func refreshProvider(
+        descriptor: ProviderDescriptor,
+        forceRefresh: Bool,
+        getState: @escaping ProviderStateGetter,
+        setState: @escaping ProviderStateSetter,
+        beforeRefresh: @escaping BeforeRefreshAction,
+        transformFetchedSnapshot: @escaping SnapshotTransformAction,
+        postOfficialRefresh: @escaping PostOfficialRefreshAction,
+        persistBaselineEntries: @escaping PersistBaselineEntriesAction,
+        afterRefresh: @escaping AfterRefreshAction,
+        notifyStatusBarDisplayConfigChanged: @escaping StatusBarNotifyAction,
+        text: @escaping TextProvider,
+        localizedText: @escaping LocalizedTextProvider,
+        language: @escaping LanguageProvider,
+        boundedSnapshot: @escaping SnapshotBounder
+    ) async {
+        await runExclusiveRefresh(providerID: descriptor.id) {
+            await self.performRefreshProvider(
+                descriptor: descriptor,
+                forceRefresh: forceRefresh,
+                getState: getState,
+                setState: setState,
+                beforeRefresh: beforeRefresh,
+                transformFetchedSnapshot: transformFetchedSnapshot,
+                postOfficialRefresh: postOfficialRefresh,
+                persistBaselineEntries: persistBaselineEntries,
+                afterRefresh: afterRefresh,
+                notifyStatusBarDisplayConfigChanged: notifyStatusBarDisplayConfigChanged,
+                text: text,
+                localizedText: localizedText,
+                language: language,
+                boundedSnapshot: boundedSnapshot
+            )
+        }
+    }
+
+    private func performRefreshProvider(
         descriptor: ProviderDescriptor,
         forceRefresh: Bool,
         getState: @escaping ProviderStateGetter,

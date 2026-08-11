@@ -1,6 +1,7 @@
 import AppKit
 import OhMyUsageDomain
 import SwiftUI
+import OhMyUsageProviders
 
 extension SettingsView {
     @ViewBuilder
@@ -338,6 +339,25 @@ extension SettingsView {
                         usedPercent: 100,
                         resetAt: nil,
                         kind: .weekly
+                    )
+                ]
+            case .cursor:
+                windows = [
+                    UsageQuotaWindow(
+                        id: "\(provider.id)-placeholder-cursor-models",
+                        title: "Cursor Models",
+                        remainingPercent: 0,
+                        usedPercent: 100,
+                        resetAt: nil,
+                        kind: .custom
+                    ),
+                    UsageQuotaWindow(
+                        id: "\(provider.id)-placeholder-other-models",
+                        title: "Other Models",
+                        remainingPercent: 0,
+                        usedPercent: 100,
+                        resetAt: nil,
+                        kind: .custom
                     )
                 ]
             default:

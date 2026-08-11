@@ -1,6 +1,7 @@
 import Foundation
 import XCTest
 @testable import OhMyUsage
+import OhMyUsageProviders
 
 final class CopilotProviderTests: XCTestCase {
     override func tearDown() {
@@ -37,7 +38,7 @@ final class CopilotProviderTests: XCTestCase {
                 keychainReads.append(service)
                 return service == "copilot-cli" ? "copilot-keychain-token" : nil
             },
-            shellRunner: { _, _, _ in
+            shell: StubShellCommandRunner { _, _, _ in
                 XCTFail("shell fallback should not run when copilot-cli keychain token exists")
                 return nil
             },
@@ -60,7 +61,7 @@ final class CopilotProviderTests: XCTestCase {
                 keychainReads.append(service)
                 return service == "gh:github.com" ? "gh-keychain-token" : nil
             },
-            shellRunner: { _, _, _ in
+            shell: StubShellCommandRunner { _, _, _ in
                 XCTFail("shell fallback should not run when gh keychain token exists")
                 return nil
             },
@@ -79,7 +80,7 @@ final class CopilotProviderTests: XCTestCase {
     func testFetchFallsBackToGitHubCLIShellToken() async throws {
         var shellCalls: [(String, [String], TimeInterval)] = []
         let provider = makeProvider(
-            shellRunner: { executable, arguments, timeout in
+            shell: StubShellCommandRunner { executable, arguments, timeout in
                 shellCalls.append((executable, arguments, timeout))
                 return (0, "gh-shell-token\n", "")
             },
@@ -169,7 +170,7 @@ final class CopilotProviderTests: XCTestCase {
     private func makeProvider(
         environment: @escaping () -> [String: String] = { [:] },
         keychainReader: @escaping (String, String?) -> String? = { _, _ in nil },
-        shellRunner: @escaping (String, [String], TimeInterval) -> (status: Int32, stdout: String, stderr: String)? = { _, _, _ in nil },
+        shell: any ShellCommandRunning = StubShellCommandRunner { _, _, _ in nil },
         requestHandler: ((URLRequest) throws -> (HTTPURLResponse, Data))? = nil
     ) -> CopilotProvider {
         let configuration = URLSessionConfiguration.ephemeral
@@ -185,7 +186,7 @@ final class CopilotProviderTests: XCTestCase {
             session: session,
             environment: environment,
             keychainReader: keychainReader,
-            shellRunner: shellRunner
+            shell: shell
         )
     }
 
@@ -200,6 +201,25 @@ final class CopilotProviderTests: XCTestCase {
       }
     }
     """
+}
+
+private final class StubShellCommandRunner: ShellCommandRunning, @unchecked Sendable {
+    let handler: (String, [String], TimeInterval) -> (status: Int32, stdout: String, stderr: String)?
+
+    init(handler: @escaping (String, [String], TimeInterval) -> (status: Int32, stdout: String, stderr: String)?) {
+        self.handler = handler
+    }
+
+    func run(
+        executable: String,
+        arguments: [String],
+        input: String?,
+        timeout: TimeInterval,
+        environment: [String: String]?,
+        currentDirectory: String?
+    ) -> (status: Int32, stdout: String, stderr: String)? {
+        handler(executable, arguments, timeout)
+    }
 }
 
 private final class CopilotMockURLProtocol: URLProtocol {

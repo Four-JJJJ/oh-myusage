@@ -1,4 +1,5 @@
 import Foundation
+import OhMyUsageProviders
 
 struct OfficialProfileSnapshotRetryResult<State, Response> {
     var state: State

@@ -49,7 +49,8 @@ final class ProviderFactoryTests: XCTestCase {
         )
 
         let provider = try XCTUnwrap(factory.makeProvider(for: ProviderDescriptor.defaultOfficialTrae()) as? TraeProvider)
-        XCTAssertTrue(provider.browserCredentialService === browserCredentialService)
+        let injected = try XCTUnwrap(provider.browserCredentialService as? BrowserCredentialService)
+        XCTAssertTrue(injected === browserCredentialService)
     }
 
     func testDefaultRegistryRegistersEveryProviderType() {

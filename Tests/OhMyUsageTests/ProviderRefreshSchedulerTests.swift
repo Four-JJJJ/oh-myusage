@@ -105,7 +105,7 @@ final class ProviderRefreshSchedulerTests: XCTestCase {
         XCTAssertEqual(events, [])
     }
 
-    func testRefreshNowSkipsDisabledProvidersAndPreservesEnabledOrder() async throws {
+    func testRefreshNowSkipsDisabledProvidersAndRefreshesEnabledProviders() async throws {
         let first = makeProvider(id: "first", enabled: true)
         let second = makeProvider(id: "second", enabled: true)
         let disabled = makeProvider(id: "disabled", enabled: false)
@@ -121,7 +121,28 @@ final class ProviderRefreshSchedulerTests: XCTestCase {
             await recorder.snapshot().count == 2
         }
         let events = await recorder.snapshot()
-        XCTAssertEqual(events, ["first:true", "second:true"])
+        XCTAssertEqual(Set(events), ["first:true", "second:true"])
+    }
+
+    func testRefreshNowDoesNotBlockOtherProvidersWhenOneRefreshIsStillRunning() async throws {
+        let first = makeProvider(id: "first", enabled: true)
+        let second = makeProvider(id: "second", enabled: true)
+        let refreshGate = BlockingRefreshGate()
+        let scheduler = makeScheduler(
+            providers: [first, second],
+            refreshAction: { providerID, forceRefresh in
+                await refreshGate.refresh(providerID: providerID, forceRefresh: forceRefresh)
+            }
+        )
+
+        scheduler.refreshNow(providers: [first, second])
+
+        try await waitUntil {
+            let events = await refreshGate.snapshot()
+            return Set(events) == ["first:true", "second:true"]
+        }
+
+        await refreshGate.releaseAll()
     }
 
     func testPollLoopUsesFailureBackoff() async throws {
