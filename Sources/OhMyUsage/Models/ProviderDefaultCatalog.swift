@@ -14,6 +14,7 @@ enum ProviderDefaultCatalog {
             OfficialProviderDefaultCatalog.jetBrains(),
             OfficialProviderDefaultCatalog.kiro(),
             OfficialProviderDefaultCatalog.windsurf(),
+            OfficialProviderDefaultCatalog.grok(),
             OfficialProviderDefaultCatalog.kimi()
         ]
             + OfficialRelayProviderDefaultCatalog.allDefaultProviders

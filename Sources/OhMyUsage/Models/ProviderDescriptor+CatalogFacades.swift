@@ -52,6 +52,10 @@ extension ProviderDescriptor {
         OfficialProviderDefaultCatalog.kimi()
     }
 
+    static func defaultOfficialGrok() -> ProviderDescriptor {
+        OfficialProviderDefaultCatalog.grok()
+    }
+
     static func defaultOfficialMoonshot() -> ProviderDescriptor {
         OfficialRelayProviderDefaultCatalog.moonshot()
     }

@@ -402,6 +402,7 @@ final class MonolithRetirementBoundaryTests: XCTestCase {
                 "jetbrains-official",
                 "kiro-official",
                 "windsurf-official",
+                "grok-official",
                 "kimi-official"
             ]
                 + officialRelayOrder

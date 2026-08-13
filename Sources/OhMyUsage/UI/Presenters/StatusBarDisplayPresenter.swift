@@ -71,6 +71,8 @@ enum StatusBarDisplayPresenter {
             return "Ollama Cloud"
         case .opencodeGo:
             return "OpenCode Go"
+        case .grok:
+            return "Grok"
         case .relay, .open, .dragon:
             let trimmed = provider.name.trimmingCharacters(in: .whitespacesAndNewlines)
             return trimmed.isEmpty ? "API" : trimmed

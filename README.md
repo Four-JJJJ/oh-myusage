@@ -9,19 +9,18 @@ oh-myusage 把官方订阅额度、模型使用窗口、第三方中转余额、
 
 [下载最新版本](https://github.com/Four-JJJJ/oh-myusage/releases/latest) · [安装说明](docs/DOWNLOAD.md) · [支持的服务](docs/PROVIDERS.md) · [扩展指南](docs/EXTENDING.md) · [发布清单](docs/RELEASE_CHECKLIST.md) · [English](docs/README.en.md)
 
-## V2.3.0 更新
+## V2.4.1 更新
 
-V2.3.0 的重点是对齐 Cursor 最新双额度模型，并完成一轮 App 分层与发布稳定性优化。
+V2.4.1 新增官方 Grok 额度监控。本机完成一次 `grok login` 后，菜单栏即可查看周额度、计划名和按量付费状态。
 
 本次更新集中在这些事：
 
 | 方向 | 改进 |
 | --- | --- |
-| Cursor 额度 | 按官方仪表盘拆分为 Cursor Models / Other Models 两类额度，不再误显示为单一 Monthly |
-| 发布打包 | 修复打包脚本可能打进过期二进制的问题，确保 DMG / ZIP 使用最新 Release 产物 |
-| 架构分层 | Providers / Application / Presentation 端口化与 AppViewModel 职责拆分，降低单体耦合 |
-| 运行稳定 | 优化设置持久化反馈自动清除，并加固 Provider 刷新调度，减少挂起与测试泄漏 |
-| 工程护栏 | 补充架构边界测试与组合入口收口，减少后续改动踩线 |
+| Grok 额度 | 新增官方 Grok Provider，读取 `~/.grok/auth.json`，展示周额度剩余百分比和重置时间 |
+| 计划与按量 | 同步 SuperGrok / SuperGrok Heavy 等计划名；已开通按量付费时额外显示 PAYG 窗口 |
+| 凭证 | 自动刷新即将过期的 Grok CLI token，并写回 `auth.json`，无需在设置里粘贴 API Key |
+| 设置 | 设置侧栏可直接启用 Grok，默认排在 Windsurf 和 KIMI 之间 |
 
 ## 适合谁
 
@@ -93,7 +92,7 @@ oh-myusage 的目标是让这些信息变得可扫读、可诊断、可维护：
 
 | 类型 | 服务 |
 | --- | --- |
-| 官方 / 本地桌面端 | Codex、Claude、Gemini、GitHub Copilot、Cursor、Windsurf |
+| 官方 / 本地桌面端 | Codex、Claude、Gemini、GitHub Copilot、Cursor、Windsurf、Grok |
 | 官方 / API 或网页来源 | Kimi / Moonshot、DeepSeek、MiniMax、Xiaomi MiMo、Amp、Z.ai、OpenCode Go |
 | 官方 / 本地数据来源 | JetBrains AI、Kiro |
 

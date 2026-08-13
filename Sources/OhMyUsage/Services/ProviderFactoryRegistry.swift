@@ -122,6 +122,9 @@ struct ProviderFactoryRegistry {
                     keychain: dependencies.keychain,
                     browserCookieService: dependencies.kimiCookieService
                 )
+            },
+            .grok: { descriptor, _ in
+                GrokProvider(descriptor: descriptor)
             }
         ]
     }

@@ -21,4 +21,5 @@ public enum ProviderType: String, Codable, CaseIterable, Sendable {
     case open
     case dragon
     case kimi
+    case grok
 }

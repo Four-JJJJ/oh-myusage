@@ -283,6 +283,10 @@ enum MenuQuotaPresenter {
                 MenuQuotaMetric(id: "\(provider.id)-placeholder-weekly", title: placeholderMetricTitle(localization.quotaWeekly, provider: provider, language: language), displayPercent: 0, healthPercent: 0, resetAt: nil, isAvailable: true, valueTextOverride: nil, kind: nil),
                 MenuQuotaMetric(id: "\(provider.id)-placeholder-monthly", title: placeholderMetricTitle(localization.monthly, provider: provider, language: language), displayPercent: 0, healthPercent: 0, resetAt: nil, isAvailable: true, valueTextOverride: nil, kind: nil)
             ]
+        case .grok:
+            return [
+                MenuQuotaMetric(id: "\(provider.id)-placeholder-weekly", title: placeholderMetricTitle(localization.quotaWeekly, provider: provider, language: language), displayPercent: 0, healthPercent: 0, resetAt: nil, isAvailable: true, valueTextOverride: nil, kind: nil)
+            ]
         case .relay, .open, .dragon:
             guard provider.relayDisplayMode == .quotaPercent else { return [] }
             return [

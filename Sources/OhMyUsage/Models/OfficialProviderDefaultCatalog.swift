@@ -186,6 +186,21 @@ enum OfficialProviderDefaultCatalog {
         )
     }
 
+    static func grok() -> ProviderDescriptor {
+        ProviderDescriptor(
+            id: "grok-official",
+            name: "Grok",
+            family: .official,
+            type: .grok,
+            enabled: false,
+            pollIntervalSec: 120,
+            threshold: AlertRule(lowRemaining: 20, maxConsecutiveFailures: 2, notifyOnAuthError: true),
+            auth: .none,
+            baseURL: baseURL(for: .grok),
+            officialConfig: config(for: .grok)
+        )
+    }
+
     static func trae() -> ProviderDescriptor {
         ProviderDescriptor(
             id: "trae-official",
@@ -303,6 +318,8 @@ enum OfficialProviderDefaultCatalog {
             return "https://server.codeium.com"
         case .kimi:
             return "https://api.kimi.com"
+        case .grok:
+            return "https://cli-chat-proxy.grok.com"
         case .trae:
             return "https://api-sg-central.trae.ai"
         case .openrouterCredits, .openrouterAPI:
@@ -335,7 +352,7 @@ enum OfficialProviderDefaultCatalog {
                 autoDiscoveryEnabled: true,
                 quotaDisplayMode: .used
             )
-        case .gemini, .copilot, .microsoftCopilot, .zai, .amp, .cursor, .jetbrains, .kiro, .windsurf, .kimi,
+        case .gemini, .copilot, .microsoftCopilot, .zai, .amp, .cursor, .jetbrains, .kiro, .windsurf, .kimi, .grok,
              .openrouterCredits, .openrouterAPI:
             return OfficialProviderConfig(
                 sourceMode: .auto,

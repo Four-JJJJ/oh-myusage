@@ -82,6 +82,11 @@ enum ProviderTypeMetadataCatalog {
             supportsLocalUsageHistory: true,
             supportsOfficialBearerCredentialInput: true
         ),
+        .grok: ProviderTypeMetadata(
+            displayName: "Grok",
+            iconName: "menu_grok_icon",
+            fallbackSystemIcon: "sparkle"
+        ),
         .trae: ProviderTypeMetadata(displayName: "Trae SOLO", iconName: "menu_relay_icon", fallbackSystemIcon: "link"),
         .openrouterCredits: ProviderTypeMetadata(
             displayName: "OpenRouter Credits",

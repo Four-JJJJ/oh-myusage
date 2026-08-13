@@ -33,6 +33,7 @@ Official coverage currently includes:
 - GitHub Copilot
 - Cursor
 - Windsurf
+- Grok
 - Kimi
 - Amp
 - Z.ai

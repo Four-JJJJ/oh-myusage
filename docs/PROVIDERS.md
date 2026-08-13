@@ -14,6 +14,7 @@ For extension and integration paths after the refactor, see [EXTENDING.md](./EXT
 | GitHub Copilot | local GitHub auth | Reads Copilot usage and quota state |
 | Cursor | official/local session data | Monthly and on-demand usage |
 | Windsurf | official API | Daily and weekly windows |
+| Grok | local Grok CLI auth (`~/.grok/auth.json`) | Weekly shared pool, plan name, and pay-as-you-go cap |
 | Kimi | official API | Session and overall usage |
 | Amp | official API | Free and credit views |
 | Z.ai | official API | Session, weekly, and web usage |

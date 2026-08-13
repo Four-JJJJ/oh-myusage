@@ -26,7 +26,8 @@ final class ProviderFactoryTests: XCTestCase {
             (.relayProvider(type: .relay), RelayProvider.self),
             (.relayProvider(type: .open), RelayProvider.self),
             (.relayProvider(type: .dragon), RelayProvider.self),
-            (.defaultOfficialKimi(), KimiSmartProvider.self)
+            (.defaultOfficialKimi(), KimiSmartProvider.self),
+            (.defaultOfficialGrok(), GrokProvider.self)
         ]
 
         XCTAssertEqual(cases.map(\.provider.type), ProviderType.allCases)

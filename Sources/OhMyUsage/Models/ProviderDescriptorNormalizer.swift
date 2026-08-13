@@ -10,7 +10,7 @@ enum ProviderDescriptorNormalizer {
         }
 
         switch copy.type {
-        case .codex, .claude, .gemini, .copilot, .microsoftCopilot, .zai, .amp, .cursor, .jetbrains, .kiro, .windsurf, .trae, .openrouterCredits, .openrouterAPI, .ollamaCloud, .opencodeGo:
+        case .codex, .claude, .gemini, .copilot, .microsoftCopilot, .zai, .amp, .cursor, .jetbrains, .kiro, .windsurf, .grok, .trae, .openrouterCredits, .openrouterAPI, .ollamaCloud, .opencodeGo:
             return normalizedOfficialProvider(copy)
         case .relay:
             return normalizedRelayProvider(copy, source: provider)
