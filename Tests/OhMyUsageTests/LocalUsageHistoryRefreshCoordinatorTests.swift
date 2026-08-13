@@ -4,7 +4,7 @@ import XCTest
 
 @MainActor
 final class LocalUsageHistoryRefreshCoordinatorTests: XCTestCase {
-    func testGeminiQueryIsIgnored() {
+    func testGeminiQueryLoadsLocalHistory() {
         let coordinator = LocalUsageHistoryRefreshCoordinator()
         let repository = LocalUsageHistoryRepository(
             baseDirectoryURL: URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
@@ -26,7 +26,7 @@ final class LocalUsageHistoryRefreshCoordinatorTests: XCTestCase {
             onStateChange: {}
         )
 
-        XCTAssertFalse(invoked)
+        XCTAssertTrue(invoked)
     }
 
     func testRelayQueryIsIgnored() {

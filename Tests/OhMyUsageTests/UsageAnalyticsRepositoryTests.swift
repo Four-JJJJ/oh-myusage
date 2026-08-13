@@ -799,6 +799,108 @@ final class UsageAnalyticsRepositoryTests: XCTestCase {
         XCTAssertEqual(totals.successRate, 0.75, accuracy: 0.0001)
     }
 
+    func testSnapshotClassifiesOfficialLocalProvidersInsteadOfRelay() throws {
+        let now = try fixedDate("2026-05-16T12:00:00Z")
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+
+        let snapshot = UsageAnalyticsAggregator.snapshot(
+            records: [
+                analyticsRecord(
+                    source: .ohMyUsageLocal,
+                    eventAt: now.addingTimeInterval(-60),
+                    appType: "kimi",
+                    providerID: "ohmyusage-kimi-local",
+                    providerName: "Kimi",
+                    modelID: "kimi-k2",
+                    requestID: "kimi-1",
+                    totals: UsageMetricTotals(requestCount: 1, successCount: 1, inputTokens: 10, outputTokens: 5)
+                ),
+                analyticsRecord(
+                    source: .ohMyUsageLocal,
+                    eventAt: now.addingTimeInterval(-120),
+                    appType: "cursor",
+                    providerID: "ohmyusage-cursor-local",
+                    providerName: "Cursor",
+                    modelID: "composer-2",
+                    requestID: "cursor-1",
+                    totals: UsageMetricTotals(requestCount: 1, successCount: 1, inputTokens: 20, outputTokens: 8)
+                ),
+                analyticsRecord(
+                    source: .ohMyUsageLocal,
+                    eventAt: now.addingTimeInterval(-180),
+                    appType: "grok",
+                    providerID: "ohmyusage-grok-local",
+                    providerName: "Grok",
+                    modelID: "grok-4",
+                    requestID: "grok-1",
+                    totals: UsageMetricTotals(requestCount: 1, successCount: 1, inputTokens: 7, outputTokens: 3)
+                )
+            ],
+            filter: UsageAnalyticsFilter(mode: .all, selectedModelID: nil, range: .last24Hours),
+            calendar: calendar,
+            now: now,
+            diagnostics: []
+        )
+
+        let categories = Dictionary(uniqueKeysWithValues: snapshot.providerCategoryStats.map { ($0.name, $0.totals.totalTokens) })
+        XCTAssertEqual(categories["Kimi"], 15)
+        XCTAssertEqual(categories["Cursor"], 28)
+        XCTAssertEqual(categories["Grok"], 10)
+        XCTAssertNil(categories["中转代理"])
+    }
+
+    func testSnapshotKeepsSameSourceRequestsWithMatchingTokens() throws {
+        let now = try fixedDate("2026-05-16T12:00:00Z")
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let totals = UsageMetricTotals(requestCount: 1, successCount: 1, inputTokens: 11, outputTokens: 6)
+
+        let snapshot = UsageAnalyticsAggregator.snapshot(
+            records: [
+                analyticsRecord(
+                    source: .ohMyUsageLocal,
+                    eventAt: now.addingTimeInterval(-30),
+                    requestID: "local-a",
+                    totals: totals
+                ),
+                analyticsRecord(
+                    source: .ohMyUsageLocal,
+                    eventAt: now.addingTimeInterval(-20),
+                    requestID: "local-b",
+                    totals: totals
+                )
+            ],
+            filter: UsageAnalyticsFilter(mode: .all, selectedModelID: nil, range: .last24Hours),
+            calendar: calendar,
+            now: now,
+            diagnostics: []
+        )
+
+        XCTAssertEqual(snapshot.totals.requestCount, 2)
+        XCTAssertEqual(snapshot.totals.totalTokens, 34)
+    }
+
+    func testSnapshotWithoutCCSwitchStillReportsLocalSourceDiagnostic() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let repository = UsageAnalyticsRepository(
+            ccSwitchReader: CCSwitchUsageLogReader(
+                databasePath: "/tmp/missing-cc-switch-\(UUID().uuidString).db"
+            ),
+            calendar: calendar,
+            nowProvider: { try! self.fixedDate("2026-05-16T12:00:00Z") },
+            localSourceFingerprintProvider: { _ in Self.localSourceFingerprint(seed: 1) }
+        )
+
+        let snapshot = repository.snapshot(
+            filter: UsageAnalyticsFilter(mode: .all, selectedModelID: nil, range: .last24Hours)
+        )
+
+        XCTAssertTrue(snapshot.diagnostics.contains { $0.contains("未安装 cc-switch") })
+        XCTAssertTrue(snapshot.diagnostics.contains { $0.contains("本地用量") })
+    }
+
     private func fixedDate(_ value: String) throws -> Date {
         let formatter = ISO8601DateFormatter()
         guard let date = formatter.date(from: value) else {

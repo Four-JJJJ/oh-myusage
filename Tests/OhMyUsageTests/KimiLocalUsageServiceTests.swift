@@ -138,6 +138,44 @@ final class KimiLocalUsageServiceTests: XCTestCase {
         XCTAssertEqual(currentSummary.today.responses, allSummary.today.responses)
     }
 
+    func testFetchEventsUsesPreWindowSnapshotAsDeltaBaseline() throws {
+        let now = try fixedDate("2026-04-18T12:00:00Z")
+        let windowStart = now.addingTimeInterval(-2 * 60 * 60)
+        try writeWireFile(
+            relativePath: "tenant-window/session-window/wire.jsonl",
+            lines: [
+                statusUpdateLine(
+                    timestamp: windowStart.timeIntervalSince1970 - 3_600,
+                    inputOther: 1_000,
+                    output: 200,
+                    cacheRead: 0,
+                    messageID: "old"
+                ),
+                statusUpdateLine(
+                    timestamp: windowStart.timeIntervalSince1970 + 60,
+                    inputOther: 1_050,
+                    output: 220,
+                    cacheRead: 0,
+                    messageID: "new"
+                )
+            ]
+        )
+
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let service = KimiLocalUsageService(
+            calendar: calendar,
+            nowProvider: { now },
+            defaultSessionsRootPath: sessionsRoot.path
+        )
+
+        let events = try service.fetchEvents(scope: .allAccounts, since: windowStart)
+        XCTAssertEqual(events.count, 1)
+        XCTAssertEqual(events.first?.totalTokens, 70)
+        XCTAssertEqual(events.first?.inputTokens, 50)
+        XCTAssertEqual(events.first?.outputTokens, 20)
+    }
+
     func testFetchSummaryReusesUnchangedWireFileCacheAndRefreshesAfterChange() throws {
         let now = try fixedDate("2026-04-18T12:00:00Z")
         let timestamp = now.timeIntervalSince1970 - (60 * 60)

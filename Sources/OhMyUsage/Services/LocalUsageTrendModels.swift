@@ -119,6 +119,76 @@ struct LocalUsageEvent: Equatable, Sendable {
     }
 }
 
+enum LocalUsageJSONParsing {
+    static func intValue(_ value: Any?) -> Int? {
+        if let value = value as? Int { return value }
+        if let value = value as? NSNumber { return value.intValue }
+        if let value = value as? Double { return Int(value.rounded()) }
+        if let value = value as? String {
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let integer = Int(trimmed) { return integer }
+            if let double = Double(trimmed) { return Int(double.rounded()) }
+        }
+        return nil
+    }
+
+    static func stringValue(_ value: Any?) -> String? {
+        guard let value else { return nil }
+        if let value = value as? String {
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        }
+        if let value = value as? NSNumber {
+            return value.stringValue
+        }
+        return nil
+    }
+
+    static func firstInt(in container: [String: Any], keys: [String]) -> Int? {
+        for key in keys {
+            if let value = intValue(container[key]) {
+                return value
+            }
+        }
+        return nil
+    }
+
+    static func parseISODate(_ raw: String?) -> Date? {
+        guard let raw = stringValue(raw) else { return nil }
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = fractional.date(from: raw) {
+            return date
+        }
+        let basic = ISO8601DateFormatter()
+        basic.formatOptions = [.withInternetDateTime]
+        return basic.date(from: raw)
+    }
+
+    static func parseTimestamp(_ raw: Any?) -> Date? {
+        if let date = parseISODate(stringValue(raw)) {
+            return date
+        }
+        let epochValue: Double?
+        if let value = raw as? Double {
+            epochValue = value
+        } else if let value = raw as? Int {
+            epochValue = Double(value)
+        } else if let value = raw as? NSNumber {
+            epochValue = value.doubleValue
+        } else if let value = stringValue(raw), let parsed = Double(value) {
+            epochValue = parsed
+        } else {
+            epochValue = nil
+        }
+        guard let epoch = epochValue, epoch > 0 else { return nil }
+        if epoch > 1_000_000_000_000 {
+            return Date(timeIntervalSince1970: epoch / 1_000)
+        }
+        return Date(timeIntervalSince1970: epoch)
+    }
+}
+
 struct LocalUsageTokenComponents: Equatable, Sendable {
     var inputTokens: Int = 0
     var outputTokens: Int = 0

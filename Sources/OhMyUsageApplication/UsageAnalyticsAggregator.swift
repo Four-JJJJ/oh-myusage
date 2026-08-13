@@ -181,14 +181,32 @@ public enum UsageAnalyticsAggregator {
         if record.source == .ccswitchProxy {
             return "中转代理"
         }
-        let appType = record.appType.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        if appType.contains("claude") {
-            return "Claude"
+        if let officialName = officialCategoryName(for: record.appType)
+            ?? officialCategoryName(for: record.providerName)
+            ?? officialCategoryName(for: record.providerID) {
+            return officialName
         }
+        if record.source == .ohMyUsageLocal {
+            let trimmed = record.providerName.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? "本地官方" : trimmed
+        }
+        return "中转代理"
+    }
+
+    public static func officialCategoryName(for raw: String) -> String? {
+        let appType = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !appType.isEmpty else { return nil }
+        if appType.contains("claude") { return "Claude" }
         if appType.contains("codex") || appType.contains("openai") || appType.contains("gpt") {
             return "GPT 官方"
         }
-        return "中转代理"
+        if appType.contains("kimi") || appType.contains("moonshot") { return "Kimi" }
+        if appType.contains("gemini") { return "Gemini" }
+        if appType.contains("grok") || appType.contains("xai") { return "Grok" }
+        if appType.contains("cursor") { return "Cursor" }
+        if appType.contains("copilot") { return "Copilot" }
+        if appType.contains("windsurf") || appType.contains("cascade") { return "Windsurf" }
+        return nil
     }
 
     public static func rangeInterval(
@@ -221,20 +239,58 @@ public enum UsageAnalyticsAggregator {
         _ records: [UsageAnalyticsRecord],
         in interval: DateInterval
     ) -> [String: UsageAnalyticsRecord] {
-        var selected: [String: UsageAnalyticsRecord] = [:]
+        var selectedByIdentity: [String: UsageAnalyticsRecord] = [:]
+        var unmatched: [UsageAnalyticsRecord] = []
+
         for record in records {
             guard record.eventAt >= interval.start && record.eventAt < interval.end else {
                 continue
             }
-            guard let existing = selected[record.dedupKey] else {
-                selected[record.dedupKey] = record
-                continue
-            }
-            if record.source.priority > existing.source.priority {
-                selected[record.dedupKey] = record
+            if let identity = record.stableIdentity {
+                if let existing = selectedByIdentity[identity] {
+                    if record.source.priority > existing.source.priority {
+                        selectedByIdentity[identity] = record
+                    }
+                } else {
+                    selectedByIdentity[identity] = record
+                }
+            } else {
+                unmatched.append(record)
             }
         }
-        return selected
+
+        var selected = Array(selectedByIdentity.values)
+        selected.append(contentsOf: unmatched)
+
+        var collapsed: [UsageAnalyticsRecord] = []
+        for record in selected {
+            if let index = collapsed.firstIndex(where: { fuzzyDuplicate($0, record) }) {
+                if record.source.priority > collapsed[index].source.priority {
+                    collapsed[index] = record
+                }
+            } else {
+                collapsed.append(record)
+            }
+        }
+
+        var keyed: [String: UsageAnalyticsRecord] = [:]
+        for record in collapsed {
+            keyed[record.dedupKey + "|" + record.requestID] = record
+        }
+        return keyed
+    }
+
+    private static func fuzzyDuplicate(_ lhs: UsageAnalyticsRecord, _ rhs: UsageAnalyticsRecord) -> Bool {
+        guard lhs.source != rhs.source else { return false }
+        guard lhs.normalizedAppType == rhs.normalizedAppType else { return false }
+        guard lhs.normalizedModelID == rhs.normalizedModelID else { return false }
+        guard lhs.totals.inputTokens == rhs.totals.inputTokens,
+              lhs.totals.outputTokens == rhs.totals.outputTokens,
+              lhs.totals.cacheReadTokens == rhs.totals.cacheReadTokens,
+              lhs.totals.cacheWriteTokens == rhs.totals.cacheWriteTokens else {
+            return false
+        }
+        return abs(lhs.eventAt.timeIntervalSince(rhs.eventAt)) < 120
     }
 
     private static func selectedModelKey(for filter: UsageAnalyticsFilter) -> String? {

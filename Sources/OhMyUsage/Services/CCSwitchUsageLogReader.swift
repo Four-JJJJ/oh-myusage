@@ -102,7 +102,7 @@ final class CCSwitchUsageLogReader: @unchecked Sendable {
         guard fileManager.fileExists(atPath: databasePath) else {
             return CCSwitchUsageReadResult(
                 records: [],
-                diagnostics: ["未检测到 cc-switch 请求日志：\(databasePath)"]
+                diagnostics: ["未安装 cc-switch，已仅使用各官方应用的本地用量日志"]
             )
         }
 
@@ -126,7 +126,8 @@ final class CCSwitchUsageLogReader: @unchecked Sendable {
         }
 
         if tableExists("usage_daily_rollups", database: database) {
-            records.append(contentsOf: readDailyRollups(database: database, since: since, until: until))
+            let rollups = readDailyRollups(database: database, since: since, until: until)
+            records.append(contentsOf: Self.rollupsWithoutCoveredDetailDays(rollups, details: records))
         }
 
         return CCSwitchUsageReadResult(records: records, diagnostics: diagnostics)
@@ -359,6 +360,22 @@ final class CCSwitchUsageLogReader: @unchecked Sendable {
             return Int64.max
         }
         return Int64(value)
+    }
+
+    static func rollupsWithoutCoveredDetailDays(
+        _ rollups: [CCSwitchUsageRecord],
+        details: [CCSwitchUsageRecord]
+    ) -> [CCSwitchUsageRecord] {
+        let covered = Set(details.map(coverageKey(for:)))
+        return rollups.filter { !covered.contains(coverageKey(for: $0)) }
+    }
+
+    private static func coverageKey(for record: CCSwitchUsageRecord) -> String {
+        let day = rollupDayString(for: record.eventAt)
+        let appType = record.appType.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let providerID = record.providerID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let modelID = record.modelID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return "\(day)|\(appType)|\(providerID)|\(modelID)"
     }
 
     private static func freshInputTokens(appType: String, rawInputTokens: Int, cacheReadTokens: Int) -> Int {

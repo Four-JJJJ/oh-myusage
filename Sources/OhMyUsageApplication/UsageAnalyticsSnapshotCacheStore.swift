@@ -17,6 +17,13 @@ public struct UsageAnalyticsFileFingerprint: Codable, Equatable, Sendable {
         self.totalSize = totalSize
         self.latestModificationTime = latestModificationTime
     }
+
+    public static let empty = UsageAnalyticsFileFingerprint(
+        roots: [],
+        fileCount: 0,
+        totalSize: 0,
+        latestModificationTime: nil
+    )
 }
 
 public struct UsageAnalyticsSourceFingerprint: Codable, Equatable, Sendable {
@@ -24,17 +31,52 @@ public struct UsageAnalyticsSourceFingerprint: Codable, Equatable, Sendable {
     public var codex: UsageAnalyticsFileFingerprint
     public var claude: UsageAnalyticsFileFingerprint
     public var kimi: UsageAnalyticsFileFingerprint
+    public var cursor: UsageAnalyticsFileFingerprint
+    public var grok: UsageAnalyticsFileFingerprint
+    public var gemini: UsageAnalyticsFileFingerprint
 
     public init(
         ccSwitch: UsageAnalyticsFileFingerprint,
         codex: UsageAnalyticsFileFingerprint,
         claude: UsageAnalyticsFileFingerprint,
-        kimi: UsageAnalyticsFileFingerprint
+        kimi: UsageAnalyticsFileFingerprint,
+        cursor: UsageAnalyticsFileFingerprint = .empty,
+        grok: UsageAnalyticsFileFingerprint = .empty,
+        gemini: UsageAnalyticsFileFingerprint = .empty
     ) {
         self.ccSwitch = ccSwitch
         self.codex = codex
         self.claude = claude
         self.kimi = kimi
+        self.cursor = cursor
+        self.grok = grok
+        self.gemini = gemini
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case ccSwitch, codex, claude, kimi, cursor, grok, gemini
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        ccSwitch = try container.decode(UsageAnalyticsFileFingerprint.self, forKey: .ccSwitch)
+        codex = try container.decode(UsageAnalyticsFileFingerprint.self, forKey: .codex)
+        claude = try container.decode(UsageAnalyticsFileFingerprint.self, forKey: .claude)
+        kimi = try container.decode(UsageAnalyticsFileFingerprint.self, forKey: .kimi)
+        cursor = try container.decodeIfPresent(UsageAnalyticsFileFingerprint.self, forKey: .cursor) ?? .empty
+        grok = try container.decodeIfPresent(UsageAnalyticsFileFingerprint.self, forKey: .grok) ?? .empty
+        gemini = try container.decodeIfPresent(UsageAnalyticsFileFingerprint.self, forKey: .gemini) ?? .empty
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(ccSwitch, forKey: .ccSwitch)
+        try container.encode(codex, forKey: .codex)
+        try container.encode(claude, forKey: .claude)
+        try container.encode(kimi, forKey: .kimi)
+        try container.encode(cursor, forKey: .cursor)
+        try container.encode(grok, forKey: .grok)
+        try container.encode(gemini, forKey: .gemini)
     }
 }
 

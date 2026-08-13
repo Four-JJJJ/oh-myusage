@@ -99,7 +99,7 @@ final class CCSwitchUsageLogReaderTests: XCTestCase {
         )
 
         XCTAssertTrue(result.records.isEmpty)
-        XCTAssertTrue(result.diagnostics.contains { $0.contains("未检测到 cc-switch 请求日志") })
+        XCTAssertTrue(result.diagnostics.contains { $0.contains("未安装 cc-switch") })
     }
 
     func testReadUsageLogsKeepsEpochPrecisionAtRangeBoundaries() throws {
@@ -318,6 +318,49 @@ final class CCSwitchUsageLogReaderTests: XCTestCase {
         XCTAssertEqual(rollup.successCount, 6)
         XCTAssertEqual(rollup.inputTokens, 120)
         XCTAssertEqual(rollup.outputTokens, 45)
+    }
+
+    func testReadUsageLogsDropsRollupWhenSameDayDetailExists() throws {
+        let databaseURL = temporaryDirectory.appendingPathComponent("cc-switch-rollup-overlap.db")
+        try createCCSwitchSchema(at: databaseURL.path)
+
+        let eventAt = try fixedDate("2026-05-16T10:30:00Z")
+        try runSQLite(
+            databasePath: databaseURL.path,
+            sql: """
+            INSERT INTO providers (id, app_type, name) VALUES ('relay-a', 'codex', 'FourJ Relay');
+            INSERT INTO proxy_request_logs (
+                request_id, provider_id, app_type, model, request_model, input_tokens, output_tokens,
+                cache_read_tokens, cache_creation_tokens, status_code, created_at, data_source
+            ) VALUES (
+                'req-proxy', 'relay-a', 'codex', 'gpt-5.5', 'gpt-5.5', 100, 50,
+                20, 10, 200, \(Int(eventAt.timeIntervalSince1970)), NULL
+            );
+            INSERT INTO usage_daily_rollups (
+                date, app_type, provider_id, model, request_count, success_count, input_tokens, output_tokens,
+                cache_read_tokens, cache_creation_tokens
+            ) VALUES (
+                '2026-05-16', 'codex', 'relay-a', 'gpt-5.5', 9, 9, 900, 450, 20, 10
+            );
+            INSERT INTO usage_daily_rollups (
+                date, app_type, provider_id, model, request_count, success_count, input_tokens, output_tokens,
+                cache_read_tokens, cache_creation_tokens
+            ) VALUES (
+                '2026-05-15', 'codex', 'relay-a', 'gpt-5.5', 2, 2, 40, 20, 0, 0
+            );
+            """
+        )
+
+        let reader = CCSwitchUsageLogReader(databasePath: databaseURL.path)
+        let result = reader.readUsageLogs(
+            since: try fixedDate("2026-05-15T00:00:00Z"),
+            until: try fixedDate("2026-05-17T00:00:00Z")
+        )
+
+        XCTAssertEqual(result.records.filter { $0.source == .proxy }.count, 1)
+        XCTAssertEqual(result.records.filter { $0.source == .dailyRollup }.count, 1)
+        XCTAssertEqual(result.records.first { $0.source == .dailyRollup }?.requestCount, 2)
+        XCTAssertEqual(result.records.reduce(0) { $0 + $1.outputTokens }, 70)
     }
 
     private func createCCSwitchSchema(at path: String) throws {

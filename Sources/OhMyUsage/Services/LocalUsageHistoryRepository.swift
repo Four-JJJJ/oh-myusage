@@ -438,8 +438,46 @@ enum LocalUsageSourceFingerprintBuilder {
 
     static func kimiFingerprint() -> LocalUsageSourceFingerprint {
         fingerprint(
-            roots: ["\(NSHomeDirectory())/.kimi/sessions"],
+            roots: [
+                "\(NSHomeDirectory())/.kimi/sessions",
+                "\(NSHomeDirectory())/.kimi-code/sessions"
+            ],
             includeFile: { $0.lastPathComponent == "wire.jsonl" }
+        )
+    }
+
+    static func cursorFingerprint() -> LocalUsageSourceFingerprint {
+        fingerprint(
+            roots: [
+                "\(NSHomeDirectory())/Library/Application Support/Cursor/User/globalStorage/state.vscdb",
+                "\(NSHomeDirectory())/.cursor/projects"
+            ],
+            includeFile: { url in
+                url.lastPathComponent == "state.vscdb" || url.pathExtension.lowercased() == "jsonl"
+            }
+        )
+    }
+
+    static func grokFingerprint() -> LocalUsageSourceFingerprint {
+        fingerprint(
+            roots: [GrokLocalUsageService.resolvedSessionsRoot(
+                homeDirectory: NSHomeDirectory(),
+                environment: ProcessInfo.processInfo.environment
+            )],
+            includeFile: { name in
+                let filename = name.lastPathComponent
+                return filename == "summary.json" || filename == "updates.jsonl" || filename == "signals.json"
+            }
+        )
+    }
+
+    static func geminiFingerprint() -> LocalUsageSourceFingerprint {
+        fingerprint(
+            roots: ["\(NSHomeDirectory())/.gemini/tmp"],
+            includeFile: { url in
+                let name = url.lastPathComponent.lowercased()
+                return name.hasPrefix("session-") && (name.hasSuffix(".jsonl") || name.hasSuffix(".json"))
+            }
         )
     }
 

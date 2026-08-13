@@ -80,9 +80,13 @@ struct UsageAnalyticsSettingsView: View {
     }
 
     private var overviewModule: some View {
-        module(title: "总览", subtitle: "") {
+        module(title: "总览", subtitle: sourceSubtitle) {
             UsageOverviewMetricsGrid(totals: snapshot.totals)
         }
+    }
+
+    private var sourceSubtitle: String {
+        snapshot.diagnostics.first ?? ""
     }
 
     private var trendModule: some View {

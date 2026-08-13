@@ -130,16 +130,36 @@ public struct UsageAnalyticsRecord: Equatable, Sendable {
     }
 
     public var dedupKey: String {
+        if let stableIdentity {
+            return "id|\(stableIdentity)"
+        }
         let minute = Int(eventAt.timeIntervalSince1970 / 60)
         return [
-            normalized(appType),
-            normalized(modelID),
+            normalizedAppType,
+            normalizedModelID,
             "\(totals.inputTokens)",
             "\(totals.outputTokens)",
             "\(totals.cacheReadTokens)",
             "\(totals.cacheWriteTokens)",
             "\(minute)"
         ].joined(separator: "|")
+    }
+
+    public var stableIdentity: String? {
+        let trimmed = requestID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        if trimmed.hasPrefix("rollup|") {
+            return trimmed.lowercased()
+        }
+        return trimmed.lowercased()
+    }
+
+    public var normalizedAppType: String {
+        normalized(appType)
+    }
+
+    public var normalizedModelID: String {
+        normalized(modelID)
     }
 
     private func normalized(_ value: String) -> String {

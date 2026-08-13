@@ -10,12 +10,12 @@ For extension and integration paths after the refactor, see [EXTENDING.md](./EXT
 | --- | --- | --- |
 | Codex | local desktop auth + web/API overlays | Supports multiple desktop accounts and local switching |
 | Claude | API, CLI, or web session depending on mode | Web overlays can enrich usage windows |
-| Gemini | official API/web quota data | Supports model-specific windows |
+| Gemini | official API/web quota data | Supports model-specific windows; local history from `~/.gemini/tmp/*/chats` |
 | GitHub Copilot | local GitHub auth | Reads Copilot usage and quota state |
-| Cursor | official/local session data | Monthly and on-demand usage |
+| Cursor | official/local session data | Monthly and on-demand usage; local history prefers dashboard events, then `state.vscdb` |
 | Windsurf | official API | Daily and weekly windows |
-| Grok | local Grok CLI auth (`~/.grok/auth.json`) | Weekly shared pool, plan name, and pay-as-you-go cap |
-| Kimi | official API | Session and overall usage |
+| Grok | local Grok CLI auth (`~/.grok/auth.json`) | Weekly shared pool, plan name, and pay-as-you-go cap; local history from `~/.grok/sessions` |
+| Kimi | official API | Session and overall usage; local history from Kimi CLI / Kimi Code sessions |
 | Amp | official API | Free and credit views |
 | Z.ai | official API | Session, weekly, and web usage |
 | JetBrains AI | local data | Local XML usage parsing |

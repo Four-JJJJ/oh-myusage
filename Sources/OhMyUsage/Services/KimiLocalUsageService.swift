@@ -185,7 +185,6 @@ final class KimiLocalUsageService {
 
             guard looksLikeV1StatusUpdate,
                   let eventAt = Self.parseTimestampDate(root["timestamp"]),
-                  eventAt >= startOfLast30Days,
                   let message = root["message"] as? [String: Any],
                   Self.stringValue(message["type"]) == "StatusUpdate",
                   let payload = message["payload"] as? [String: Any],
@@ -208,7 +207,7 @@ final class KimiLocalUsageService {
             let deltaComponents = snapshotComponents.delta(from: previousComponents, fallbackTotal: delta)
             previousSnapshotTokens = snapshotTotal
             previousComponents = snapshotComponents
-            guard delta > 0 else {
+            guard delta > 0, eventAt >= startOfLast30Days else {
                 return
             }
 

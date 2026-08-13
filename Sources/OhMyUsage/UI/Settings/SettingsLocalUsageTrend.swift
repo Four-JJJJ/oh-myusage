@@ -25,7 +25,7 @@ extension SettingsView {
     func shouldShowOfficialLocalTrendCard(for provider: ProviderDescriptor) -> Bool {
         guard provider.family == .official else { return false }
         switch provider.type {
-        case .codex, .claude, .gemini, .kimi:
+        case .codex, .claude, .gemini, .kimi, .cursor, .grok:
             return true
         default:
             return false
@@ -1216,8 +1216,18 @@ extension SettingsView {
             )
         case .gemini:
             return viewModel.localizedText(
-                "数据来源：本地 ~/.gemini（当前未发现稳定 token 事件流，后续补齐）",
-                "Data source: local ~/.gemini (stable token event stream not found yet; coming later)."
+                "数据来源：本地 ~/.gemini/tmp/*/chats/session-*.jsonl（仅本地 Token，不等价于官方剩余额度）",
+                "Data source: local ~/.gemini/tmp/*/chats/session-*.jsonl (local token usage only, not official remaining quota)."
+            )
+        case .cursor:
+            return viewModel.localizedText(
+                "数据来源：Cursor 仪表盘用量事件，本地 state.vscdb 作回退（仅用量事件，不等价于官方剩余额度）",
+                "Data source: Cursor dashboard usage events, with local state.vscdb fallback (usage events only, not official remaining quota)."
+            )
+        case .grok:
+            return viewModel.localizedText(
+                "数据来源：本地 ~/.grok/sessions（上下文增量估算，不等价于官方剩余额度）",
+                "Data source: local ~/.grok/sessions (estimated from context growth, not official remaining quota)."
             )
         default:
             return viewModel.localizedText(
@@ -1581,7 +1591,6 @@ extension SettingsView {
             identityKey: identityCacheKey
         )
 
-        guard provider.type != .gemini else { return }
         viewModel.refreshLocalUsageHistoryIfNeeded(
             query: query,
             codexIdentity: identityContext.codexIdentity,

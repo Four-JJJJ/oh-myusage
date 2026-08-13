@@ -9,18 +9,19 @@ oh-myusage 把官方订阅额度、模型使用窗口、第三方中转余额、
 
 [下载最新版本](https://github.com/Four-JJJJ/oh-myusage/releases/latest) · [安装说明](docs/DOWNLOAD.md) · [支持的服务](docs/PROVIDERS.md) · [扩展指南](docs/EXTENDING.md) · [发布清单](docs/RELEASE_CHECKLIST.md) · [English](docs/README.en.md)
 
-## V2.4.1 更新
+## V2.4.2 更新
 
-V2.4.1 新增官方 Grok 额度监控。本机完成一次 `grok login` 后，菜单栏即可查看周额度、计划名和按量付费状态。
+V2.4.2 优化使用统计准确性，并把 Cursor、Grok、Gemini 纳入本地用量账本。即使本机没有安装 cc-switch，也能汇总各官方应用的本地用量。
 
 本次更新集中在这些事：
 
 | 方向 | 改进 |
 | --- | --- |
-| Grok 额度 | 新增官方 Grok Provider，读取 `~/.grok/auth.json`，展示周额度剩余百分比和重置时间 |
-| 计划与按量 | 同步 SuperGrok / SuperGrok Heavy 等计划名；已开通按量付费时额外显示 PAYG 窗口 |
-| 凭证 | 自动刷新即将过期的 Grok CLI token，并写回 `auth.json`，无需在设置里粘贴 API Key |
-| 设置 | 设置侧栏可直接启用 Grok，默认排在 Windsurf 和 KIMI 之间 |
+| 本地用量 | 新增 Cursor、Grok、Gemini 本地历史；Cursor 优先读官方仪表盘事件，失败再回退本地会话 |
+| 无 cc-switch | 使用统计不再依赖 cc-switch 数据库；缺库时仍汇总 Codex / Claude / Kimi / Cursor / Grok / Gemini |
+| 去重与叠算 | 已有逐条请求时丢弃 cc-switch 日汇总；只在跨源时模糊合并，同源同 token 的不同请求会保留 |
+| 分类口径 | Kimi / Cursor / Grok / Gemini 独立成类，不再计入中转代理 |
+| Kimi | 累计快照先更新 baseline，再按时间窗计算增量，避免窗口外总量算进当天 |
 
 ## 适合谁
 
@@ -72,7 +73,9 @@ oh-myusage 的目标是让这些信息变得可扫读、可诊断、可维护：
 
 ### 本地历史用量
 
-- 支持读取 Codex、Claude、Kimi 等本地使用记录
+- 支持读取 Codex、Claude、Kimi、Cursor、Grok、Gemini 的本地使用记录
+- 使用统计以官方本地日志为主；cc-switch 仅作为中转请求的可选补充
+- 本机没有 cc-switch 时，仍可准确汇总上述官方应用的本地用量
 - 缓存聚合结果，避免每次打开设置页都重新扫描
 - 刷新失败时保留旧数据，并明确标记缓存回退
 - 不保存原始聊天内容，重点保存用量聚合结果

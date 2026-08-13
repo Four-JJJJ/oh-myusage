@@ -52,6 +52,12 @@ final class LocalUsageHistoryRefreshCoordinator {
                 )
             case .kimi:
                 return LocalUsageSourceFingerprintBuilder.kimiFingerprint()
+            case .cursor:
+                return LocalUsageSourceFingerprintBuilder.cursorFingerprint()
+            case .grok:
+                return LocalUsageSourceFingerprintBuilder.grokFingerprint()
+            case .gemini:
+                return LocalUsageSourceFingerprintBuilder.geminiFingerprint()
             default:
                 return LocalUsageSourceFingerprint(
                     roots: [],
@@ -92,6 +98,24 @@ final class LocalUsageHistoryRefreshCoordinator {
                     summary: summary,
                     sourceFingerprint: sourceFingerprint
                 )
+            case .cursor:
+                let summary = try CursorLocalUsageService().fetchSummary()
+                return LocalUsageHistoryLoadResult(
+                    summary: summary,
+                    sourceFingerprint: sourceFingerprint
+                )
+            case .grok:
+                let summary = try GrokLocalUsageService().fetchSummary()
+                return LocalUsageHistoryLoadResult(
+                    summary: summary,
+                    sourceFingerprint: sourceFingerprint
+                )
+            case .gemini:
+                let summary = try GeminiLocalUsageService().fetchSummary()
+                return LocalUsageHistoryLoadResult(
+                    summary: summary,
+                    sourceFingerprint: sourceFingerprint
+                )
             default:
                 throw LocalUsageHistoryRefreshCoordinatorError.unsupportedProvider(providerType.rawValue)
             }
@@ -114,5 +138,7 @@ final class LocalUsageHistoryRefreshCoordinator {
         supportedProviderTypes.contains(providerType)
     }
 
-    private static let supportedProviderTypes: Set<ProviderType> = [.codex, .claude, .kimi]
+    private static let supportedProviderTypes: Set<ProviderType> = [
+        .codex, .claude, .kimi, .cursor, .grok, .gemini
+    ]
 }

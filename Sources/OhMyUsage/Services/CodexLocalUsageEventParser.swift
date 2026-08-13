@@ -443,18 +443,30 @@ enum CodexLocalUsageEventParser {
                 "prompt_tokens"
             ]
         )
-        let output = sumInts(
-            in: container,
-            keys: [
-                "output_token_count",
-                "output_tokens",
-                "completion_tokens",
-                "reasoning_token_count",
-                "reasoning_tokens",
-                "reasoning_output_tokens",
-                "tool_token_count",
-                "tool_tokens"
-            ]
+        let output = resolvedOutputTokens(
+            rawOutput: firstInt(
+                in: container,
+                keys: [
+                    "output_token_count",
+                    "output_tokens",
+                    "completion_tokens"
+                ]
+            ),
+            reasoning: firstInt(
+                in: container,
+                keys: [
+                    "reasoning_token_count",
+                    "reasoning_tokens",
+                    "reasoning_output_tokens"
+                ]
+            ),
+            tool: firstInt(
+                in: container,
+                keys: [
+                    "tool_token_count",
+                    "tool_tokens"
+                ]
+            )
         )
         let total = firstInt(
             in: container,
@@ -503,18 +515,30 @@ enum CodexLocalUsageEventParser {
                 "prompt_tokens"
             ]
         )
-        let output = sumInts(
-            in: fields,
-            keys: [
-                "output_token_count",
-                "output_tokens",
-                "completion_tokens",
-                "reasoning_token_count",
-                "reasoning_tokens",
-                "reasoning_output_tokens",
-                "tool_token_count",
-                "tool_tokens"
-            ]
+        let output = resolvedOutputTokens(
+            rawOutput: firstInt(
+                in: fields,
+                keys: [
+                    "output_token_count",
+                    "output_tokens",
+                    "completion_tokens"
+                ]
+            ),
+            reasoning: firstInt(
+                in: fields,
+                keys: [
+                    "reasoning_token_count",
+                    "reasoning_tokens",
+                    "reasoning_output_tokens"
+                ]
+            ),
+            tool: firstInt(
+                in: fields,
+                keys: [
+                    "tool_token_count",
+                    "tool_tokens"
+                ]
+            )
         )
         let total = firstInt(
             in: fields,
@@ -560,6 +584,16 @@ enum CodexLocalUsageEventParser {
         )
     }
 
+    private static func resolvedOutputTokens(rawOutput: Int?, reasoning: Int?, tool: Int?) -> Int {
+        let output = max(0, rawOutput ?? 0)
+        let reasoning = max(0, reasoning ?? 0)
+        let tool = max(0, tool ?? 0)
+        if output > 0 {
+            return output
+        }
+        return reasoning + tool
+    }
+
     private static func firstInt(in container: [String: Any], keys: [String]) -> Int? {
         for key in keys {
             if let value = intValue(container[key]) {
@@ -576,18 +610,6 @@ enum CodexLocalUsageEventParser {
             }
         }
         return nil
-    }
-
-    private static func sumInts(in container: [String: Any], keys: [String]) -> Int {
-        keys.reduce(0) { partial, key in
-            partial + max(0, intValue(container[key]) ?? 0)
-        }
-    }
-
-    private static func sumInts(in fields: [String: String], keys: [String]) -> Int {
-        keys.reduce(0) { partial, key in
-            partial + max(0, intValue(fields[key]) ?? 0)
-        }
     }
 
     private static func intValue(_ value: Any?) -> Int? {

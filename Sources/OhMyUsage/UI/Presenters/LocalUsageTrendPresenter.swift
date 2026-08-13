@@ -114,9 +114,7 @@ enum LocalUsageTrendPresenter {
                 )
             }
 
-            let noDataText = providerType == .gemini
-                ? localizedText("本地趋势数据源暂不可用", "Local trend source unavailable")
-                : localizedText("暂无数据", "No data")
+            let noDataText = localizedText("暂无数据", "No data")
             return LocalUsageTrendStatusPresentation(
                 text: noDataText,
                 tone: .muted

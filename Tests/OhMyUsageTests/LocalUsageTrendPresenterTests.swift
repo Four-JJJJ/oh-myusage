@@ -62,7 +62,7 @@ final class LocalUsageTrendPresenterTests: XCTestCase {
         )
     }
 
-    func testPresentationShowsGeminiUnavailableEmptyStatus() {
+    func testPresentationShowsGeminiEmptyStatus() {
         let summary = Self.emptySummary()
 
         let state = LocalUsageTrendPresenter.presentation(
@@ -79,7 +79,7 @@ final class LocalUsageTrendPresenterTests: XCTestCase {
         XCTAssertNil(state.displaySummary)
         XCTAssertEqual(
             state.chartStatus,
-            LocalUsageTrendStatusPresentation(text: "Local trend source unavailable", tone: .muted)
+            LocalUsageTrendStatusPresentation(text: "No data", tone: .muted)
         )
     }
 

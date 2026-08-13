@@ -60,12 +60,22 @@ enum ProviderTypeMetadataCatalog {
             supportedSourceModes: localAndWebSourceModes,
             supportedWebModes: importableWebModes
         ),
-        .gemini: ProviderTypeMetadata(displayName: "Gemini", iconName: "menu_gemini_icon", fallbackSystemIcon: "sparkles"),
+        .gemini: ProviderTypeMetadata(
+            displayName: "Gemini",
+            iconName: "menu_gemini_icon",
+            fallbackSystemIcon: "sparkles",
+            supportsLocalUsageHistory: true
+        ),
         .copilot: ProviderTypeMetadata(displayName: "GitHub Copilot", iconName: "menu_github_copilot_icon", fallbackSystemIcon: "chevron.left.forwardslash.chevron.right"),
         .microsoftCopilot: ProviderTypeMetadata(displayName: "Microsoft Copilot", iconName: "menu_microsoft_copilot_icon", fallbackSystemIcon: "building.2.crop.circle"),
         .zai: ProviderTypeMetadata(displayName: "Z.ai", iconName: "menu_zai_icon", fallbackSystemIcon: "z.square.fill"),
         .amp: ProviderTypeMetadata(displayName: "Amp", iconName: "menu_amp_icon", fallbackSystemIcon: "bolt.fill"),
-        .cursor: ProviderTypeMetadata(displayName: "Cursor", iconName: "menu_cursor_icon", fallbackSystemIcon: "cursorarrow.rays"),
+        .cursor: ProviderTypeMetadata(
+            displayName: "Cursor",
+            iconName: "menu_cursor_icon",
+            fallbackSystemIcon: "cursorarrow.rays",
+            supportsLocalUsageHistory: true
+        ),
         .jetbrains: ProviderTypeMetadata(displayName: "JetBrains", iconName: "menu_jetbrains_icon", fallbackSystemIcon: "brain.head.profile"),
         .kiro: ProviderTypeMetadata(
             displayName: "Kiro",
@@ -85,7 +95,8 @@ enum ProviderTypeMetadataCatalog {
         .grok: ProviderTypeMetadata(
             displayName: "Grok",
             iconName: "menu_grok_icon",
-            fallbackSystemIcon: "sparkle"
+            fallbackSystemIcon: "sparkle",
+            supportsLocalUsageHistory: true
         ),
         .trae: ProviderTypeMetadata(displayName: "Trae SOLO", iconName: "menu_relay_icon", fallbackSystemIcon: "link"),
         .openrouterCredits: ProviderTypeMetadata(

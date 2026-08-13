@@ -10,6 +10,9 @@ final class UsageAnalyticsRepository: @unchecked Sendable {
         var codex: UsageAnalyticsFileFingerprint
         var claude: UsageAnalyticsFileFingerprint
         var kimi: UsageAnalyticsFileFingerprint
+        var cursor: UsageAnalyticsFileFingerprint = .empty
+        var grok: UsageAnalyticsFileFingerprint = .empty
+        var gemini: UsageAnalyticsFileFingerprint = .empty
     }
 
     private final class LocalSourceFingerprintCache: @unchecked Sendable {
@@ -83,7 +86,18 @@ final class UsageAnalyticsRepository: @unchecked Sendable {
 
         let ccSwitchResult = ccSwitchReader.readUsageLogs(since: interval.start, until: interval.end)
         records.append(contentsOf: ccSwitchResult.records.map(\.analyticsRecord))
-        diagnostics.append(contentsOf: ccSwitchResult.diagnostics)
+        let ccSwitchMissing = ccSwitchResult.diagnostics.contains { $0.contains("未安装 cc-switch") }
+        if ccSwitchMissing {
+            diagnostics.append("未安装 cc-switch，已仅使用各官方应用的本地用量日志")
+        } else {
+            diagnostics.append(contentsOf: ccSwitchResult.diagnostics)
+        }
+        diagnostics.insert(
+            ccSwitchMissing
+                ? "统计来源：Codex / Claude / Kimi / Cursor / Grok / Gemini 本地用量"
+                : "统计来源：本地官方用量 + cc-switch 请求日志",
+            at: 0
+        )
 
         let localResult = readLocalRecords(
             since: interval.start,
@@ -118,7 +132,10 @@ final class UsageAnalyticsRepository: @unchecked Sendable {
             ccSwitch: ccSwitch,
             codex: localFingerprint.codex,
             claude: localFingerprint.claude,
-            kimi: localFingerprint.kimi
+            kimi: localFingerprint.kimi,
+            cursor: localFingerprint.cursor,
+            grok: localFingerprint.grok,
+            gemini: localFingerprint.gemini
         )
     }
 
@@ -176,6 +193,54 @@ final class UsageAnalyticsRepository: @unchecked Sendable {
             })
         } catch {
             diagnostics.append("Kimi 本地日志读取失败：\(error.localizedDescription)")
+        }
+
+        do {
+            let cursorEvents = try CursorLocalUsageService(
+                calendar: calendar,
+                nowProvider: nowProvider,
+                dashboardFetcher: CursorDashboardUsageClient()
+            ).fetchEvents(since: since)
+            records.append(contentsOf: cursorEvents.map {
+                analyticsRecord(
+                    event: $0,
+                    appType: "cursor",
+                    providerID: "ohmyusage-cursor-local",
+                    providerName: "Cursor"
+                )
+            })
+        } catch {
+            diagnostics.append("Cursor 用量读取失败：\(error.localizedDescription)")
+        }
+
+        do {
+            let grokEvents = try GrokLocalUsageService(calendar: calendar, nowProvider: nowProvider)
+                .fetchEvents(since: since)
+            records.append(contentsOf: grokEvents.map {
+                analyticsRecord(
+                    event: $0,
+                    appType: "grok",
+                    providerID: "ohmyusage-grok-local",
+                    providerName: "Grok"
+                )
+            })
+        } catch {
+            diagnostics.append("Grok 本地日志读取失败：\(error.localizedDescription)")
+        }
+
+        do {
+            let geminiEvents = try GeminiLocalUsageService(calendar: calendar, nowProvider: nowProvider)
+                .fetchEvents(since: since)
+            records.append(contentsOf: geminiEvents.map {
+                analyticsRecord(
+                    event: $0,
+                    appType: "gemini",
+                    providerID: "ohmyusage-gemini-local",
+                    providerName: "Gemini"
+                )
+            })
+        } catch {
+            diagnostics.append("Gemini 本地日志读取失败：\(error.localizedDescription)")
         }
 
         return (records, diagnostics)
@@ -239,7 +304,10 @@ final class UsageAnalyticsRepository: @unchecked Sendable {
                 currentConfigDir: nil,
                 allConfigDirs: claudeAllConfigDirs
             )),
-            kimi: usageAnalyticsFileFingerprint(from: LocalUsageSourceFingerprintBuilder.kimiFingerprint())
+            kimi: usageAnalyticsFileFingerprint(from: LocalUsageSourceFingerprintBuilder.kimiFingerprint()),
+            cursor: usageAnalyticsFileFingerprint(from: LocalUsageSourceFingerprintBuilder.cursorFingerprint()),
+            grok: usageAnalyticsFileFingerprint(from: LocalUsageSourceFingerprintBuilder.grokFingerprint()),
+            gemini: usageAnalyticsFileFingerprint(from: LocalUsageSourceFingerprintBuilder.geminiFingerprint())
         )
     }
 
