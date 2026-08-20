@@ -1285,6 +1285,229 @@ final class RelayProviderTests: XCTestCase {
         XCTAssertEqual(snapshot.quotaWindows.first?.remainingPercent ?? -1, expectedRemainingPercent, accuracy: 0.000001)
     }
 
+    func testXiaomimimoTokenPlanAcceptsBareServiceTokenValue() async throws {
+        RelayMockURLProtocol.requestHandler = { request in
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Cookie"), "api-platform_serviceToken=abc123")
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            switch request.url?.path {
+            case "/api/v1/tokenPlan/detail":
+                return (
+                    response,
+                    Data(#"{"code":0,"message":"","data":{"planCode":"standard","planName":"Standard","currentPeriodEnd":"2026-05-28 23:59:59","expired":false,"enableAutoRenew":false}}"#.utf8)
+                )
+            case "/api/v1/tokenPlan/usage":
+                return (
+                    response,
+                    Data(#"{"code":0,"message":"","data":{"usage":{"percent":0.0,"items":[{"name":"plan_total_token","used":0,"limit":11000000000,"percent":0.0}]}}}"#.utf8)
+                )
+            default:
+                XCTFail("Unexpected path \(request.url?.path ?? "nil")")
+                return (response, Data(#"{}"#.utf8))
+            }
+        }
+        defer { RelayMockURLProtocol.requestHandler = nil }
+
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [RelayMockURLProtocol.self]
+        let session = URLSession(configuration: config)
+
+        let service = "OhMyUsageTests-\(UUID().uuidString)"
+        let keychain = makeTestKeychain()
+        // User pasted only the token value from DevTools → Application → Cookies.
+        XCTAssertTrue(
+            keychain.saveToken(
+                "abc123",
+                service: service,
+                account: "platform.xiaomimimo.com/session-cookie"
+            )
+        )
+
+        let provider = RelayProvider(
+            descriptor: makeRelayDescriptor(
+                service: service,
+                adapterID: "xiaomimimo-token-plan",
+                baseURL: "https://platform.xiaomimimo.com",
+                balanceAccount: "platform.xiaomimimo.com/session-cookie"
+            ),
+            session: session,
+            keychain: keychain,
+            browserCredentialService: BrowserCredentialService()
+        )
+
+        let snapshot = try await provider.fetch()
+        XCTAssertEqual(snapshot.unit, "%")
+        XCTAssertEqual(snapshot.limit ?? -1, 100, accuracy: 0.001)
+        XCTAssertEqual(snapshot.extras["planType"], "Standard")
+    }
+
+    func testXiaomimimoTokenPlanStripsCookieHeaderPrefix() async throws {
+        RelayMockURLProtocol.requestHandler = { request in
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Cookie"), "api-platform_serviceToken=abc123; userId=10001")
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            switch request.url?.path {
+            case "/api/v1/tokenPlan/detail":
+                return (
+                    response,
+                    Data(#"{"code":0,"message":"","data":{"planCode":"standard","planName":"Standard","currentPeriodEnd":"2026-05-28 23:59:59","expired":false,"enableAutoRenew":false}}"#.utf8)
+                )
+            case "/api/v1/tokenPlan/usage":
+                return (
+                    response,
+                    Data(#"{"code":0,"message":"","data":{"usage":{"percent":0.0,"items":[{"name":"plan_total_token","used":0,"limit":11000000000,"percent":0.0}]}}}"#.utf8)
+                )
+            default:
+                XCTFail("Unexpected path \(request.url?.path ?? "nil")")
+                return (response, Data(#"{}"#.utf8))
+            }
+        }
+        defer { RelayMockURLProtocol.requestHandler = nil }
+
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [RelayMockURLProtocol.self]
+        let session = URLSession(configuration: config)
+
+        let service = "OhMyUsageTests-\(UUID().uuidString)"
+        let keychain = makeTestKeychain()
+        // User copied the full header line from the Network tab, including the "Cookie: " prefix.
+        XCTAssertTrue(
+            keychain.saveToken(
+                "Cookie: api-platform_serviceToken=abc123; userId=10001",
+                service: service,
+                account: "platform.xiaomimimo.com/session-cookie"
+            )
+        )
+
+        let provider = RelayProvider(
+            descriptor: makeRelayDescriptor(
+                service: service,
+                adapterID: "xiaomimimo-token-plan",
+                baseURL: "https://platform.xiaomimimo.com",
+                balanceAccount: "platform.xiaomimimo.com/session-cookie"
+            ),
+            session: session,
+            keychain: keychain,
+            browserCredentialService: BrowserCredentialService()
+        )
+
+        let snapshot = try await provider.fetch()
+        XCTAssertEqual(snapshot.unit, "%")
+        XCTAssertEqual(snapshot.extras["planType"], "Standard")
+    }
+
+    func testXiaomimimoTokenPlanRejectsBusinessErrorEnvelope() throws {
+        // XiaomiMIMO answers HTTP 200 with a non-zero `code` when the Cookie is
+        // expired. That must surface as an auth error, not "missing usage item".
+        let detailRoot: Any = ["code": 40100, "message": "not login", "data": NSNull()]
+        let usageRoot: Any = ["code": 40100, "message": "not login", "data": NSNull()]
+        let candidate = RelayCredentialCandidate(
+            headers: ["Cookie": "api-platform_serviceToken=abc123"],
+            source: "savedCookieHeader",
+            persistedCredential: "api-platform_serviceToken=abc123"
+        )
+        XCTAssertThrowsError(
+            try RelayResponseInterpreter.extractXiaomimimoTokenPlanValues(
+                detailRoot: detailRoot,
+                usageRoot: usageRoot,
+                candidate: candidate
+            )
+        ) { error in
+            guard case .unauthorizedDetail(let detail) = error as? ProviderError else {
+                return XCTFail("Expected unauthorizedDetail, got \(error)")
+            }
+            XCTAssertTrue(detail.localizedCaseInsensitiveContains("login missing or expired"))
+        }
+    }
+
+    func testXiaomimimoTokenPlanAcceptsPayloadWrappedUsage() throws {
+        let detailRoot: Any = ["code": 0, "data": ["planCode": "standard", "planName": "Standard"]]
+        let usageRoot: Any = ["code": 0, "data": ["payload": ["usage": ["percent": 10.0, "items": [
+            ["name": "plan_total_token", "used": 100, "limit": 1000, "percent": 10.0]
+        ]]]]]
+        let candidate = RelayCredentialCandidate(
+            headers: ["Cookie": "api-platform_serviceToken=abc123"],
+            source: "savedCookieHeader",
+            persistedCredential: "api-platform_serviceToken=abc123"
+        )
+        let result = try RelayResponseInterpreter.extractXiaomimimoTokenPlanValues(
+            detailRoot: detailRoot,
+            usageRoot: usageRoot,
+            candidate: candidate
+        )
+        XCTAssertEqual(result.used ?? -1, 10.0, accuracy: 0.001)
+        XCTAssertEqual(result.remaining ?? -1, 90.0, accuracy: 0.001)
+        XCTAssertEqual(result.limit ?? -1, 100, accuracy: 0.001)
+    }
+
+    func testXiaomimimoTokenPlanReportsReceivedUsageShapeOnMismatch() throws {
+        let detailRoot: Any = ["code": 0, "data": ["planCode": "standard", "planName": "Standard"]]
+        let usageRoot: Any = ["code": 0, "data": ["somethingElse": ["foo": 1]]]
+        let candidate = RelayCredentialCandidate(
+            headers: ["Cookie": "api-platform_serviceToken=abc123"],
+            source: "savedCookieHeader",
+            persistedCredential: "api-platform_serviceToken=abc123"
+        )
+        XCTAssertThrowsError(
+            try RelayResponseInterpreter.extractXiaomimimoTokenPlanValues(
+                detailRoot: detailRoot,
+                usageRoot: usageRoot,
+                candidate: candidate
+            )
+        ) { error in
+            guard case .invalidResponse(let detail) = error as? ProviderError else {
+                return XCTFail("Expected invalidResponse, got \(error)")
+            }
+            XCTAssertTrue(detail.localizedCaseInsensitiveContains("received usage payload shape"))
+            XCTAssertTrue(detail.contains("somethingElse"))
+        }
+    }
+
+    func testXiaomimimoTokenPlanReportsExpiredPlanAsNoActiveSubscription() throws {
+        let detailRoot: Any = ["code": 0, "data": ["expired": true, "planCode": "standard"]]
+        let usageRoot: Any = ["code": 0, "data": ["usage": ["percent": 0.0, "items": []]]]
+        let candidate = RelayCredentialCandidate(
+            headers: ["Cookie": "api-platform_serviceToken=abc123"],
+            source: "savedCookieHeader",
+            persistedCredential: "api-platform_serviceToken=abc123"
+        )
+        XCTAssertThrowsError(
+            try RelayResponseInterpreter.extractXiaomimimoTokenPlanValues(
+                detailRoot: detailRoot,
+                usageRoot: usageRoot,
+                candidate: candidate
+            )
+        ) { error in
+            guard case .invalidResponse(let detail) = error as? ProviderError else {
+                return XCTFail("Expected invalidResponse, got \(error)")
+            }
+            XCTAssertTrue(detail.localizedCaseInsensitiveContains("no active subscription"))
+        }
+    }
+
+    func testXiaomimimoTokenPlanReportsEmptyEnvelopeAsNoActiveSubscription() throws {
+        // Both payloads return code 0 with no plan/usage structure at all — the
+        // account simply has nothing to display, so the message should say so
+        // instead of "the site response changed".
+        let detailRoot: Any = ["code": 0, "data": NSNull()]
+        let usageRoot: Any = ["code": 0, "data": ["usage": ["items": []]]]
+        let candidate = RelayCredentialCandidate(
+            headers: ["Cookie": "api-platform_serviceToken=abc123"],
+            source: "savedCookieHeader",
+            persistedCredential: "api-platform_serviceToken=abc123"
+        )
+        XCTAssertThrowsError(
+            try RelayResponseInterpreter.extractXiaomimimoTokenPlanValues(
+                detailRoot: detailRoot,
+                usageRoot: usageRoot,
+                candidate: candidate
+            )
+        ) { error in
+            guard case .invalidResponse(let detail) = error as? ProviderError else {
+                return XCTFail("Expected invalidResponse, got \(error)")
+            }
+            XCTAssertTrue(detail.localizedCaseInsensitiveContains("no active subscription"))
+        }
+    }
+
     func testXiaomimimoTokenPlanUsesDerivedPercentWhenItemPercentIsZero() async throws {
         RelayMockURLProtocol.requestHandler = { request in
             XCTAssertEqual(request.value(forHTTPHeaderField: "Cookie"), "api-platform_serviceToken=abc123; userId=10001")

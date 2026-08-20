@@ -70,6 +70,7 @@ final class AppLifecycleDelegate: NSObject, NSApplicationDelegate {
         }
 
         startActivationBridgeObservation()
+        SettingsScenePhantomWindowGuard.shared.start()
         let viewModel = AppViewModel()
         statusBarController = StatusBarController(viewModel: viewModel)
         presentPostUpdateReleaseNotesIfNeeded(currentVersion: viewModel.currentAppVersion)

@@ -119,9 +119,9 @@ struct RelayCredentialResolver {
             case .savedCookieHeader:
                 guard includeSavedCredentials else { continue }
                 if let savedRaw,
-                   looksLikeCookieHeader(savedRaw) {
+                   let normalizedCookie = normalizeSavedCookieHeader(savedRaw, manifest: manifest) {
                     if manifest.id == "moonshot",
-                       looksLikeMoonshotNonAuthCookieHeader(savedRaw) {
+                       looksLikeMoonshotNonAuthCookieHeader(normalizedCookie) {
                         continue
                     }
                     append(
@@ -129,10 +129,10 @@ struct RelayCredentialResolver {
                             headers: buildHeaders(
                                 request: request,
                                 authHeader: "Cookie",
-                                authValue: savedRaw
+                                authValue: normalizedCookie
                             ),
                             source: "savedCookieHeader",
-                            persistedCredential: savedRaw
+                            persistedCredential: normalizedCookie
                         )
                     )
                 }
@@ -330,6 +330,32 @@ struct RelayCredentialResolver {
 
     private func isXiaomimimoManifest(_ manifest: RelayAdapterManifest) -> Bool {
         manifest.id == "xiaomimimo" || manifest.id == "xiaomimimo-token-plan"
+    }
+
+    /// Normalizes a manually saved cookie credential before it is used as a
+    /// Cookie header:
+    /// - strips a leading `Cookie:` prefix (users often copy the full header
+    ///   line from the Network tab, which would otherwise corrupt the first
+    ///   cookie pair),
+    /// - for XiaomiMIMO, accepts a bare `api-platform_serviceToken` value
+    ///   (copied from DevTools → Application → Cookies, which shows name and
+    ///   value in separate columns) and wraps it into a cookie pair.
+    /// Returns nil when the value cannot be used as a cookie at all.
+    private func normalizeSavedCookieHeader(_ raw: String, manifest: RelayAdapterManifest) -> String? {
+        var value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if value.lowercased().hasPrefix("cookie:") {
+            value = String(value.dropFirst("cookie:".count)).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        if looksLikeCookieHeader(value) {
+            return value
+        }
+        if isXiaomimimoManifest(manifest),
+           !value.isEmpty,
+           !value.lowercased().hasPrefix("bearer "),
+           !value.contains(" ") {
+            return "api-platform_serviceToken=\(value)"
+        }
+        return nil
     }
 
     private func cookieHeaderContains(_ header: String, name: String) -> Bool {

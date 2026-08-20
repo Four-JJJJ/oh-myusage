@@ -10,6 +10,15 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     private var activationPolicyBeforeShowingSettings: NSApplication.ActivationPolicy?
     private weak var currentViewModel: AppViewModel?
 
+    /// The custom settings window owned by this controller, used by the
+    /// phantom-window guard to tell it apart from the blank SwiftUI scene.
+    var ownedWindow: NSWindow? { window }
+
+    /// The hosting controller that renders the real settings UI. A window whose
+    /// content view controller is not this instance (and whose title matches the
+    /// settings scene) is a blank SwiftUI `Settings` scene phantom.
+    var settingsHostingController: NSHostingController<AnyView>? { hostingController }
+
     private override init() {
         super.init()
     }
@@ -85,14 +94,15 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         viewModel.setSettingsWindowVisible(true)
         if let panel = window {
             // Switching to `.regular` can make SwiftUI's `Settings { EmptyView() }`
-            // scene appear as a second blank "oh-myusage Settings" window.
-            SettingsSceneWindowPolicy.dismissPhantomWindows(keeping: panel)
+            // scene appear as a second blank "oh-myusage Settings" window. The
+            // scene materializes asynchronously, so sweep several times instead
+            // of relying on a single next-runloop pass.
+            SettingsSceneWindowPolicy.schedulePhantomSweeps(keeping: panel)
             bringSettingsWindowToFront(panel)
             clearSettingsInputFocus(in: panel)
             layoutTrafficLights(in: panel)
             DispatchQueue.main.async { [weak self, weak panel] in
                 guard let self, let panel else { return }
-                SettingsSceneWindowPolicy.dismissPhantomWindows(keeping: panel)
                 self.bringSettingsWindowToFront(panel)
                 self.clearSettingsInputFocus(in: panel)
                 self.layoutTrafficLights(in: panel)

@@ -9,19 +9,18 @@ oh-myusage 把官方订阅额度、模型使用窗口、第三方中转余额、
 
 [下载最新版本](https://github.com/Four-JJJJ/oh-myusage/releases/latest) · [安装说明](docs/DOWNLOAD.md) · [支持的服务](docs/PROVIDERS.md) · [扩展指南](docs/EXTENDING.md) · [发布清单](docs/RELEASE_CHECKLIST.md) · [English](docs/README.en.md)
 
-## V2.4.2 更新
+## V2.4.3 更新
 
-V2.4.2 优化使用统计准确性，并把 Cursor、Grok、Gemini 纳入本地用量账本。即使本机没有安装 cc-switch，也能汇总各官方应用的本地用量。
+V2.4.3 修复 Xiaomi MIMO 凭证读取与设置窗口显示问题，并优化 MIMO Token Plan 的鉴权诊断。
 
 本次更新集中在这些事：
 
 | 方向 | 改进 |
 | --- | --- |
-| 本地用量 | 新增 Cursor、Grok、Gemini 本地历史；Cursor 优先读官方仪表盘事件，失败再回退本地会话 |
-| 无 cc-switch | 使用统计不再依赖 cc-switch 数据库；缺库时仍汇总 Codex / Claude / Kimi / Cursor / Grok / Gemini |
-| 去重与叠算 | 已有逐条请求时丢弃 cc-switch 日汇总；只在跨源时模糊合并，同源同 token 的不同请求会保留 |
-| 分类口径 | Kimi / Cursor / Grok / Gemini 独立成类，不再计入中转代理 |
-| Kimi | 累计快照先更新 baseline，再按时间窗计算增量，避免窗口外总量算进当天 |
+| MIMO 认证 | 粘贴凭证支持三种格式：完整 Cookie、带 `Cookie:` 前缀的整行、或只粘贴 `api-platform_serviceToken` 的值；不再误报 "cookie looks incomplete" |
+| 设置窗口 | 根治打开设置时偶发的空白设置窗口——移除 SwiftUI `Settings` 场景，设置界面改由 AppKit 窗口承载，始终只出现一个设置窗口 |
+| MIMO Token Plan | Cookie 过期或未订阅 Token Plan 时给出明确的重新登录 / 订阅提示，而不是模糊的响应错误 |
+| 错误提示 | 设置页凭证提示同步覆盖三种粘贴方式，测试连接报错更可读 |
 
 ## 适合谁
 

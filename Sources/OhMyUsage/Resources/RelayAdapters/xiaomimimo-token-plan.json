@@ -12,8 +12,8 @@
     "recommendedBaseURL": "https://platform.xiaomimimo.com",
     "requiredInputs": ["balanceAuth"],
     "balanceAuthHint": {
-      "zhHans": "粘贴浏览器请求里的完整 Cookie，通常至少包含 `api-platform_serviceToken`、`userId`、`api-platform_slh`、`api-platform_ph`。模板会自动读取 `/api/v1/tokenPlan/detail` 与 `/api/v1/tokenPlan/usage` 展示套餐用量。",
-      "en": "Paste the full Cookie value from your browser request. It usually includes `api-platform_serviceToken`, `userId`, `api-platform_slh`, and `api-platform_ph`. The template reads `/api/v1/tokenPlan/detail` and `/api/v1/tokenPlan/usage` to display Token Plan usage."
+      "zhHans": "粘贴浏览器请求里的完整 Cookie(通常至少包含 `api-platform_serviceToken`、`userId`、`api-platform_slh`、`api-platform_ph`),也可以只粘贴 `api-platform_serviceToken` 的值。模板会自动读取 `/api/v1/tokenPlan/detail` 与 `/api/v1/tokenPlan/usage` 展示套餐用量。",
+      "en": "Paste the full Cookie value from your browser request (it usually includes `api-platform_serviceToken`, `userId`, `api-platform_slh`, and `api-platform_ph`), or just the `api-platform_serviceToken` value. The template reads `/api/v1/tokenPlan/detail` and `/api/v1/tokenPlan/usage` to display Token Plan usage."
     }
   },
   "authStrategies": [

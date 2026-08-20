@@ -228,8 +228,18 @@ enum RelayResponseInterpreter {
         usageRoot: Any,
         candidate: RelayCredentialCandidate
     ) throws -> AccountChannelResult {
+        if let authError = xiaomimimoTokenPlanBusinessError(detailRoot: detailRoot, usageRoot: usageRoot) {
+            throw authError
+        }
         guard let usageAggregate = extractXiaomimimoTokenPlanUsageAggregate(from: usageRoot) else {
-            throw ProviderError.invalidResponse("missing xiaomimimo token plan usage item")
+            if xiaomimimoTokenPlanAppearsInactive(detailRoot: detailRoot, usageRoot: usageRoot) {
+                throw ProviderError.invalidResponse(
+                    "xiaomimimo token plan has no active subscription; subscribe or renew a Token Plan at platform.xiaomimimo.com before connecting"
+                )
+            }
+            throw ProviderError.invalidResponse(
+                "xiaomimimo token plan usage payload missing expected items; received usage payload shape: \(structuralPreview(usageRoot))"
+            )
         }
 
         let usedTokens = usageAggregate.used
@@ -325,6 +335,131 @@ enum RelayResponseInterpreter {
             note: noteParts.joined(separator: " | "),
             rawMeta: rawMeta
         )
+    }
+
+    /// XiaomiMIMO's platform returns a business envelope with `code: 0` on success.
+    /// When the browser Cookie expires it typically still answers HTTP 200 with a
+    /// non-zero `code` and no `data`, which the usage-shape check below would
+    /// otherwise misread as "missing usage item". Surface that as an auth error so
+    /// the executor can fall through to browser recovery instead of a confusing
+    /// "invalid response".
+    private static func xiaomimimoTokenPlanBusinessError(detailRoot: Any, usageRoot: Any) -> ProviderError? {
+        for root in [detailRoot, usageRoot] {
+            guard let dict = root as? [String: Any] else { continue }
+            guard let code = xiaomimimoBusinessCode(dict), code != 0 else { continue }
+            let message = (dict["message"] as? String)
+                ?? (dict["msg"] as? String)
+                ?? (dict["error"] as? String)
+            let suffix = message?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+                ? message!.trimmingCharacters(in: .whitespacesAndNewlines)
+                : "code \(code)"
+            return .unauthorizedDetail(
+                "XiaomiMIMO Token Plan login missing or expired (\(suffix)). Log in again in platform.xiaomimimo.com and test the connection again."
+            )
+        }
+        return nil
+    }
+
+    private static func xiaomimimoBusinessCode(_ dict: [String: Any]) -> Int? {
+        if let number = dict["code"] as? NSNumber {
+            return number.intValue
+        }
+        if let string = dict["code"] as? String {
+            return Int(string.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+        if let number = dict["status"] as? NSNumber {
+            return number.intValue
+        }
+        return nil
+    }
+
+    /// Distinguishes "the account has no active Token Plan" from "the site
+    /// response changed shape". Both have no parseable usage items; only the
+    /// former should surface a friendly "no active subscription" message.
+    private static func xiaomimimoTokenPlanAppearsInactive(detailRoot: Any, usageRoot: Any) -> Bool {
+        // An explicit expired flag on the plan detail is definitive.
+        if RelayJSONExpressionEvaluator.boolValue(
+            for: "coalesce(data.expired,expired)",
+            in: detailRoot
+        ) == true {
+            return true
+        }
+
+        // A usage payload whose `items` list exists but is empty is the classic
+        // "not subscribed" shape — there simply are no plan line items.
+        let itemContainerPaths = [
+            "data.usage.items", "usage.items",
+            "data.payload.usage.items", "payload.usage.items",
+            "data.monthUsage.items", "monthUsage.items"
+        ]
+        for path in itemContainerPaths {
+            if let value = RelayJSONExpressionEvaluator.value(at: path, in: usageRoot),
+               let array = value as? [Any] {
+                return array.isEmpty
+            }
+        }
+
+        // Otherwise treat the account as inactive only when both payloads carry
+        // no recognizable plan/usage structure at all — an empty envelope on a
+        // `code: 0` response means there is nothing to display, not that the
+        // response format changed.
+        let detailHasPlanInfo = xiaomimimoDetailHasPlanInfo(
+            RelayJSONExpressionEvaluator.value(at: "data", in: detailRoot)
+        )
+        let usageHasStructure = xiaomimimoUsageHasStructure(
+            RelayJSONExpressionEvaluator.value(at: "data", in: usageRoot)
+        )
+        return !detailHasPlanInfo && !usageHasStructure
+    }
+
+    private static func xiaomimimoDetailHasPlanInfo(_ data: Any?) -> Bool {
+        guard let dict = data as? [String: Any], !dict.isEmpty else { return false }
+        let planKeys = [
+            "planName", "plan_name", "planCode", "plan_code", "plan",
+            "planType", "plan_type", "tokenPlanName", "token_plan_name",
+            "currentTokenPlan", "current_token_plan", "tierName", "tier_name",
+            "packageName", "package_name", "subscriptionName", "subscription_name",
+            "expired", "enableAutoRenew", "currentPeriodEnd", "startTime", "endTime"
+        ]
+        return dict.keys.contains(where: { key in
+            planKeys.contains { key.caseInsensitiveCompare($0) == .orderedSame }
+        })
+    }
+
+    private static func xiaomimimoUsageHasStructure(_ data: Any?) -> Bool {
+        guard let dict = data as? [String: Any], !dict.isEmpty else { return false }
+        return dict.keys.contains(where: { key in
+            key.caseInsensitiveCompare("usage") == .orderedSame ||
+            key.caseInsensitiveCompare("monthUsage") == .orderedSame ||
+            key.caseInsensitiveCompare("items") == .orderedSame
+        })
+    }
+
+    /// Compact, value-free rendering of a JSON payload's shape (keys and nesting)
+    /// so a template mismatch shows what the site actually returned. Used only in
+    /// error detail text; no raw values are exposed.
+    private static func structuralPreview(_ root: Any) -> String {
+        func render(_ value: Any, depth: Int) -> String {
+            if depth > 3 { return "…" }
+            if let dict = value as? [String: Any] {
+                let entries = dict.keys.sorted().prefix(12).map { key -> String in
+                    guard let nested = dict[key] else { return key }
+                    let child = render(nested, depth: depth + 1)
+                    return child.isEmpty ? key : "\(key):\(child)"
+                }
+                return "{\(entries.joined(separator: ","))}"
+            }
+            if let array = value as? [Any] {
+                if let first = array.first {
+                    let child = render(first, depth: depth + 1)
+                    return "[\(child)]"
+                }
+                return "[]"
+            }
+            return ""
+        }
+        let rendered = render(root, depth: 0)
+        return rendered.isEmpty ? "{}" : rendered
     }
 
     // DeepSeek's platform session endpoint reports auth failures as HTTP 200 with a
@@ -591,20 +726,33 @@ enum RelayResponseInterpreter {
     }
 
     private static func extractXiaomimimoTokenPlanUsageAggregate(from root: Any) -> XiaomimimoTokenPlanUsageAggregate? {
-        let candidates = [
-            RelayJSONExpressionEvaluator.value(at: "data.usage.items", in: root),
-            RelayJSONExpressionEvaluator.value(at: "usage.items", in: root),
-            RelayJSONExpressionEvaluator.value(at: "data.monthUsage.items", in: root),
-            RelayJSONExpressionEvaluator.value(at: "monthUsage.items", in: root)
+        let candidatePaths = [
+            "data.usage.items", "usage.items",
+            "data.payload.usage.items", "payload.usage.items",
+            "data.payload.items", "payload.items",
+            "data.data.usage.items", "data.result.usage.items",
+            "data.tokenPlan.items", "tokenPlan.items",
+            "data.monthUsage.items", "monthUsage.items"
         ]
+        let candidates = candidatePaths.compactMap {
+            RelayJSONExpressionEvaluator.value(at: $0, in: root)
+        }
 
         for candidate in candidates {
             guard let items = candidate as? [Any], !items.isEmpty else { continue }
             let dictionaries = items.compactMap { $0 as? [String: Any] }
             let positiveLimitItems = dictionaries.compactMap { item -> (name: String, used: Double, limit: Double, rawPercent: Double?)? in
-                let limit = RelayJSONExpressionEvaluator.coerceDouble(item["limit"] ?? 0) ?? 0
+                let limit = RelayJSONExpressionEvaluator.coerceDouble(item["limit"] ?? 0)
+                    ?? RelayJSONExpressionEvaluator.coerceDouble(item["total"] ?? 0)
+                    ?? RelayJSONExpressionEvaluator.coerceDouble(item["totalTokens"] ?? 0)
+                    ?? RelayJSONExpressionEvaluator.coerceDouble(item["limitTokens"] ?? 0)
+                    ?? RelayJSONExpressionEvaluator.coerceDouble(item["quota"] ?? 0)
+                    ?? 0
                 guard limit > 0 else { return nil }
-                let used = RelayJSONExpressionEvaluator.coerceDouble(item["used"] ?? 0) ?? 0
+                let used = RelayJSONExpressionEvaluator.coerceDouble(item["used"] ?? 0)
+                    ?? RelayJSONExpressionEvaluator.coerceDouble(item["usedTokens"] ?? 0)
+                    ?? RelayJSONExpressionEvaluator.coerceDouble(item["consumed"] ?? 0)
+                    ?? 0
                 let name = (item["name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
                 return (
                     name: name?.isEmpty == false ? name! : "token_plan_item",

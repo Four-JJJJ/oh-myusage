@@ -153,7 +153,7 @@ struct RelayRecoveryPolicy {
             return .unauthorizedDetail("No usable Moonshot credential was found. Paste an Authorization bearer token, or switch to Browser First and make sure platform.moonshot.cn is logged in.")
         case "xiaomimimo":
             if let savedRaw, !savedRaw.lowercased().contains("api-platform_servicetoken") {
-                return .unauthorizedDetail("XiaomiMIMO cookie looks incomplete. Paste the full Cookie header and make sure it includes api-platform_serviceToken and userId.")
+                return .unauthorizedDetail("XiaomiMIMO cookie looks incomplete. Paste the full Cookie header, or just the api-platform_serviceToken value.")
             }
             if credentialMode != .manualPreferred {
                 return .unauthorizedDetail("No live XiaomiMIMO login was found in the browser. Log in to platform.xiaomimimo.com first; if it is already logged in, grant Full Disk Access and approve Arc/Chrome Safe Storage keychain access, then test again.")
@@ -161,7 +161,7 @@ struct RelayRecoveryPolicy {
             return .unauthorizedDetail("No usable XiaomiMIMO cookie was found. Paste the full Cookie header, or switch to Browser First and make sure platform.xiaomimimo.com is logged in.")
         case "xiaomimimo-token-plan":
             if let savedRaw, !savedRaw.lowercased().contains("api-platform_servicetoken") {
-                return .unauthorizedDetail("XiaomiMIMO Token Plan cookie looks incomplete. Paste the full Cookie header and make sure it includes api-platform_serviceToken and userId.")
+                return .unauthorizedDetail("XiaomiMIMO Token Plan cookie looks incomplete. Paste the full Cookie header, or just the api-platform_serviceToken value.")
             }
             if credentialMode != .manualPreferred {
                 return .unauthorizedDetail("No live XiaomiMIMO Token Plan login was found in the browser. Log in to platform.xiaomimimo.com first; if it is already logged in, grant Full Disk Access and approve Arc/Chrome Safe Storage keychain access, then test again.")
@@ -214,8 +214,12 @@ struct RelayRecoveryPolicy {
             }
         case .invalidResponse(let detail):
             if manifest.id == "xiaomimimo-token-plan",
+               detail.localizedCaseInsensitiveContains("no active subscription") {
+                return .invalidResponse("XiaomiMIMO Token Plan has no active subscription. Subscribe or renew a Token Plan at platform.xiaomimimo.com, then test the connection again.")
+            }
+            if manifest.id == "xiaomimimo-token-plan",
                detail.contains("xiaomimimo token plan") {
-                return .invalidResponse("XiaomiMIMO Token Plan connected, but the package detail or usage payload did not contain expected fields. Re-login in browser first; if it still fails, the site response likely changed.")
+                return .invalidResponse("XiaomiMIMO Token Plan connected, but the package detail or usage payload did not contain expected fields. Re-login in browser first; if it still fails, the site response likely changed. \(detail)")
             }
             if detail.contains("missing remaining path") {
                 switch manifest.id {
