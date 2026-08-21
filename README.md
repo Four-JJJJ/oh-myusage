@@ -9,6 +9,14 @@ oh-myusage 把官方订阅额度、模型使用窗口、第三方中转余额、
 
 [下载最新版本](https://github.com/Four-JJJJ/oh-myusage/releases/latest) · [安装说明](docs/DOWNLOAD.md) · [支持的服务](docs/PROVIDERS.md) · [扩展指南](docs/EXTENDING.md) · [发布清单](docs/RELEASE_CHECKLIST.md) · [English](docs/README.en.md)
 
+## V2.4.4 更新
+
+V2.4.4 为 Xiaomi MIMO 新增按量付费余额查询，在 Token Plan 不可用时自动切换，无需另行配置。
+
+| 方向 | 改进 |
+| --- | --- |
+| MIMO 按量付费 | Token Plan 无订阅、套餐为空或接口返回 404 时，自动查询 `/api/v1/userProfile` 与 `/api/v1/balance`，显示 CNY 余额、已用额度和总额度 |
+
 ## V2.4.3 更新
 
 V2.4.3 修复 Xiaomi MIMO 凭证读取与设置窗口显示问题，并优化 MIMO Token Plan 的鉴权诊断。

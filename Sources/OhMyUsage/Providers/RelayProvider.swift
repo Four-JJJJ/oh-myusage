@@ -39,7 +39,8 @@ final class RelayProvider: UsageProvider, @unchecked Sendable {
             descriptor: descriptor,
             credentialResolver: credentialResolver,
             recoveryPolicy: recoveryPolicy,
-            httpClient: httpClient
+            httpClient: httpClient,
+            registry: registry
         )
     }
 

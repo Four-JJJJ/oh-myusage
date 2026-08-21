@@ -20,7 +20,7 @@ struct AccountChannelResult {
     let accountLabel: String?
     let planType: String?
     let quotaWindows: [UsageQuotaWindow]
-    let note: String
+    var note: String
     var rawMeta: [String: String]
     var recoveryMeta: [String: String] = [:]
 }
@@ -340,9 +340,9 @@ enum RelayResponseInterpreter {
     /// XiaomiMIMO's platform returns a business envelope with `code: 0` on success.
     /// When the browser Cookie expires it typically still answers HTTP 200 with a
     /// non-zero `code` and no `data`, which the usage-shape check below would
-    /// otherwise misread as "missing usage item". Surface that as an auth error so
-    /// the executor can fall through to browser recovery instead of a confusing
-    /// "invalid response".
+    /// otherwise misread as "missing usage item". Surface auth failures as auth
+    /// errors, while keeping explicit no-subscription responses distinguishable
+    /// so the executor can try the pay-as-you-go balance endpoints.
     private static func xiaomimimoTokenPlanBusinessError(detailRoot: Any, usageRoot: Any) -> ProviderError? {
         for root in [detailRoot, usageRoot] {
             guard let dict = root as? [String: Any] else { continue }
@@ -353,11 +353,28 @@ enum RelayResponseInterpreter {
             let suffix = message?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
                 ? message!.trimmingCharacters(in: .whitespacesAndNewlines)
                 : "code \(code)"
+            if let message,
+               isXiaomimimoNoSubscriptionMessage(message) {
+                return .invalidResponse(
+                    "xiaomimimo token plan has no active subscription; \(message)"
+                )
+            }
             return .unauthorizedDetail(
                 "XiaomiMIMO Token Plan login missing or expired (\(suffix)). Log in again in platform.xiaomimimo.com and test the connection again."
             )
         }
         return nil
+    }
+
+    private static func isXiaomimimoNoSubscriptionMessage(_ message: String) -> Bool {
+        let normalized = message.lowercased()
+        return normalized.contains("not subscribed")
+            || normalized.contains("no subscription")
+            || normalized.contains("subscription not found")
+            || normalized.contains("no active plan")
+            || normalized.contains("未订阅")
+            || normalized.contains("无套餐")
+            || normalized.contains("套餐不存在")
     }
 
     private static func xiaomimimoBusinessCode(_ dict: [String: Any]) -> Int? {

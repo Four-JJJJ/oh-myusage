@@ -7,6 +7,7 @@ struct RelayBalanceChannelExecutor {
     let credentialResolver: RelayCredentialResolver
     let recoveryPolicy: RelayRecoveryPolicy
     let httpClient: RelayHTTPClient
+    let registry: RelayAdapterRegistry
 
     func fetch(
         baseURL: URL,
@@ -420,6 +421,20 @@ struct RelayBalanceChannelExecutor {
 
                 return extracted
             } catch let error as ProviderError {
+                if shouldFallbackToXiaomimimoPayAsYouGo(error) {
+                    do {
+                        return try await attemptXiaomimimoPayAsYouGoFetch(
+                            candidates: [candidate],
+                            baseURL: baseURL,
+                            relayConfig: relayConfig
+                        )
+                    } catch let fallbackError as ProviderError {
+                        // Keep probing the next credential if the pay-as-you-go
+                        // endpoints reject this one too. The subscription error
+                        // remains the most useful failure when all candidates fail.
+                        lastError = fallbackError
+                    }
+                }
                 switch error {
                 case .invalidResponse:
                     lastError = error
@@ -433,6 +448,71 @@ struct RelayBalanceChannelExecutor {
             }
         }
 
+        throw lastError
+    }
+
+    private func shouldFallbackToXiaomimimoPayAsYouGo(_ error: ProviderError) -> Bool {
+        guard case .invalidResponse(let detail) = error else { return false }
+        return detail.localizedCaseInsensitiveContains("no active subscription")
+            || detail.localizedCaseInsensitiveContains("token plan usage payload missing")
+            || detail.localizedCaseInsensitiveContains("http 404")
+    }
+
+    private func attemptXiaomimimoPayAsYouGoFetch(
+        candidates: [RelayCredentialCandidate],
+        baseURL: URL,
+        relayConfig: RelayProviderConfig
+    ) async throws -> AccountChannelResult {
+        let manifest = registry.manifest(id: "xiaomimimo")
+            ?? RelayAdapterRegistry.genericManifest
+        let requests = RelayRequestResolver.resolveBalanceRequests(
+            manifest: manifest,
+            relayConfig: relayConfig
+        )
+        var lastError: ProviderError = .invalidResponse("xiaomimimo pay-as-you-go balance unavailable")
+
+        for candidate in candidates {
+            for request in requests {
+                do {
+                    let root = try await httpClient.requestJSON(
+                        url: RelayRequestResolver.relayURL(baseURL: baseURL, rawPath: request.path),
+                        headers: candidate.headers.merging(request.staticHeaders, uniquingKeysWith: { _, rhs in rhs }),
+                        method: request.method,
+                        bodyJSON: request.bodyJSON
+                    )
+                    var extracted = try await RelayResponseInterpreter.extractAccountValues(
+                        root: root,
+                        baseURL: baseURL,
+                        request: request,
+                        manifest: manifest,
+                        headers: candidate.headers,
+                        candidate: candidate,
+                        requestJSON: httpClient.requestJSON
+                    )
+                    if let persisted = candidate.persistedCredential {
+                        _ = credentialResolver.persistTokenCandidate(persisted, auth: relayConfig.balanceAuth)
+                    }
+                    extracted.rawMeta["billingMode"] = "payAsYouGo"
+                    extracted.note = extracted.note.replacingOccurrences(
+                        of: "Account remaining",
+                        with: "Pay-as-you-go balance"
+                    )
+                    extracted.rawMeta["savedCredentialSource"] = candidate.source
+                    return extracted
+                } catch let error as ProviderError {
+                    switch error {
+                    case .invalidResponse:
+                        lastError = error
+                        continue
+                    case .unauthorized, .unauthorizedDetail:
+                        lastError = error
+                        break
+                    default:
+                        throw error
+                    }
+                }
+            }
+        }
         throw lastError
     }
 }
