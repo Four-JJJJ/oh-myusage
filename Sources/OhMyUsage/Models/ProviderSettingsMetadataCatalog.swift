@@ -43,8 +43,15 @@ enum ProviderSettingsMetadataCatalog {
             ]
         }
         if supportsOfficialBearerCredentialInput(for: provider) {
+            let autoImport: CredentialAutoImportCapability? =
+                (provider.type == .zai || provider.type == .zaiBalance) ? .claudeCodeConfig : nil
             return [
-                CredentialFieldSpec(kind: .bearerToken, storageTarget: .providerToken, requiresExplicitSave: true)
+                CredentialFieldSpec(
+                    kind: .bearerToken,
+                    storageTarget: .providerToken,
+                    requiresExplicitSave: true,
+                    autoImport: autoImport
+                )
             ]
         }
         if provider.supportsOfficialManualCookieInput {

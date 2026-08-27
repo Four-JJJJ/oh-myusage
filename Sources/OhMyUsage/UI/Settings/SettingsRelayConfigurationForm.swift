@@ -650,31 +650,61 @@ extension SettingsView {
             if showBalanceCredential {
                 let hasSavedBalanceToken = accountAuth.map { providerConfiguration.hasToken(auth: $0) } ?? false
                 let savedBalanceTokenLength = accountAuth.flatMap { providerConfiguration.savedTokenLength(auth: $0) }
+                let balanceTextBinding = Binding(
+                    get: { relayEditorDraft.systemTokenInputs[provider.id, default: ""] },
+                    set: { relayEditorDraft.systemTokenInputs[provider.id] = $0 }
+                )
+                let resolvedBalancePlaceholder = hasSavedBalanceToken
+                    ? maskedSecretDots(length: savedBalanceTokenLength)
+                    : balancePlaceholder
 
-                VStack(alignment: .leading, spacing: 8) {
-                    thirdPartyConfigRow(title: balanceFieldTitle) {
-                        HStack(spacing: 8) {
-                            relayProminentSecureField(hasSavedBalanceToken ? maskedSecretDots(length: savedBalanceTokenLength) : balancePlaceholder, text: Binding(
-                                get: { relayEditorDraft.systemTokenInputs[provider.id, default: ""] },
-                                set: { relayEditorDraft.systemTokenInputs[provider.id] = $0 }
-                            ))
-                            .frame(maxWidth: .infinity, minHeight: 24, maxHeight: 24)
-
-                            settingsCapsuleButton(tokenSaveButtonTitle, dismissInputFocus: true) {
-                                guard let accountAuth else { return }
-                                let token = relayEditorDraft.systemTokenInputs[provider.id, default: ""].trimmingCharacters(in: .whitespacesAndNewlines)
-                                guard !token.isEmpty else { return }
-                                _ = providerConfiguration.saveTokenAndRestart(token, auth: accountAuth)
-                                relayEditorDraft.systemTokenInputs[provider.id] = ""
-                            }
-                            .fixedSize(horizontal: true, vertical: false)
-                            .layoutPriority(2)
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                if selectedTemplate.id == "generic-newapi", let accountAuth {
+                    // Phase 1 试点：generic-newapi 余额凭证行走 spec 驱动的通用 CredentialFieldRow，
+                    // 保存仍走同一 facade 入口，行为与原内联实现逐位一致。
+                    let spec = CredentialFieldSpec(
+                        kind: .relayBalanceAuth,
+                        storageTarget: .auth(accountAuth),
+                        requiresExplicitSave: true,
+                        copy: CredentialFieldCopy(
+                            title: balanceFieldTitle,
+                            placeholder: resolvedBalancePlaceholder,
+                            hintLines: balanceHintLines
+                        ),
+                        autoImport: supportsBrowserImport ? .browser : nil
+                    )
+                    credentialFieldRow(
+                        spec: spec,
+                        text: balanceTextBinding,
+                        saveLabel: tokenSaveButtonTitle,
+                        fallbackTitle: balanceFieldTitle,
+                        fallbackPlaceholder: resolvedBalancePlaceholder,
+                        fallbackHintLines: balanceHintLines
+                    ) { value in
+                        _ = providerConfiguration.saveTokenAndRestart(value, auth: accountAuth)
                     }
+                } else {
+                    VStack(alignment: .leading, spacing: 8) {
+                        thirdPartyConfigRow(title: balanceFieldTitle) {
+                            HStack(spacing: 8) {
+                                relayProminentSecureField(resolvedBalancePlaceholder, text: balanceTextBinding)
+                                    .frame(maxWidth: .infinity, minHeight: 24, maxHeight: 24)
 
-                    ForEach(balanceHintLines, id: \.self) { line in
-                        thirdPartyHintText(line)
+                                settingsCapsuleButton(tokenSaveButtonTitle, dismissInputFocus: true) {
+                                    guard let accountAuth else { return }
+                                    let token = balanceTextBinding.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                                    guard !token.isEmpty else { return }
+                                    _ = providerConfiguration.saveTokenAndRestart(token, auth: accountAuth)
+                                    balanceTextBinding.wrappedValue = ""
+                                }
+                                .fixedSize(horizontal: true, vertical: false)
+                                .layoutPriority(2)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+
+                        ForEach(balanceHintLines, id: \.self) { line in
+                            thirdPartyHintText(line)
+                        }
                     }
                 }
             }

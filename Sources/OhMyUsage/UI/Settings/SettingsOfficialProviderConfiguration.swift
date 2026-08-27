@@ -319,6 +319,11 @@ extension SettingsView {
             return hasSavedManualCookie
                 ? maskedSecretDots(length: providerConfigurationFacade.savedOfficialManualCookieLength(for: provider))
                 : viewModel.localizedText("auth=... (可选，自动导入可留空)", "auth=... (Optional when auto import is enabled)")
+        case .relayBalanceAuth, .relayQuotaAuth:
+            let hasSavedToken = providerConfigurationFacade.hasToken(for: provider)
+            return hasSavedToken
+                ? maskedSecretDots(length: providerConfigurationFacade.savedTokenLength(for: provider))
+                : viewModel.localizedText("粘贴凭证", "Paste credential")
         }
     }
 
@@ -328,7 +333,7 @@ extension SettingsView {
             return "Workspace"
         case .opencodeManualCookie:
             return "Cookie"
-        case .bearerToken, .manualCookie, .traeAuthorization:
+        case .bearerToken, .manualCookie, .traeAuthorization, .relayBalanceAuth, .relayQuotaAuth:
             return viewModel.localizedText("凭证", "Credential")
         }
     }
@@ -373,7 +378,7 @@ extension SettingsView {
                 "获取说明：登录 trae.ai 后打开开发者工具 Network，刷新页面，复制 /trae/api/v1/pay/ide_user_ent_usage 请求头 Authorization（Cloud-IDE-JWT ...）粘贴到上方。",
                 "How to get token: sign in to trae.ai, open DevTools Network, refresh, then copy Authorization from /trae/api/v1/pay/ide_user_ent_usage (Cloud-IDE-JWT ...) and paste above."
             )
-        case .opencodeWorkspaceID, .manualCookie, .opencodeManualCookie:
+        case .opencodeWorkspaceID, .manualCookie, .opencodeManualCookie, .relayBalanceAuth, .relayQuotaAuth:
             return nil
         }
     }
@@ -443,7 +448,7 @@ extension SettingsView {
                     .lineLimit(1)
                 }
             }
-        case .bearerToken, .manualCookie, .opencodeManualCookie, .traeAuthorization:
+        case .bearerToken, .manualCookie, .opencodeManualCookie, .traeAuthorization, .relayBalanceAuth, .relayQuotaAuth:
             settingsConfigSecureField(
                 officialConfigCredentialPlaceholder(for: field, provider: provider),
                 text: inputBinding
@@ -459,7 +464,7 @@ extension SettingsView {
         switch field.kind {
         case .opencodeWorkspaceID:
             return officialEditorDraft.officialWorkspaceInputs[providerID, default: ""]
-        case .bearerToken, .manualCookie, .opencodeManualCookie, .traeAuthorization:
+        case .bearerToken, .manualCookie, .opencodeManualCookie, .traeAuthorization, .relayBalanceAuth, .relayQuotaAuth:
             return officialEditorDraft.officialCookieInputs[providerID, default: ""]
         }
     }
@@ -472,7 +477,7 @@ extension SettingsView {
         switch field.kind {
         case .opencodeWorkspaceID:
             officialEditorDraft.officialWorkspaceInputs[providerID] = value
-        case .bearerToken, .manualCookie, .opencodeManualCookie, .traeAuthorization:
+        case .bearerToken, .manualCookie, .opencodeManualCookie, .traeAuthorization, .relayBalanceAuth, .relayQuotaAuth:
             officialEditorDraft.officialCookieInputs[providerID] = value
         }
     }
@@ -493,6 +498,8 @@ extension SettingsView {
                 _ = providerConfigurationFacade.saveToken(raw, for: provider)
             case .officialManualCookie:
                 _ = providerConfigurationFacade.saveOfficialManualCookie(raw, providerID: provider.id)
+            case .auth(let auth):
+                _ = providerConfigurationFacade.saveToken(raw, auth: auth)
             }
         }
         officialConfigSetCredentialInput("", for: field, providerID: provider.id)

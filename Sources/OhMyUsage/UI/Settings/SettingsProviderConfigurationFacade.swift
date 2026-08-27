@@ -20,6 +20,7 @@ struct SettingsProviderConfigurationFacade {
     var hasOfficialManualCookieHandler: (ProviderDescriptor) -> Bool = { _ in false }
     var savedOfficialManualCookieLengthHandler: (ProviderDescriptor) -> Int? = { _ in nil }
     var saveTokenForProviderHandler: (String, ProviderDescriptor) -> Bool = { _, _ in false }
+    var saveTokenForAuthHandler: (String, AuthConfig) -> Bool = { _, _ in false }
     var saveTokenAndRestartForProviderHandler: (String, ProviderDescriptor) -> Bool = { _, _ in false }
     var saveTokenAndRestartForAuthHandler: (String, AuthConfig) -> Bool = { _, _ in false }
     var saveOfficialManualCookieHandler: (String, String) -> Bool = { _, _ in false }
@@ -86,6 +87,7 @@ struct SettingsProviderConfigurationFacade {
         hasOfficialManualCookie: @escaping (ProviderDescriptor) -> Bool = { _ in false },
         savedOfficialManualCookieLength: @escaping (ProviderDescriptor) -> Int? = { _ in nil },
         saveTokenForProvider: @escaping (String, ProviderDescriptor) -> Bool = { _, _ in false },
+        saveTokenForAuth: @escaping (String, AuthConfig) -> Bool = { _, _ in false },
         saveTokenAndRestartForProvider: @escaping (String, ProviderDescriptor) -> Bool = { _, _ in false },
         saveTokenAndRestartForAuth: @escaping (String, AuthConfig) -> Bool = { _, _ in false },
         saveOfficialManualCookie: @escaping (String, String) -> Bool = { _, _ in false },
@@ -147,6 +149,7 @@ struct SettingsProviderConfigurationFacade {
         hasOfficialManualCookieHandler = hasOfficialManualCookie
         savedOfficialManualCookieLengthHandler = savedOfficialManualCookieLength
         saveTokenForProviderHandler = saveTokenForProvider
+        saveTokenForAuthHandler = saveTokenForAuth
         saveTokenAndRestartForProviderHandler = saveTokenAndRestartForProvider
         saveTokenAndRestartForAuthHandler = saveTokenAndRestartForAuth
         saveOfficialManualCookieHandler = saveOfficialManualCookie
@@ -178,6 +181,7 @@ struct SettingsProviderConfigurationFacade {
             hasOfficialManualCookie: { viewModel.hasOfficialManualCookie(for: $0) },
             savedOfficialManualCookieLength: { viewModel.savedOfficialManualCookieLength(for: $0) },
             saveTokenForProvider: { viewModel.saveToken($0, for: $1) },
+            saveTokenForAuth: { viewModel.saveToken($0, auth: $1) },
             saveTokenAndRestartForProvider: { viewModel.saveTokenAndRestart($0, for: $1) },
             saveTokenAndRestartForAuth: { viewModel.saveTokenAndRestart($0, auth: $1) },
             saveOfficialManualCookie: { viewModel.saveOfficialManualCookie($0, providerID: $1) },
@@ -267,6 +271,11 @@ struct SettingsProviderConfigurationFacade {
     @discardableResult
     func saveToken(_ token: String, for provider: ProviderDescriptor) -> Bool {
         saveTokenForProviderHandler(token, provider)
+    }
+
+    @discardableResult
+    func saveToken(_ token: String, auth: AuthConfig) -> Bool {
+        saveTokenForAuthHandler(token, auth)
     }
 
     @discardableResult

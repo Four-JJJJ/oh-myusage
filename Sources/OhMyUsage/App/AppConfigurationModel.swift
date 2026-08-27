@@ -144,11 +144,19 @@ final class AppConfigurationModel {
 
     // MARK: - Credential mutation
 
-    func saveToken(_ token: String, for descriptor: ProviderDescriptor) -> Bool {
+    /// 单一保存入口：field 决定 keychain 目标与规范化，restartPolicy 决定成功后
+    /// 是否重启轮询（从旧 wrapper 的实际行为逐位抄来）。
+    @discardableResult
+    func saveCredential(
+        _ value: String,
+        field: AppCredentialField,
+        restartPolicy: AppCredentialRestartPolicy = .none
+    ) -> Bool {
         let host = requireHost()
-        let outcome = providerCredentialCoordinator.saveToken(
-            token,
-            descriptor: descriptor,
+        let outcome = providerCredentialCoordinator.saveCredential(
+            field: field,
+            value: value,
+            providers: host.config.providers,
             normalize: { token, kind in
                 self.normalizedCredential(token, kind: kind)
             },
@@ -157,67 +165,39 @@ final class AppConfigurationModel {
             }
         )
         applyCredentialMutationOutcome(outcome)
+        if outcome.didPersistCredential, restartPolicy == .restartPolling {
+            host.restartPolling()
+        }
         return outcome.didPersistCredential
+    }
+
+    // MARK: Legacy credential wrappers（转发到 saveCredential；Phase 3 随调用点迁移后删除）
+
+    func saveToken(_ token: String, for descriptor: ProviderDescriptor) -> Bool {
+        saveCredential(token, field: .providerToken(descriptor), restartPolicy: .none)
     }
 
     @discardableResult
     func saveTokenAndRestart(_ token: String, for descriptor: ProviderDescriptor) -> Bool {
-        let host = requireHost()
-        let ok = saveToken(token, for: descriptor)
-        if ok {
-            host.restartPolling()
-        }
-        return ok
+        saveCredential(token, field: .providerToken(descriptor), restartPolicy: .restartPolling)
     }
 
     func saveToken(_ token: String, auth: AuthConfig) -> Bool {
-        let host = requireHost()
-        let outcome = providerCredentialCoordinator.saveToken(
-            token,
-            auth: auth,
-            normalize: { token, kind in
-                self.normalizedCredential(token, kind: kind)
-            },
-            saveCredential: { value, service, account in
-                host.credentialAccessService.saveCredential(value, service: service, account: account)
-            }
-        )
-        applyCredentialMutationOutcome(outcome)
-        return outcome.didPersistCredential
+        saveCredential(token, field: .authToken(auth), restartPolicy: .none)
     }
 
     @discardableResult
     func saveTokenAndRestart(_ token: String, auth: AuthConfig) -> Bool {
-        let host = requireHost()
-        let ok = saveToken(token, auth: auth)
-        if ok {
-            host.restartPolling()
-        }
-        return ok
+        saveCredential(token, field: .authToken(auth), restartPolicy: .restartPolling)
     }
 
     func saveOfficialManualCookie(_ value: String, providerID: String) -> Bool {
-        let host = requireHost()
-        let outcome = providerCredentialCoordinator.saveOfficialManualCookie(
-            value,
-            providerID: providerID,
-            providers: host.config.providers,
-            saveCredential: { value, service, account in
-                host.credentialAccessService.saveCredential(value, service: service, account: account)
-            }
-        )
-        applyCredentialMutationOutcome(outcome)
-        return outcome.didPersistCredential
+        saveCredential(value, field: .officialManualCookie(providerID: providerID), restartPolicy: .none)
     }
 
     @discardableResult
     func saveOfficialManualCookieAndRestart(_ value: String, providerID: String) -> Bool {
-        let host = requireHost()
-        let ok = saveOfficialManualCookie(value, providerID: providerID)
-        if ok {
-            host.restartPolling()
-        }
-        return ok
+        saveCredential(value, field: .officialManualCookie(providerID: providerID), restartPolicy: .restartPolling)
     }
 
     func invalidateCredentialLookupCache() {
