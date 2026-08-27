@@ -300,6 +300,17 @@ extension SettingsView {
                         kind: .custom
                     )
                 ]
+            case .zaiBalance, .kimiBalance:
+                windows = [
+                    UsageQuotaWindow(
+                        id: "\(provider.id)-placeholder-balance",
+                        title: viewModel.localizedText("余额", "Balance"),
+                        remainingPercent: 0,
+                        usedPercent: 100,
+                        resetAt: nil,
+                        kind: .credits
+                    )
+                ]
             case .openrouterCredits:
                 windows = [
                     UsageQuotaWindow(
@@ -736,6 +747,18 @@ extension SettingsView {
             return viewModel.localizedText(
                 "OpenRouter Credits 需要管理密钥（Management Key），用于读取 /credits 的总额度数据。",
                 "OpenRouter Credits requires a Management Key to read total credit usage from /credits."
+            )
+        }
+        if provider.type == .zaiBalance {
+            return viewModel.localizedText(
+                "Z.ai (API) 监控智谱开放平台按量付费账户：自动识别 ZAI_API_KEY、GLM_API_KEY 环境变量或 Claude 配置中的 bigmodel.cn / api.z.ai Key，也可直接粘贴开放平台 API Key。默认请求 open.bigmodel.cn，国际站可改 Base URL 为 https://api.z.ai。",
+                "Monitors the pay-as-you-go balance of the Zhipu open platform. Auto-detects ZAI_API_KEY / GLM_API_KEY env vars or a bigmodel.cn / api.z.ai key from the Claude config, or paste an API key directly. Defaults to open.bigmodel.cn; switch Base URL to https://api.z.ai for the international site."
+            )
+        }
+        if provider.type == .kimiBalance {
+            return viewModel.localizedText(
+                "Kimi (API) 监控 Moonshot 开放平台按量付费余额：自动识别 MOONSHOT_API_KEY 环境变量，也可直接粘贴开放平台 API Key。",
+                "Monitors the pay-as-you-go balance of the Moonshot open platform. Auto-detects the MOONSHOT_API_KEY env var, or paste an API key directly."
             )
         }
         if provider.type == .opencodeGo {

@@ -9,13 +9,15 @@ enum ProviderDefaultCatalog {
             OfficialProviderDefaultCatalog.copilot(),
             OfficialProviderDefaultCatalog.microsoftCopilot(),
             OfficialProviderDefaultCatalog.zai(),
+            OfficialProviderDefaultCatalog.zaiBalance(),
             OfficialProviderDefaultCatalog.amp(),
             OfficialProviderDefaultCatalog.cursor(),
             OfficialProviderDefaultCatalog.jetBrains(),
             OfficialProviderDefaultCatalog.kiro(),
             OfficialProviderDefaultCatalog.windsurf(),
             OfficialProviderDefaultCatalog.grok(),
-            OfficialProviderDefaultCatalog.kimi()
+            OfficialProviderDefaultCatalog.kimi(),
+            OfficialProviderDefaultCatalog.kimiBalance()
         ]
             + OfficialRelayProviderDefaultCatalog.allDefaultProviders
             + [

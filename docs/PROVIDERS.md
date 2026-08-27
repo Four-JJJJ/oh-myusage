@@ -16,6 +16,7 @@ For extension and integration paths after the refactor, see [EXTENDING.md](./EXT
 | Windsurf | official API | Daily and weekly windows |
 | Grok | local Grok CLI auth (`~/.grok/auth.json`) | Weekly shared pool, plan name, and pay-as-you-go cap; local history from `~/.grok/sessions` |
 | Kimi | official API | Session and overall usage; local history from Kimi CLI / Kimi Code sessions |
+| Kimi (API) | Moonshot open platform API key | Pay-as-you-go balance (CNY); auto-detects `MOONSHOT_API_KEY` |
 | Amp | official API | Free and credit views |
 | Z.ai | official API | Session, weekly, and web usage |
 | JetBrains AI | local data | Local XML usage parsing |

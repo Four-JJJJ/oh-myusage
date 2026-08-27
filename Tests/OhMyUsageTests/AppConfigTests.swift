@@ -128,8 +128,8 @@ final class AppConfigTests: XCTestCase {
     func testDefaultProvidersIncludeNewOfficialSourcesWithStableOrder() {
         let ids = AppConfig.default.providers.map(\.id)
         let expectedSuffix =
-            ["kimi-official"]
-            + OfficialRelayMetadataCatalog.defaultProviderOrder
+            ["kimi-official", "kimi-balance-official"]
+            + OfficialRelayMetadataCatalog.defaultListedProviderOrder
             + [
                 "trae-official",
                 "openrouter-credits-official",
@@ -178,12 +178,8 @@ final class AppConfigTests: XCTestCase {
         XCTAssertEqual(opencodeGo?.officialConfig?.webMode, .autoImport)
         XCTAssertEqual(opencodeGo?.officialConfig?.manualCookieAccount, "official/opencode-go/auth-cookie")
 
-        let moonshot = AppConfig.default.providers.first(where: { $0.id == "moonshot-official" })
-        XCTAssertEqual(moonshot?.family, .official)
-        XCTAssertEqual(moonshot?.type, .relay)
-        XCTAssertEqual(moonshot?.relayConfig?.adapterID, "moonshot")
-        XCTAssertEqual(moonshot?.baseURL, "https://platform.moonshot.cn")
-        XCTAssertNil(moonshot?.officialConfig)
+        // Moonshot 中转预设已由官方卡「Kimi (API)」替代，不再出现在默认列表。
+        XCTAssertNil(AppConfig.default.providers.first(where: { $0.id == "moonshot-official" }))
 
         let minimax = AppConfig.default.providers.first(where: { $0.id == "minimax-official" })
         XCTAssertEqual(minimax?.family, .official)

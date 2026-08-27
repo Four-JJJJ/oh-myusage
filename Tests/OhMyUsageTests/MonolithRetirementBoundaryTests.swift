@@ -365,8 +365,8 @@ final class MonolithRetirementBoundaryTests: XCTestCase {
             "OfficialRelayProviderDefaultCatalog should expose allDefaultProviders driven by metadata order"
         )
         XCTAssertTrue(
-            officialRelayCatalog.contains("OfficialRelayMetadataCatalog.defaultProviderOrder"),
-            "Official relay default list should be driven by OfficialRelayMetadataCatalog.defaultProviderOrder"
+            officialRelayCatalog.contains("OfficialRelayMetadataCatalog.defaultListedProviderOrder"),
+            "Official relay default list should be driven by OfficialRelayMetadataCatalog.defaultListedProviderOrder"
         )
         XCTAssertTrue(officialRelayCatalog.contains("static func moonshot()"))
         XCTAssertTrue(officialRelayCatalog.contains("static func miniMax()"))
@@ -380,12 +380,12 @@ final class MonolithRetirementBoundaryTests: XCTestCase {
 
     func testDefaultProviderCatalogPreservesDefaultOrderAndCredentialAccounts() throws {
         let providers = AppConfig.default.providers
-        let officialRelayOrder = OfficialRelayMetadataCatalog.defaultProviderOrder
+        let officialRelayOrder = OfficialRelayMetadataCatalog.defaultListedProviderOrder
 
         XCTAssertEqual(
             OfficialRelayProviderDefaultCatalog.allDefaultProviders.map(\.id),
             officialRelayOrder,
-            "Official relay defaults should follow OfficialRelayMetadataCatalog.defaultProviderOrder"
+            "Official relay defaults should follow OfficialRelayMetadataCatalog.defaultListedProviderOrder"
         )
 
         XCTAssertEqual(
@@ -397,13 +397,15 @@ final class MonolithRetirementBoundaryTests: XCTestCase {
                 "copilot-official",
                 "microsoft-copilot-official",
                 "zai-official",
+                "zai-balance-official",
                 "amp-official",
                 "cursor-official",
                 "jetbrains-official",
                 "kiro-official",
                 "windsurf-official",
                 "grok-official",
-                "kimi-official"
+                "kimi-official",
+                "kimi-balance-official"
             ]
                 + officialRelayOrder
                 + [
@@ -419,11 +421,13 @@ final class MonolithRetirementBoundaryTests: XCTestCase {
         let traeIndex = try XCTUnwrap(providers.firstIndex(where: { $0.id == "trae-official" }))
         XCTAssertEqual(
             providers[(kimiIndex + 1)..<traeIndex].map(\.id),
-            officialRelayOrder,
-            "Official relays remain inserted between kimi and trae in metadata order"
+            ["kimi-balance-official"] + officialRelayOrder,
+            "Kimi (API) follows Kimi, then official relays in metadata order before trae"
         )
 
         let providersByID = Dictionary(uniqueKeysWithValues: providers.map { ($0.id, $0) })
+        XCTAssertEqual(providersByID["zai-balance-official"]?.auth.keychainAccount, ZaiProvider.balanceKeychainAccount)
+        XCTAssertEqual(providersByID["kimi-balance-official"]?.auth.keychainAccount, MoonshotBalanceProvider.balanceKeychainAccount)
         XCTAssertEqual(providersByID["trae-official"]?.auth.keychainAccount, "official/trae/cloud-ide-jwt")
         XCTAssertEqual(providersByID["openrouter-credits-official"]?.auth.keychainAccount, "official/openrouter/credits-api-key")
         XCTAssertEqual(providersByID["openrouter-api-official"]?.auth.keychainAccount, "official/openrouter/api-key")

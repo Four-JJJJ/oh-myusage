@@ -62,8 +62,19 @@ struct ProviderFactoryRegistry {
             .microsoftCopilot: { descriptor, _ in
                 MicrosoftCopilotProvider(descriptor: descriptor, shell: DefaultShellCommandRunner())
             },
-            .zai: { descriptor, _ in
-                ZaiProvider(descriptor: descriptor, localJSONReader: DefaultLocalJSONFileReader())
+            .zai: { descriptor, dependencies in
+                ZaiProvider(
+                    descriptor: descriptor,
+                    keychain: dependencies.keychain,
+                    localJSONReader: DefaultLocalJSONFileReader()
+                )
+            },
+            .zaiBalance: { descriptor, dependencies in
+                ZaiProvider(
+                    descriptor: descriptor,
+                    keychain: dependencies.keychain,
+                    localJSONReader: DefaultLocalJSONFileReader()
+                )
             },
             .amp: { descriptor, _ in
                 AmpProvider(descriptor: descriptor, localJSONReader: DefaultLocalJSONFileReader())
@@ -122,6 +133,9 @@ struct ProviderFactoryRegistry {
                     keychain: dependencies.keychain,
                     browserCookieService: dependencies.kimiCookieService
                 )
+            },
+            .kimiBalance: { descriptor, dependencies in
+                MoonshotBalanceProvider(descriptor: descriptor, keychain: dependencies.keychain)
             },
             .grok: { descriptor, _ in
                 GrokProvider(descriptor: descriptor)

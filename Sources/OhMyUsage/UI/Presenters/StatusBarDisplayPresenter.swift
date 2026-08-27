@@ -49,6 +49,8 @@ enum StatusBarDisplayPresenter {
             return "Microsoft Copilot"
         case .zai:
             return "Z.ai"
+        case .zaiBalance:
+            return "Z.ai (API)"
         case .amp:
             return "Amp"
         case .cursor:
@@ -60,7 +62,9 @@ enum StatusBarDisplayPresenter {
         case .windsurf:
             return "Windsurf"
         case .kimi:
-            return provider.family == .official ? "Kimi Coding" : "Kimi"
+            return "Kimi"
+        case .kimiBalance:
+            return "Kimi (API)"
         case .trae:
             return "Trae SOLO"
         case .openrouterCredits:

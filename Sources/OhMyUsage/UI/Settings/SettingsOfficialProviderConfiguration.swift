@@ -125,15 +125,21 @@ extension SettingsView {
             }
 
             ForEach(settingsSpec.credentialFields) { credentialField in
-                settingsConfigRow(title: officialConfigCredentialTitle(for: credentialField), nested: true) {
-                    officialConfigCredentialField(
-                        credentialField,
-                        provider: provider,
-                        sourceMode: sourceBinding.wrappedValue,
-                        webMode: webBinding.wrappedValue,
-                        quotaDisplayMode: quotaDisplayBinding.wrappedValue,
-                        traeValueDisplayMode: settingsSpec.showsTraeValueDisplayMode ? traeValueDisplayBinding.wrappedValue : nil
-                    )
+                VStack(alignment: .leading, spacing: 5) {
+                    settingsConfigRow(title: officialConfigCredentialTitle(for: credentialField), nested: true) {
+                        officialConfigCredentialField(
+                            credentialField,
+                            provider: provider,
+                            sourceMode: sourceBinding.wrappedValue,
+                            webMode: webBinding.wrappedValue,
+                            quotaDisplayMode: quotaDisplayBinding.wrappedValue,
+                            traeValueDisplayMode: settingsSpec.showsTraeValueDisplayMode ? traeValueDisplayBinding.wrappedValue : nil
+                        )
+                    }
+
+                    if let credentialHint = officialCredentialHint(for: credentialField, provider: provider) {
+                        thirdPartyHintText(credentialHint)
+                    }
                 }
             }
 
@@ -439,10 +445,10 @@ extension SettingsView {
                             .lineLimit(1)
                             .frame(width: officialConfigLabelWidth, alignment: .leading)
 
-                        relayProminentSecureField(
+                        officialBearerSecureField(
                             hasSavedToken
                                 ? maskedSecretDots(length: savedTokenLength)
-                                : viewModel.localizedText("粘贴 API Key", "Paste API Key"),
+                                : viewModel.localizedText("粘贴 API Key（⌘V）", "Paste API Key (⌘V)"),
                             text: Binding(
                                 get: { officialEditorDraft.officialCookieInputs[provider.id, default: ""] },
                                 set: { officialEditorDraft.officialCookieInputs[provider.id] = $0 }
@@ -729,6 +735,51 @@ extension SettingsView {
         }
     }
 
+    func officialCredentialHint(
+        for field: CredentialFieldSpec,
+        provider: ProviderDescriptor
+    ) -> String? {
+        switch field.kind {
+        case .bearerToken:
+            switch provider.type {
+            case .zai:
+                return viewModel.localizedText(
+                    "获取说明：已用 Claude Code 接入 GLM Coding Plan 时，自动模式会直接读取本地配置，也可点右侧「从 Claude Code 导入」一键填入；否则在智谱开放平台（z.ai 或 open.bigmodel.cn）「API Keys」页面创建密钥后粘贴到上方。与「Z.ai (API)」共用同一把密钥，填一次即可。",
+                    "How to get key: if you already use GLM Coding Plan via Claude Code, Auto mode reads the local config, or click \"Import from Claude Code\" to fill it in one click; otherwise create a key on the Zhipu platform (z.ai or open.bigmodel.cn) API Keys page and paste it above. The same key is shared with the Z.ai (API) card."
+                )
+            case .zaiBalance:
+                return viewModel.localizedText(
+                    "获取说明：点右侧「从 Claude Code 导入」可一键读取本机接入配置里的密钥；或登录智谱开放平台（open.bigmodel.cn 或国际站 z.ai），在「API Keys」页面创建密钥后粘贴到上方。与 Coding Plan 共用同一把密钥，填一次即可。",
+                    "How to get key: click \"Import from Claude Code\" to read the key from your local setup in one click; or sign in to the Zhipu platform (open.bigmodel.cn or z.ai), create a key on the API Keys page and paste it above. The same key is shared with the Coding Plan card."
+                )
+            case .kimi:
+                return viewModel.localizedText(
+                    "获取说明：登录 kimi.com 的 Kimi for Coding 控制台（kimi.com/code），创建 API Key（即接入 Claude Code 时用的那把）后粘贴到上方，长期有效；本机已登录 Kimi CLI 时自动模式会直接读取登录态，无需填写。与「Kimi (API)」的 Moonshot 开放平台密钥不通用。",
+                    "How to get key: sign in to the Kimi for Coding console at kimi.com/code, create an API key (the same one used for Claude Code) and paste it above; it stays valid long-term. If Kimi CLI is signed in on this machine, Auto mode reads it directly. Not interchangeable with the Moonshot platform key used by Kimi (API)."
+                )
+            case .kimiBalance:
+                return viewModel.localizedText(
+                    "获取说明：登录 Moonshot 开放平台（platform.moonshot.cn），在「API Key 管理」页面创建密钥，复制后粘贴到上方。",
+                    "How to get key: sign in to the Moonshot platform (platform.moonshot.cn), create a key on the API Keys page, then paste it above."
+                )
+            case .openrouterCredits, .openrouterAPI:
+                return viewModel.localizedText(
+                    "获取说明：登录 OpenRouter（openrouter.ai），在 Settings → Keys 页面创建密钥，复制后粘贴到上方。",
+                    "How to get key: sign in to OpenRouter (openrouter.ai), create a key under Settings → Keys, then paste it above."
+                )
+            default:
+                return nil
+            }
+        case .traeAuthorization:
+            return viewModel.localizedText(
+                "获取说明：登录 trae.ai 后打开开发者工具 Network，刷新页面，复制 /trae/api/v1/pay/ide_user_ent_usage 请求头 Authorization（Cloud-IDE-JWT ...）粘贴到上方。",
+                "How to get token: sign in to trae.ai, open DevTools Network, refresh, then copy Authorization from /trae/api/v1/pay/ide_user_ent_usage (Cloud-IDE-JWT ...) and paste above."
+            )
+        case .opencodeWorkspaceID, .manualCookie, .opencodeManualCookie:
+            return nil
+        }
+    }
+
     @ViewBuilder
     func officialConfigCredentialField(
         _ field: CredentialFieldSpec,
@@ -760,6 +811,40 @@ extension SettingsView {
                 text: inputBinding
             )
             .onSubmit(submit)
+        case .bearerToken where provider.type == .zai || provider.type == .zaiBalance:
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 8) {
+                    settingsConfigSecureField(
+                        officialConfigCredentialPlaceholder(for: field, provider: provider),
+                        text: inputBinding,
+                        width: max(280, thirdPartyConfigControlWidth - 120)
+                    )
+                    .onSubmit(submit)
+
+                    settingsSmallOutlineButton(
+                        viewModel.localizedText("从 Claude Code 导入", "Import from Claude Code"),
+                        width: 112
+                    ) {
+                        importZaiCredentialFromClaudeCode(
+                            provider: provider,
+                            sourceMode: sourceMode,
+                            webMode: webMode,
+                            quotaDisplayMode: quotaDisplayMode
+                        )
+                    }
+                }
+
+                if let importSucceeded = officialEditorDraft.officialCredentialImportResults[provider.id] {
+                    Text(
+                        importSucceeded
+                            ? viewModel.localizedText("已从本机 Claude Code 配置导入密钥。", "Imported the key from the local Claude Code config.")
+                            : viewModel.localizedText("未在 Claude Code 配置或环境变量中找到智谱密钥。", "No Zhipu key found in Claude Code config or environment variables.")
+                    )
+                    .font(.system(size: 10, weight: .regular))
+                    .foregroundStyle(importSucceeded ? Color(hex: 0x69BD64) : Color(hex: 0xEB654F))
+                    .lineLimit(1)
+                }
+            }
         case .bearerToken, .manualCookie, .opencodeManualCookie, .traeAuthorization:
             settingsConfigSecureField(
                 officialConfigCredentialPlaceholder(for: field, provider: provider),
@@ -819,6 +904,29 @@ extension SettingsView {
             webMode: webMode,
             quotaDisplayMode: quotaDisplayMode,
             traeValueDisplayMode: traeValueDisplayMode
+        )
+    }
+
+    /// Z.ai / 智谱余额：一键导入本机 Claude Code 接入配置（或环境变量）里的智谱密钥，
+    /// 免去只订阅 Coding Plan 的用户再跑开放平台控制台手动创建。
+    func importZaiCredentialFromClaudeCode(
+        provider: ProviderDescriptor,
+        sourceMode: OfficialSourceMode,
+        webMode: OfficialWebMode,
+        quotaDisplayMode: OfficialQuotaDisplayMode
+    ) {
+        guard let key = ZaiProvider.discoverLocalAPIKey() else {
+            officialEditorDraft.officialCredentialImportResults[provider.id] = false
+            return
+        }
+        _ = providerConfigurationFacade.saveToken(key, for: provider)
+        officialEditorDraft.officialCredentialImportResults[provider.id] = true
+        persistOfficialConfigSettings(
+            provider: provider,
+            sourceMode: sourceMode,
+            webMode: webMode,
+            quotaDisplayMode: quotaDisplayMode,
+            traeValueDisplayMode: nil
         )
     }
 

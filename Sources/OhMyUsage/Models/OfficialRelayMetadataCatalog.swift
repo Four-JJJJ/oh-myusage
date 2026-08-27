@@ -8,11 +8,18 @@ struct OfficialRelayMetadata {
     var baseURL: String
     var iconName: String
     var keychainAccount: String
+    /// 是否出现在默认添加列表。false 时保留元数据（图标、站点识别、旧配置兼容），
+    /// 只是不再作为可添加的官方预设出现。
+    var isDefaultListed: Bool = true
 }
 
 enum OfficialRelayMetadataCatalog {
     static var defaultProviderOrder: [String] {
         metadata.map(\.providerID)
+    }
+
+    static var defaultListedProviderOrder: [String] {
+        metadata.filter(\.isDefaultListed).map(\.providerID)
     }
 
     static func metadata(forAdapterID adapterID: String) -> OfficialRelayMetadata? {
@@ -34,6 +41,8 @@ enum OfficialRelayMetadataCatalog {
     }
 
     private static let metadata: [OfficialRelayMetadata] = [
+        // Moonshot 按量余额已由官方卡「Kimi (API)」覆盖，不再默认提供中转预设；
+        // 元数据保留用于图标、同站点识别与已添加用户的兼容。
         OfficialRelayMetadata(
             providerID: "moonshot-official",
             adapterAliases: ["moonshot"],
@@ -41,7 +50,8 @@ enum OfficialRelayMetadataCatalog {
             displayName: "Moonshot",
             baseURL: "https://platform.moonshot.cn",
             iconName: "menu_kimi_icon",
-            keychainAccount: "platform.moonshot.cn/auth_token"
+            keychainAccount: "platform.moonshot.cn/auth_token",
+            isDefaultListed: false
         ),
         OfficialRelayMetadata(
             providerID: "minimax-official",

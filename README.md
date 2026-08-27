@@ -9,6 +9,18 @@ oh-myusage 把官方订阅额度、模型使用窗口、第三方中转余额、
 
 [下载最新版本](https://github.com/Four-JJJJ/oh-myusage/releases/latest) · [安装说明](docs/DOWNLOAD.md) · [支持的服务](docs/PROVIDERS.md) · [扩展指南](docs/EXTENDING.md) · [发布清单](docs/RELEASE_CHECKLIST.md) · [English](docs/README.en.md)
 
+## V2.4.5 更新
+
+V2.4.5 新增 Kimi (API) 余额卡，统一 Z.ai / Kimi 卡片命名，并为官方服务补上凭证获取指引。
+
+| 方向 | 改进 |
+| --- | --- |
+| Kimi (API) | 新增 Moonshot 开放平台按量付费余额卡：自动识别 `MOONSHOT_API_KEY` 环境变量，也可在设置页粘贴开放平台 API Key，显示 CNY 余额 |
+| 卡片命名 | 「智谱 API 余额」更名为「Z.ai (API)」，「Kimi Coding」更名为「Kimi」，订阅卡与 API 余额卡成对展示 |
+| 凭证获取 | Z.ai、Kimi、OpenRouter、Trae 等官方服务的凭证框下方新增「获取说明」，直接写明去哪里拿 key |
+| 一键导入 | Z.ai / Z.ai (API) 支持「从 Claude Code 导入」，一键读取本机 Claude Code 接入配置里的智谱密钥，无需跑开放平台控制台 |
+| Moonshot 预设 | 默认添加列表移除 Moonshot 中转预设（由 Kimi (API) 官方卡替代）；已添加的站点与手动新建不受影响 |
+
 ## V2.4.4 更新
 
 V2.4.4 为 Xiaomi MIMO 新增按量付费余额查询，在 Token Plan 不可用时自动切换，无需另行配置。

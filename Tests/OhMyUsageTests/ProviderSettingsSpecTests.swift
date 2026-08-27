@@ -34,6 +34,14 @@ final class ProviderSettingsSpecTests: XCTestCase {
         XCTAssertEqual(spec.credentialFields.first?.storageTarget, .providerToken)
     }
 
+    func testZaiSpecExposesAPIKeyCredentialInput() {
+        let spec = ProviderSettingsSpec.resolve(for: ProviderDescriptor.defaultOfficialZai())
+
+        XCTAssertEqual(spec.credentialFields.map(\.kind), [.bearerToken])
+        XCTAssertEqual(spec.credentialFields.first?.storageTarget, .providerToken)
+        XCTAssertTrue(spec.supportedSourceModes.contains(.api))
+    }
+
     func testClaudeSpecUsesManualCookieCredential() {
         let spec = ProviderSettingsSpec.resolve(for: ProviderDescriptor.defaultOfficialClaude())
 

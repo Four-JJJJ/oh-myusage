@@ -13,6 +13,7 @@ final class ProviderFactoryTests: XCTestCase {
             (.defaultOfficialCopilot(), CopilotProvider.self),
             (.defaultOfficialMicrosoftCopilot(), MicrosoftCopilotProvider.self),
             (.defaultOfficialZai(), ZaiProvider.self),
+            (.defaultOfficialZaiBalance(), ZaiProvider.self),
             (.defaultOfficialAmp(), AmpProvider.self),
             (.defaultOfficialCursor(), CursorProvider.self),
             (.defaultOfficialJetBrains(), JetBrainsProvider.self),
@@ -27,6 +28,7 @@ final class ProviderFactoryTests: XCTestCase {
             (.relayProvider(type: .open), RelayProvider.self),
             (.relayProvider(type: .dragon), RelayProvider.self),
             (.defaultOfficialKimi(), KimiSmartProvider.self),
+            (.defaultOfficialKimiBalance(), MoonshotBalanceProvider.self),
             (.defaultOfficialGrok(), GrokProvider.self)
         ]
 

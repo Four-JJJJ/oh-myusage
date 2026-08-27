@@ -68,7 +68,19 @@ enum ProviderTypeMetadataCatalog {
         ),
         .copilot: ProviderTypeMetadata(displayName: "GitHub Copilot", iconName: "menu_github_copilot_icon", fallbackSystemIcon: "chevron.left.forwardslash.chevron.right"),
         .microsoftCopilot: ProviderTypeMetadata(displayName: "Microsoft Copilot", iconName: "menu_microsoft_copilot_icon", fallbackSystemIcon: "building.2.crop.circle"),
-        .zai: ProviderTypeMetadata(displayName: "Z.ai", iconName: "menu_zai_icon", fallbackSystemIcon: "z.square.fill"),
+        .zai: ProviderTypeMetadata(
+            displayName: "Z.ai",
+            iconName: "menu_zai_icon",
+            fallbackSystemIcon: "z.square.fill",
+            supportsOfficialBearerCredentialInput: true
+        ),
+        .zaiBalance: ProviderTypeMetadata(
+            displayName: "Z.ai (API)",
+            iconName: "menu_zai_icon",
+            fallbackSystemIcon: "z.square.fill",
+            preferredMetricCount: 1,
+            supportsOfficialBearerCredentialInput: true
+        ),
         .amp: ProviderTypeMetadata(displayName: "Amp", iconName: "menu_amp_icon", fallbackSystemIcon: "bolt.fill"),
         .cursor: ProviderTypeMetadata(
             displayName: "Cursor",
@@ -85,11 +97,17 @@ enum ProviderTypeMetadataCatalog {
         ),
         .windsurf: ProviderTypeMetadata(displayName: "Windsurf", iconName: "menu_windsurf_icon", fallbackSystemIcon: "wind"),
         .kimi: ProviderTypeMetadata(
-            displayName: "KIMI",
-            officialDisplayName: "Kimi Coding",
+            displayName: "Kimi",
             iconName: "menu_kimi_icon",
             fallbackSystemIcon: "moon.stars.fill",
             supportsLocalUsageHistory: true,
+            supportsOfficialBearerCredentialInput: true
+        ),
+        .kimiBalance: ProviderTypeMetadata(
+            displayName: "Kimi (API)",
+            iconName: "menu_kimi_icon",
+            fallbackSystemIcon: "moon.stars.fill",
+            preferredMetricCount: 1,
             supportsOfficialBearerCredentialInput: true
         ),
         .grok: ProviderTypeMetadata(

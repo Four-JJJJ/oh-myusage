@@ -334,8 +334,9 @@ EOF
 clean_previous_artifacts
 
 # Always build fresh release before packaging to avoid stale DMG content.
+# SWIFT_BUILD_SYSTEM 可覆盖构建系统（如 native），适配本机工具链 quirks。
 log "Building universal release binary..."
-swift build -c release --arch arm64 --arch x86_64
+swift build -c release --arch arm64 --arch x86_64 ${SWIFT_BUILD_SYSTEM:+--build-system "$SWIFT_BUILD_SYSTEM"}
 
 BIN_PATH="$(resolve_binary_path || true)"
 

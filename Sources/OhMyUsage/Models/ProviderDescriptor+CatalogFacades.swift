@@ -28,6 +28,10 @@ extension ProviderDescriptor {
         OfficialProviderDefaultCatalog.zai()
     }
 
+    static func defaultOfficialZaiBalance() -> ProviderDescriptor {
+        OfficialProviderDefaultCatalog.zaiBalance()
+    }
+
     static func defaultOfficialAmp() -> ProviderDescriptor {
         OfficialProviderDefaultCatalog.amp()
     }
@@ -50,6 +54,10 @@ extension ProviderDescriptor {
 
     static func defaultOfficialKimi() -> ProviderDescriptor {
         OfficialProviderDefaultCatalog.kimi()
+    }
+
+    static func defaultOfficialKimiBalance() -> ProviderDescriptor {
+        OfficialProviderDefaultCatalog.kimiBalance()
     }
 
     static func defaultOfficialGrok() -> ProviderDescriptor {

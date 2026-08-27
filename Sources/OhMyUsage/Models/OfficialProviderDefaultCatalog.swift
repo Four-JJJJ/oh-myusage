@@ -86,9 +86,33 @@ enum OfficialProviderDefaultCatalog {
             enabled: false,
             pollIntervalSec: 60,
             threshold: AlertRule(lowRemaining: 20, maxConsecutiveFailures: 2, notifyOnAuthError: true),
-            auth: .none,
+            auth: AuthConfig(
+                kind: .bearer,
+                keychainService: KeychainService.defaultServiceName,
+                keychainAccount: ZaiProvider.codingPlanKeychainAccount
+            ),
             baseURL: baseURL(for: .zai),
             officialConfig: config(for: .zai)
+        )
+    }
+
+    /// 智谱开放平台按量付费余额（bigmodel.cn），与 Coding Plan 额度独立配置。
+    static func zaiBalance() -> ProviderDescriptor {
+        ProviderDescriptor(
+            id: "zai-balance-official",
+            name: "Z.ai (API)",
+            family: .official,
+            type: .zaiBalance,
+            enabled: false,
+            pollIntervalSec: 300,
+            threshold: AlertRule(lowRemaining: 20, maxConsecutiveFailures: 2, notifyOnAuthError: true),
+            auth: AuthConfig(
+                kind: .bearer,
+                keychainService: KeychainService.defaultServiceName,
+                keychainAccount: ZaiProvider.balanceKeychainAccount
+            ),
+            baseURL: baseURL(for: .zaiBalance),
+            officialConfig: config(for: .zaiBalance)
         )
     }
 
@@ -170,7 +194,7 @@ enum OfficialProviderDefaultCatalog {
     static func kimi() -> ProviderDescriptor {
         ProviderDescriptor(
             id: "kimi-official",
-            name: "Kimi Coding",
+            name: "Kimi",
             family: .official,
             type: .kimi,
             enabled: false,
@@ -183,6 +207,26 @@ enum OfficialProviderDefaultCatalog {
             ),
             baseURL: baseURL(for: .kimi),
             officialConfig: config(for: .kimi)
+        )
+    }
+
+    /// Moonshot 开放平台按量付费余额（api.moonshot.cn），与 Kimi 订阅额度独立配置。
+    static func kimiBalance() -> ProviderDescriptor {
+        ProviderDescriptor(
+            id: "kimi-balance-official",
+            name: "Kimi (API)",
+            family: .official,
+            type: .kimiBalance,
+            enabled: false,
+            pollIntervalSec: 300,
+            threshold: AlertRule(lowRemaining: 20, maxConsecutiveFailures: 2, notifyOnAuthError: true),
+            auth: AuthConfig(
+                kind: .bearer,
+                keychainService: KeychainService.defaultServiceName,
+                keychainAccount: MoonshotBalanceProvider.balanceKeychainAccount
+            ),
+            baseURL: baseURL(for: .kimiBalance),
+            officialConfig: config(for: .kimiBalance)
         )
     }
 
@@ -306,6 +350,9 @@ enum OfficialProviderDefaultCatalog {
             return "https://graph.microsoft.com"
         case .zai:
             return "https://api.z.ai"
+        case .zaiBalance:
+            // 按量付费余额走国内开放平台；国际站同构，改 Base URL 即可切换。
+            return "https://open.bigmodel.cn"
         case .amp:
             return "https://ampcode.com"
         case .cursor:
@@ -318,6 +365,8 @@ enum OfficialProviderDefaultCatalog {
             return "https://server.codeium.com"
         case .kimi:
             return "https://api.kimi.com"
+        case .kimiBalance:
+            return "https://api.moonshot.cn"
         case .grok:
             return "https://cli-chat-proxy.grok.com"
         case .trae:
@@ -352,7 +401,7 @@ enum OfficialProviderDefaultCatalog {
                 autoDiscoveryEnabled: true,
                 quotaDisplayMode: .used
             )
-        case .gemini, .copilot, .microsoftCopilot, .zai, .amp, .cursor, .jetbrains, .kiro, .windsurf, .kimi, .grok,
+        case .gemini, .copilot, .microsoftCopilot, .zai, .zaiBalance, .amp, .cursor, .jetbrains, .kiro, .windsurf, .kimi, .kimiBalance, .grok,
              .openrouterCredits, .openrouterAPI:
             return OfficialProviderConfig(
                 sourceMode: .auto,

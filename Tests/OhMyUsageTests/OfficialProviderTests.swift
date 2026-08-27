@@ -1498,11 +1498,235 @@ final class OfficialProviderTests: XCTestCase {
         XCTAssertEqual(snapshot.extras["planType"], "GLM Coding Max")
     }
 
+    func testZaiResponseParsesCreditLimitWindows() throws {
+        // 新账号（GLM Coding Plan 体验卡 / lite）返回 CREDIT_LIMIT 而非 TOKENS_LIMIT。
+        let subscriptionRoot: [String: Any] = [
+            "data": [[
+                "productName": "GLM Coding Plan 体验卡",
+                "inCurrentPeriod": true,
+                "nextRenewTime": "2026-09-02",
+            ]]
+        ]
+        let quotaRoot: [String: Any] = [
+            "data": [
+                "limits": [
+                    ["type": "CREDIT_LIMIT", "unit": 3, "number": 5, "usage": 2000, "currentValue": 924, "remaining": 1075, "percentage": 46, "nextResetTime": 1787823303158 as Double],
+                    ["type": "CREDIT_LIMIT", "unit": 6, "number": 1, "usage": 2000, "currentValue": 2004, "remaining": 0, "percentage": 100, "nextResetTime": 1788361121998 as Double],
+                ]
+            ]
+        ]
+
+        let snapshot = try ZaiProvider.parseSnapshot(
+            subscriptionRoot: subscriptionRoot,
+            quotaRoot: quotaRoot,
+            descriptor: ProviderDescriptor.defaultOfficialZai()
+        )
+
+        XCTAssertEqual(snapshot.quotaWindows.count, 2)
+        XCTAssertEqual(snapshot.quotaWindows.first(where: { $0.kind == .session })?.remainingPercent ?? -1, 54, accuracy: 0.001)
+        XCTAssertEqual(snapshot.quotaWindows.first(where: { $0.kind == .weekly })?.remainingPercent ?? -1, 0, accuracy: 0.001)
+        XCTAssertEqual(snapshot.extras["planType"], "GLM Coding Plan 体验卡")
+    }
+
     func testZaiQuotaAuthorizationDoesNotAddBearerPrefix() {
         XCTAssertEqual(
             ZaiProvider.authorizationHeaderValue(apiKey: "  glm-api-key  "),
             "glm-api-key"
         )
+    }
+
+    func testZaiBalanceDataWrapperParsesAmount() throws {
+        let root: [String: Any] = [
+            "success": true,
+            "data": ["balance": 42.75]
+        ]
+
+        let snapshot = try ZaiProvider.parseBalanceSnapshot(
+            root: root,
+            descriptor: ProviderDescriptor.defaultOfficialZaiBalance()
+        )
+
+        XCTAssertEqual(snapshot.remaining ?? -1, 42.75, accuracy: 0.001)
+        XCTAssertEqual(snapshot.unit, "CNY")
+        XCTAssertEqual(snapshot.status, .ok)
+        XCTAssertTrue(snapshot.quotaWindows.isEmpty)
+    }
+
+    func testZaiBalanceAccountReportShapeParsesAvailableBalance() throws {
+        // GET /api/biz/account/query-customer-account-report 的真实返回形态。
+        let root: [String: Any] = [
+            "code": 200,
+            "msg": "操作成功",
+            "success": true,
+            "data": [
+                "balance": 20.0,
+                "rechargeAmount": 20.0,
+                "giveAmount": 0.0,
+                "totalSpendAmount": 0.0,
+                "availableBalance": 18.5,
+                "frozenBalance": 0.0,
+            ]
+        ]
+
+        let snapshot = try ZaiProvider.parseBalanceSnapshot(
+            root: root,
+            descriptor: ProviderDescriptor.defaultOfficialZaiBalance()
+        )
+
+        XCTAssertEqual(snapshot.remaining ?? -1, 18.5, accuracy: 0.001)
+        XCTAssertEqual(snapshot.unit, "CNY")
+        XCTAssertEqual(snapshot.status, .ok)
+    }
+
+    func testZaiBalanceTopLevelAndUnderscoreFieldsParse() throws {
+        let topLevel: [String: Any] = ["total_balance": 12.5, "currency": "CNY"]
+        let snapshot = try ZaiProvider.parseBalanceSnapshot(
+            root: topLevel,
+            descriptor: ProviderDescriptor.defaultOfficialZaiBalance()
+        )
+        XCTAssertEqual(snapshot.remaining ?? -1, 12.5, accuracy: 0.001)
+
+        let deepseekStyle: [String: Any] = [
+            "data": ["balance_infos": [["total_balance": "88.10"]]]
+        ]
+        let parsed = try ZaiProvider.parseBalanceSnapshot(
+            root: deepseekStyle,
+            descriptor: ProviderDescriptor.defaultOfficialZaiBalance()
+        )
+        XCTAssertEqual(parsed.remaining ?? -1, 88.1, accuracy: 0.001)
+    }
+
+    func testZaiBalanceEmptyResponseThrows() {
+        XCTAssertThrowsError(
+            try ZaiProvider.parseBalanceSnapshot(
+                root: ["success": true, "data": [:]],
+                descriptor: ProviderDescriptor.defaultOfficialZaiBalance()
+            )
+        ) { error in
+            guard case ProviderError.invalidResponse(let message) = error else {
+                return XCTFail("expected invalidResponse, got \(error)")
+            }
+            XCTAssertTrue(message.contains("missing Zhipu balance"))
+        }
+    }
+
+    func testZaiBalanceConsoleErrorPropagatesMessage() {
+        XCTAssertThrowsError(
+            try ZaiProvider.parseBalanceSnapshot(
+                root: ["success": false, "code": 401, "msg": "令牌已过期或验证不正确"],
+                descriptor: ProviderDescriptor.defaultOfficialZaiBalance()
+            )
+        ) { error in
+            guard case ProviderError.invalidResponse(let message) = error else {
+                return XCTFail("expected invalidResponse, got \(error)")
+            }
+            XCTAssertTrue(message.contains("令牌已过期或验证不正确"))
+        }
+    }
+
+    func testZaiBalanceDefaultCatalogTargetsBigModelHost() {
+        let descriptor = ProviderDescriptor.defaultOfficialZaiBalance()
+        XCTAssertEqual(descriptor.id, "zai-balance-official")
+        XCTAssertEqual(descriptor.baseURL, "https://open.bigmodel.cn")
+        XCTAssertEqual(descriptor.auth.keychainAccount, ZaiProvider.balanceKeychainAccount)
+    }
+
+    func testMoonshotBalanceResponseParsesAvailableBalance() throws {
+        // GET /v1/users/me/balance 的真实返回形态。
+        let root: [String: Any] = [
+            "code": 0,
+            "status": true,
+            "data": [
+                "available_balance": 49.9,
+                "voucher_balance": 49.9,
+                "cash_balance": 0.0,
+            ]
+        ]
+
+        let snapshot = try MoonshotBalanceProvider.parseBalanceSnapshot(
+            root: root,
+            descriptor: ProviderDescriptor.defaultOfficialKimiBalance()
+        )
+
+        XCTAssertEqual(snapshot.remaining ?? -1, 49.9, accuracy: 0.001)
+        XCTAssertEqual(snapshot.unit, "CNY")
+        XCTAssertEqual(snapshot.status, .ok)
+        XCTAssertTrue(snapshot.quotaWindows.isEmpty)
+    }
+
+    func testMoonshotBalanceZeroBalanceWarns() throws {
+        let root: [String: Any] = [
+            "code": 0,
+            "data": ["available_balance": 0.0]
+        ]
+
+        let snapshot = try MoonshotBalanceProvider.parseBalanceSnapshot(
+            root: root,
+            descriptor: ProviderDescriptor.defaultOfficialKimiBalance()
+        )
+
+        XCTAssertEqual(snapshot.remaining ?? -1, 0, accuracy: 0.001)
+        XCTAssertEqual(snapshot.status, .warning)
+    }
+
+    func testMoonshotBalanceMissingFieldsThrows() {
+        XCTAssertThrowsError(
+            try MoonshotBalanceProvider.parseBalanceSnapshot(
+                root: ["code": 0, "data": [:]],
+                descriptor: ProviderDescriptor.defaultOfficialKimiBalance()
+            )
+        ) { error in
+            guard case ProviderError.invalidResponse(let message) = error else {
+                return XCTFail("expected invalidResponse, got \(error)")
+            }
+            XCTAssertTrue(message.contains("missing Moonshot balance"))
+        }
+    }
+
+    func testMoonshotBalanceErrorCodePropagatesMessage() {
+        XCTAssertThrowsError(
+            try MoonshotBalanceProvider.parseBalanceSnapshot(
+                root: ["code": 401, "message": "Invalid Authentication"],
+                descriptor: ProviderDescriptor.defaultOfficialKimiBalance()
+            )
+        ) { error in
+            guard case ProviderError.invalidResponse(let message) = error else {
+                return XCTFail("expected invalidResponse, got \(error)")
+            }
+            XCTAssertTrue(message.contains("Invalid Authentication"))
+        }
+    }
+
+    func testMoonshotBalanceDefaultCatalogTargetsMoonshotHost() {
+        let descriptor = ProviderDescriptor.defaultOfficialKimiBalance()
+        XCTAssertEqual(descriptor.id, "kimi-balance-official")
+        XCTAssertEqual(descriptor.baseURL, "https://api.moonshot.cn")
+        XCTAssertEqual(descriptor.auth.kind, .bearer)
+        XCTAssertEqual(descriptor.auth.keychainAccount, MoonshotBalanceProvider.balanceKeychainAccount)
+    }
+
+    func testZaiCodingPlanCatalogStoresManualAPIKeyInKeychain() {
+        let descriptor = ProviderDescriptor.defaultOfficialZai()
+        XCTAssertEqual(descriptor.baseURL, "https://api.z.ai")
+        XCTAssertEqual(descriptor.auth.kind, .bearer)
+        XCTAssertEqual(descriptor.auth.keychainAccount, ZaiProvider.codingPlanKeychainAccount)
+    }
+
+    func testZaiCodingPlanHostMirrorFallsBackAcrossRegions() {
+        XCTAssertEqual(
+            ZaiProvider.codingPlanHosts(primary: "https://api.z.ai"),
+            ["https://api.z.ai", "https://open.bigmodel.cn"]
+        )
+        XCTAssertEqual(
+            ZaiProvider.codingPlanHosts(primary: "https://open.bigmodel.cn"),
+            ["https://open.bigmodel.cn", "https://api.z.ai"]
+        )
+    }
+
+    func testZaiStatusFailureDetailIncludesUpstreamMessage() {
+        let data = Data(#"{"error":{"code":"1000","message":"身份验证失败。"}}"#.utf8)
+        XCTAssertTrue(ZaiProvider.statusFailureDetail(status: 404, data: data).contains("身份验证失败"))
+        XCTAssertTrue(ZaiProvider.statusFailureDetail(status: 401, data: Data("not json".utf8)).contains("http 401"))
     }
 
     func testAmpResponseParsesFreeAndCredits() throws {

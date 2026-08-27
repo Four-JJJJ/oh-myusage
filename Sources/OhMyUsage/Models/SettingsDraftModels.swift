@@ -294,6 +294,7 @@ struct OfficialProviderEditorDraft: Equatable {
     var officialTraeValueDisplayModeInputs: [String: OfficialTraeValueDisplayMode] = [:]
     var officialWorkspaceInputs: [String: String] = [:]
     var officialCookieInputs: [String: String] = [:]
+    var officialCredentialImportResults: [String: Bool] = [:]
     var officialThresholdInputs: [String: String] = [:]
     var thresholdDraftValues: [String: Double] = [:]
 

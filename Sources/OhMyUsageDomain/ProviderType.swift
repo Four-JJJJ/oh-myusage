@@ -7,6 +7,7 @@ public enum ProviderType: String, Codable, CaseIterable, Sendable {
     case copilot
     case microsoftCopilot
     case zai
+    case zaiBalance
     case amp
     case cursor
     case jetbrains
@@ -21,5 +22,6 @@ public enum ProviderType: String, Codable, CaseIterable, Sendable {
     case open
     case dragon
     case kimi
+    case kimiBalance
     case grok
 }

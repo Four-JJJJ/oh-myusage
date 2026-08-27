@@ -3,7 +3,7 @@ import OhMyUsageDomain
 
 enum OfficialRelayProviderDefaultCatalog {
     static var allDefaultProviders: [ProviderDescriptor] {
-        OfficialRelayMetadataCatalog.defaultProviderOrder.map { provider(forProviderID: $0) }
+        OfficialRelayMetadataCatalog.defaultListedProviderOrder.map { provider(forProviderID: $0) }
     }
 
     static func provider(forProviderID providerID: String) -> ProviderDescriptor {

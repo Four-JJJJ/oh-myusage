@@ -10,7 +10,7 @@ enum ProviderDescriptorNormalizer {
         }
 
         switch copy.type {
-        case .codex, .claude, .gemini, .copilot, .microsoftCopilot, .zai, .amp, .cursor, .jetbrains, .kiro, .windsurf, .grok, .trae, .openrouterCredits, .openrouterAPI, .ollamaCloud, .opencodeGo:
+        case .codex, .claude, .gemini, .copilot, .microsoftCopilot, .zai, .zaiBalance, .amp, .cursor, .jetbrains, .kiro, .windsurf, .kimiBalance, .grok, .trae, .openrouterCredits, .openrouterAPI, .ollamaCloud, .opencodeGo:
             return normalizedOfficialProvider(copy)
         case .relay:
             return normalizedRelayProvider(copy, source: provider)
@@ -153,7 +153,7 @@ enum ProviderDescriptorNormalizer {
         var copy = provider
         if copy.family == .official || copy.id == "kimi-official" {
             copy.family = .official
-            copy.name = "Kimi Coding"
+            copy.name = "Kimi"
             if copy.auth.kind == .none {
                 copy.auth = OfficialProviderDefaultCatalog.kimi().auth
             }
