@@ -19,11 +19,7 @@ struct SettingsProviderConfigurationFacade {
     var savedTokenLengthForAuthHandler: (AuthConfig) -> Int? = { _ in nil }
     var hasOfficialManualCookieHandler: (ProviderDescriptor) -> Bool = { _ in false }
     var savedOfficialManualCookieLengthHandler: (ProviderDescriptor) -> Int? = { _ in nil }
-    var saveTokenForProviderHandler: (String, ProviderDescriptor) -> Bool = { _, _ in false }
-    var saveTokenForAuthHandler: (String, AuthConfig) -> Bool = { _, _ in false }
-    var saveTokenAndRestartForProviderHandler: (String, ProviderDescriptor) -> Bool = { _, _ in false }
-    var saveTokenAndRestartForAuthHandler: (String, AuthConfig) -> Bool = { _, _ in false }
-    var saveOfficialManualCookieHandler: (String, String) -> Bool = { _, _ in false }
+    var saveCredentialHandler: (String, AppCredentialField, AppCredentialRestartPolicy) -> Bool = { _, _, _ in false }
     var updateOfficialProviderSettingsHandler: (
         String,
         OfficialSourceMode,
@@ -86,11 +82,7 @@ struct SettingsProviderConfigurationFacade {
         savedTokenLengthForAuth: @escaping (AuthConfig) -> Int? = { _ in nil },
         hasOfficialManualCookie: @escaping (ProviderDescriptor) -> Bool = { _ in false },
         savedOfficialManualCookieLength: @escaping (ProviderDescriptor) -> Int? = { _ in nil },
-        saveTokenForProvider: @escaping (String, ProviderDescriptor) -> Bool = { _, _ in false },
-        saveTokenForAuth: @escaping (String, AuthConfig) -> Bool = { _, _ in false },
-        saveTokenAndRestartForProvider: @escaping (String, ProviderDescriptor) -> Bool = { _, _ in false },
-        saveTokenAndRestartForAuth: @escaping (String, AuthConfig) -> Bool = { _, _ in false },
-        saveOfficialManualCookie: @escaping (String, String) -> Bool = { _, _ in false },
+        saveCredential: @escaping (String, AppCredentialField, AppCredentialRestartPolicy) -> Bool = { _, _, _ in false },
         updateOfficialProviderSettings: @escaping (
             String,
             OfficialSourceMode,
@@ -148,11 +140,7 @@ struct SettingsProviderConfigurationFacade {
         savedTokenLengthForAuthHandler = savedTokenLengthForAuth
         hasOfficialManualCookieHandler = hasOfficialManualCookie
         savedOfficialManualCookieLengthHandler = savedOfficialManualCookieLength
-        saveTokenForProviderHandler = saveTokenForProvider
-        saveTokenForAuthHandler = saveTokenForAuth
-        saveTokenAndRestartForProviderHandler = saveTokenAndRestartForProvider
-        saveTokenAndRestartForAuthHandler = saveTokenAndRestartForAuth
-        saveOfficialManualCookieHandler = saveOfficialManualCookie
+        saveCredentialHandler = saveCredential
         updateOfficialProviderSettingsHandler = updateOfficialProviderSettings
         commitProviderThresholdHandler = commitProviderThreshold
         saveRelayDraftHandler = saveRelayDraft
@@ -180,11 +168,7 @@ struct SettingsProviderConfigurationFacade {
             savedTokenLengthForAuth: { viewModel.savedTokenLength(auth: $0) },
             hasOfficialManualCookie: { viewModel.hasOfficialManualCookie(for: $0) },
             savedOfficialManualCookieLength: { viewModel.savedOfficialManualCookieLength(for: $0) },
-            saveTokenForProvider: { viewModel.saveToken($0, for: $1) },
-            saveTokenForAuth: { viewModel.saveToken($0, auth: $1) },
-            saveTokenAndRestartForProvider: { viewModel.saveTokenAndRestart($0, for: $1) },
-            saveTokenAndRestartForAuth: { viewModel.saveTokenAndRestart($0, auth: $1) },
-            saveOfficialManualCookie: { viewModel.saveOfficialManualCookie($0, providerID: $1) },
+            saveCredential: { viewModel.saveCredential($0, field: $1, restartPolicy: $2) },
             updateOfficialProviderSettings: {
                 viewModel.updateOfficialProviderSettings(
                     providerID: $0,
@@ -269,28 +253,12 @@ struct SettingsProviderConfigurationFacade {
     }
 
     @discardableResult
-    func saveToken(_ token: String, for provider: ProviderDescriptor) -> Bool {
-        saveTokenForProviderHandler(token, provider)
-    }
-
-    @discardableResult
-    func saveToken(_ token: String, auth: AuthConfig) -> Bool {
-        saveTokenForAuthHandler(token, auth)
-    }
-
-    @discardableResult
-    func saveTokenAndRestart(_ token: String, for provider: ProviderDescriptor) -> Bool {
-        saveTokenAndRestartForProviderHandler(token, provider)
-    }
-
-    @discardableResult
-    func saveTokenAndRestart(_ token: String, auth: AuthConfig) -> Bool {
-        saveTokenAndRestartForAuthHandler(token, auth)
-    }
-
-    @discardableResult
-    func saveOfficialManualCookie(_ value: String, providerID: String) -> Bool {
-        saveOfficialManualCookieHandler(value, providerID)
+    func saveCredential(
+        _ value: String,
+        field: AppCredentialField,
+        restartPolicy: AppCredentialRestartPolicy = .none
+    ) -> Bool {
+        saveCredentialHandler(value, field, restartPolicy)
     }
 
     func updateOfficialProviderSettings(

@@ -145,7 +145,7 @@ final class AppConfigurationModel {
     // MARK: - Credential mutation
 
     /// 单一保存入口：field 决定 keychain 目标与规范化，restartPolicy 决定成功后
-    /// 是否重启轮询（从旧 wrapper 的实际行为逐位抄来）。
+    /// 是否重启轮询（行为与旧 saveToken/saveTokenAndRestart 系列逐位一致）。
     @discardableResult
     func saveCredential(
         _ value: String,
@@ -165,39 +165,18 @@ final class AppConfigurationModel {
             }
         )
         applyCredentialMutationOutcome(outcome)
-        if outcome.didPersistCredential, restartPolicy == .restartPolling {
+        if Self.shouldRestartPolling(didPersist: outcome.didPersistCredential, policy: restartPolicy) {
             host.restartPolling()
         }
         return outcome.didPersistCredential
     }
 
-    // MARK: Legacy credential wrappers（转发到 saveCredential；Phase 3 随调用点迁移后删除）
-
-    func saveToken(_ token: String, for descriptor: ProviderDescriptor) -> Bool {
-        saveCredential(token, field: .providerToken(descriptor), restartPolicy: .none)
-    }
-
-    @discardableResult
-    func saveTokenAndRestart(_ token: String, for descriptor: ProviderDescriptor) -> Bool {
-        saveCredential(token, field: .providerToken(descriptor), restartPolicy: .restartPolling)
-    }
-
-    func saveToken(_ token: String, auth: AuthConfig) -> Bool {
-        saveCredential(token, field: .authToken(auth), restartPolicy: .none)
-    }
-
-    @discardableResult
-    func saveTokenAndRestart(_ token: String, auth: AuthConfig) -> Bool {
-        saveCredential(token, field: .authToken(auth), restartPolicy: .restartPolling)
-    }
-
-    func saveOfficialManualCookie(_ value: String, providerID: String) -> Bool {
-        saveCredential(value, field: .officialManualCookie(providerID: providerID), restartPolicy: .none)
-    }
-
-    @discardableResult
-    func saveOfficialManualCookieAndRestart(_ value: String, providerID: String) -> Bool {
-        saveCredential(value, field: .officialManualCookie(providerID: providerID), restartPolicy: .restartPolling)
+    /// restart 判定：仅当凭证真正写入成功且调用方要求 restart 时才重启轮询。
+    static func shouldRestartPolling(
+        didPersist: Bool,
+        policy: AppCredentialRestartPolicy
+    ) -> Bool {
+        didPersist && policy == .restartPolling
     }
 
     func invalidateCredentialLookupCache() {
@@ -319,7 +298,7 @@ final class AppConfigurationModel {
         guard let credentialInput else { return }
         let trimmedCredential = credentialInput.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedCredential.isEmpty, let balanceAuth = descriptor.relayConfig?.balanceAuth else { return }
-        _ = saveToken(trimmedCredential, auth: balanceAuth)
+        saveCredential(trimmedCredential, field: .authToken(balanceAuth), restartPolicy: .none)
     }
 
     func removeProvider(providerID: String) {
@@ -639,10 +618,10 @@ final class AppConfigurationModel {
         var savedCredential = false
         if let provider = host.config.providers.first(where: { $0.id == providerID }),
            let credentialInput {
-            savedCredential = saveToken(credentialInput, for: provider) || savedCredential
+            savedCredential = saveCredential(credentialInput, field: .providerToken(provider), restartPolicy: .none) || savedCredential
         }
         if let manualCookieInput {
-            savedCredential = saveOfficialManualCookie(manualCookieInput, providerID: providerID) || savedCredential
+            savedCredential = saveCredential(manualCookieInput, field: .officialManualCookie(providerID: providerID), restartPolicy: .none) || savedCredential
         }
         updateOfficialProviderSettings(
             providerID: providerID,

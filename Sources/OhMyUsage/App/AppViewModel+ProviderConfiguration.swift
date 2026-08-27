@@ -22,17 +22,15 @@ extension AppViewModel {
     func savedTokenLength(for descriptor: ProviderDescriptor) -> Int? { configurationModel.savedTokenLength(for: descriptor) }
     func hasToken(auth: AuthConfig) -> Bool { configurationModel.hasToken(auth: auth) }
     func savedTokenLength(auth: AuthConfig) -> Int? { configurationModel.savedTokenLength(auth: auth) }
-    func saveToken(_ token: String, for descriptor: ProviderDescriptor) -> Bool { configurationModel.saveToken(token, for: descriptor) }
-    @discardableResult
-    func saveTokenAndRestart(_ token: String, for descriptor: ProviderDescriptor) -> Bool { configurationModel.saveTokenAndRestart(token, for: descriptor) }
-    func saveToken(_ token: String, auth: AuthConfig) -> Bool { configurationModel.saveToken(token, auth: auth) }
-    @discardableResult
-    func saveTokenAndRestart(_ token: String, auth: AuthConfig) -> Bool { configurationModel.saveTokenAndRestart(token, auth: auth) }
+    func saveCredential(
+        _ value: String,
+        field: AppCredentialField,
+        restartPolicy: AppCredentialRestartPolicy = .none
+    ) -> Bool {
+        configurationModel.saveCredential(value, field: field, restartPolicy: restartPolicy)
+    }
     func hasOfficialManualCookie(for provider: ProviderDescriptor) -> Bool { configurationModel.hasOfficialManualCookie(for: provider) }
     func savedOfficialManualCookieLength(for provider: ProviderDescriptor) -> Int? { configurationModel.savedOfficialManualCookieLength(for: provider) }
-    func saveOfficialManualCookie(_ value: String, providerID: String) -> Bool { configurationModel.saveOfficialManualCookie(value, providerID: providerID) }
-    @discardableResult
-    func saveOfficialManualCookieAndRestart(_ value: String, providerID: String) -> Bool { configurationModel.saveOfficialManualCookieAndRestart(value, providerID: providerID) }
     func invalidateCredentialLookupCache() { configurationModel.invalidateCredentialLookupCache() }
     @discardableResult
     func addRelaySiteDraft(

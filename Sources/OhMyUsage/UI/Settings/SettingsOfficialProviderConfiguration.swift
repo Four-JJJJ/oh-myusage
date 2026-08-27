@@ -414,30 +414,31 @@ extension SettingsView {
                 text: inputBinding
             )
             .onSubmit(submit)
-        case .bearerToken where provider.type == .zai || provider.type == .zaiBalance:
+        case .bearerToken, .manualCookie, .opencodeManualCookie, .traeAuthorization, .relayBalanceAuth, .relayQuotaAuth:
+            // 自动获取槽位由 CredentialFieldSpec.autoImport 能力声明驱动（执行 handler 不变）
+            let autoImportSlot = officialAutoImportSlot(
+                for: field,
+                provider: provider,
+                sourceMode: sourceMode,
+                webMode: webMode,
+                quotaDisplayMode: quotaDisplayMode
+            )
             VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 8) {
                     settingsConfigSecureField(
                         officialConfigCredentialPlaceholder(for: field, provider: provider),
                         text: inputBinding,
-                        width: max(280, thirdPartyConfigControlWidth - 120)
+                        width: autoImportSlot != nil ? max(280, thirdPartyConfigControlWidth - 120) : nil
                     )
                     .onSubmit(submit)
 
-                    settingsSmallOutlineButton(
-                        viewModel.localizedText("从 Claude Code 导入", "Import from Claude Code"),
-                        width: 112
-                    ) {
-                        importZaiCredentialFromClaudeCode(
-                            provider: provider,
-                            sourceMode: sourceMode,
-                            webMode: webMode,
-                            quotaDisplayMode: quotaDisplayMode
-                        )
+                    if let autoImportSlot {
+                        settingsSmallOutlineButton(autoImportSlot.label, width: 112, action: autoImportSlot.action)
                     }
                 }
 
-                if let importSucceeded = officialEditorDraft.officialCredentialImportResults[provider.id] {
+                if field.autoImport != nil,
+                   let importSucceeded = officialEditorDraft.officialCredentialImportResults[provider.id] {
                     Text(
                         importSucceeded
                             ? viewModel.localizedText("已从本机 Claude Code 配置导入密钥。", "Imported the key from the local Claude Code config.")
@@ -448,12 +449,34 @@ extension SettingsView {
                     .lineLimit(1)
                 }
             }
-        case .bearerToken, .manualCookie, .opencodeManualCookie, .traeAuthorization, .relayBalanceAuth, .relayQuotaAuth:
-            settingsConfigSecureField(
-                officialConfigCredentialPlaceholder(for: field, provider: provider),
-                text: inputBinding
+        }
+    }
+
+    /// 字段级自动获取槽位：把 CredentialFieldSpec.autoImport 能力声明解析为按钮。
+    /// 浏览器 / OAuth / 本地 CLI 导入由账号管理区或 sourceMode 自动行为承载，不在字段上渲染。
+    func officialAutoImportSlot(
+        for field: CredentialFieldSpec,
+        provider: ProviderDescriptor,
+        sourceMode: OfficialSourceMode,
+        webMode: OfficialWebMode,
+        quotaDisplayMode: OfficialQuotaDisplayMode
+    ) -> (label: String, action: () -> Void)? {
+        guard let capability = field.autoImport else { return nil }
+        switch capability {
+        case .claudeCodeConfig:
+            return (
+                viewModel.localizedText("从 Claude Code 导入", "Import from Claude Code"),
+                {
+                    importZaiCredentialFromClaudeCode(
+                        provider: provider,
+                        sourceMode: sourceMode,
+                        webMode: webMode,
+                        quotaDisplayMode: quotaDisplayMode
+                    )
+                }
             )
-            .onSubmit(submit)
+        case .browser, .oauth, .localCLI:
+            return nil
         }
     }
 
@@ -495,11 +518,11 @@ extension SettingsView {
         if !raw.isEmpty {
             switch field.storageTarget {
             case .providerToken:
-                _ = providerConfigurationFacade.saveToken(raw, for: provider)
+                _ = providerConfigurationFacade.saveCredential(raw, field: .providerToken(provider))
             case .officialManualCookie:
-                _ = providerConfigurationFacade.saveOfficialManualCookie(raw, providerID: provider.id)
+                _ = providerConfigurationFacade.saveCredential(raw, field: .officialManualCookie(providerID: provider.id))
             case .auth(let auth):
-                _ = providerConfigurationFacade.saveToken(raw, auth: auth)
+                _ = providerConfigurationFacade.saveCredential(raw, field: .authToken(auth))
             }
         }
         officialConfigSetCredentialInput("", for: field, providerID: provider.id)
@@ -524,7 +547,7 @@ extension SettingsView {
             officialEditorDraft.officialCredentialImportResults[provider.id] = false
             return
         }
-        _ = providerConfigurationFacade.saveToken(key, for: provider)
+        _ = providerConfigurationFacade.saveCredential(key, field: .providerToken(provider))
         officialEditorDraft.officialCredentialImportResults[provider.id] = true
         persistOfficialConfigSettings(
             provider: provider,

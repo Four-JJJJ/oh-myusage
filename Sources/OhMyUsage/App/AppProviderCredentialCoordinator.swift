@@ -78,53 +78,6 @@ struct AppProviderCredentialCoordinator {
         )
     }
 
-    // MARK: - Legacy wrappers（Phase 3 删除，调用点请迁移到 saveCredential(field:...)）
-
-    func saveToken(
-        _ token: String,
-        descriptor: ProviderDescriptor,
-        normalize: (String, AuthKind) -> String,
-        saveCredential: (String, String, String) -> Bool
-    ) -> AppCredentialMutationOutcome {
-        self.saveCredential(
-            field: .providerToken(descriptor),
-            value: token,
-            providers: [],
-            normalize: normalize,
-            saveCredential: saveCredential
-        )
-    }
-
-    func saveToken(
-        _ token: String,
-        auth: AuthConfig,
-        normalize: (String, AuthKind) -> String,
-        saveCredential: (String, String, String) -> Bool
-    ) -> AppCredentialMutationOutcome {
-        self.saveCredential(
-            field: .authToken(auth),
-            value: token,
-            providers: [],
-            normalize: normalize,
-            saveCredential: saveCredential
-        )
-    }
-
-    func saveOfficialManualCookie(
-        _ value: String,
-        providerID: String,
-        providers: [ProviderDescriptor],
-        saveCredential: (String, String, String) -> Bool
-    ) -> AppCredentialMutationOutcome {
-        self.saveCredential(
-            field: .officialManualCookie(providerID: providerID),
-            value: value,
-            providers: providers,
-            normalize: { value, _ in value },
-            saveCredential: saveCredential
-        )
-    }
-
     // MARK: - Private
 
     private func persistNormalized(

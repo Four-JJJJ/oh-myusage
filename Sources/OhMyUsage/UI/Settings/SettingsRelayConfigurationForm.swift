@@ -118,14 +118,14 @@ extension SettingsView {
             guard let accountAuth else { return }
             let token = relayEditorDraft.systemTokenInputs[provider.id, default: ""].trimmingCharacters(in: .whitespacesAndNewlines)
             guard !token.isEmpty else { return }
-            _ = providerConfiguration.saveTokenAndRestart(token, auth: accountAuth)
+            _ = providerConfiguration.saveCredential(token, field: .authToken(accountAuth), restartPolicy: .restartPolling)
             relayEditorDraft.systemTokenInputs[provider.id] = ""
         }
 
         let saveQuotaCredential: () -> Void = {
             let token = relayEditorDraft.tokenInputs[provider.id, default: ""].trimmingCharacters(in: .whitespacesAndNewlines)
             guard !token.isEmpty else { return }
-            _ = providerConfiguration.saveTokenAndRestart(token, for: provider)
+            _ = providerConfiguration.saveCredential(token, field: .providerToken(provider), restartPolicy: .restartPolling)
             relayEditorDraft.tokenInputs[provider.id] = ""
         }
         let saveCurrentCredentialIfNeeded: () -> Void = {
@@ -731,7 +731,7 @@ extension SettingsView {
                         fallbackPlaceholder: resolvedBalancePlaceholder,
                         fallbackHintLines: balanceHintLines
                     ) { value in
-                        _ = providerConfiguration.saveTokenAndRestart(value, auth: accountAuth)
+                        _ = providerConfiguration.saveCredential(value, field: .authToken(accountAuth), restartPolicy: .restartPolling)
                     }
                 } else {
                     VStack(alignment: .leading, spacing: 8) {
@@ -744,7 +744,7 @@ extension SettingsView {
                                     guard let accountAuth else { return }
                                     let token = balanceTextBinding.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines)
                                     guard !token.isEmpty else { return }
-                                    _ = providerConfiguration.saveTokenAndRestart(token, auth: accountAuth)
+                                    _ = providerConfiguration.saveCredential(token, field: .authToken(accountAuth), restartPolicy: .restartPolling)
                                     balanceTextBinding.wrappedValue = ""
                                 }
                                 .fixedSize(horizontal: true, vertical: false)
@@ -776,7 +776,7 @@ extension SettingsView {
                             settingsCapsuleButton(tokenSaveButtonTitle, dismissInputFocus: true) {
                                 let token = relayEditorDraft.tokenInputs[provider.id, default: ""].trimmingCharacters(in: .whitespacesAndNewlines)
                                 guard !token.isEmpty else { return }
-                                _ = providerConfiguration.saveTokenAndRestart(token, for: provider)
+                                _ = providerConfiguration.saveCredential(token, field: .providerToken(provider), restartPolicy: .restartPolling)
                                 relayEditorDraft.tokenInputs[provider.id] = ""
                             }
                             .fixedSize(horizontal: true, vertical: false)
