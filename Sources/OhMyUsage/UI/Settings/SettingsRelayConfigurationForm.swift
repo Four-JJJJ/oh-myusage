@@ -344,7 +344,7 @@ extension SettingsView {
                             get: { newRelaySiteDraft.baseURL },
                             set: {
                                 newRelaySiteDraft.baseURL = $0
-                                newRelaySiteDraft.testStatusVisible = false
+                                newRelaySiteDraft.testState = .unverified
                             }
                         )
                     )
@@ -376,7 +376,7 @@ extension SettingsView {
                             get: { newRelaySiteDraft.credentialInput },
                             set: {
                                 newRelaySiteDraft.credentialInput = $0
-                                newRelaySiteDraft.testStatusVisible = false
+                                newRelaySiteDraft.testState = .unverified
                             }
                         )
                     )
@@ -389,40 +389,67 @@ extension SettingsView {
                             get: { newRelaySiteDraft.userID },
                             set: {
                                 newRelaySiteDraft.userID = $0
-                                newRelaySiteDraft.testStatusVisible = false
+                                newRelaySiteDraft.testState = .unverified
                             }
                         )
                     )
                 }
 
-                thirdPartyThresholdRowPlaceholder(valueText: "2,000")
-
                 HStack(spacing: 12) {
                     settingsSmallOutlineButton(viewModel.localizedText("测试链接", "Test Connection"), width: 60) {
-                        newRelaySiteDraft.testStatusVisible = true
+                        let selectedManifest = selectedNewRelaySiteManifest()
+                        let resolvedBaseURL = resolvedRelayBaseURLInput(
+                            typedBaseURL: newRelaySiteDraft.baseURL,
+                            manifest: selectedManifest
+                        )
+                        let typedName = newRelaySiteDraft.providerName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                            ? relayDefaultNewSiteTitle
+                            : newRelaySiteDraft.providerName
+                        newRelaySiteDraft.testState = .testing
+                        Task {
+                            let result = await providerConfigurationFacade.testNewRelaySiteDraft(
+                                name: resolvedRelayNameInput(typedName: typedName, manifest: selectedManifest),
+                                baseURL: resolvedBaseURL,
+                                preferredAdapterID: newRelaySiteDraft.selectedPresetID ?? newRelaySiteDraft.templateID,
+                                userID: newRelaySiteDraft.userID,
+                                credentialInput: newRelaySiteDraft.credentialInput
+                            )
+                            // 测试期间输入又被改动过（状态被重置为 unverified）则不覆盖
+                            guard newRelaySiteDraft.testState == .testing else { return }
+                            newRelaySiteDraft.testState = result.success ? .success : .failure(result.message)
+                        }
                     }
 
                     settingsSmallOutlineButton(viewModel.localizedText("保存站点", "Save Site"), width: 60) {
                         saveNewRelaySiteDraft()
                     }
 
-                    if newRelaySiteDraft.testStatusVisible {
+                    switch newRelaySiteDraft.testState {
+                    case .unverified:
+                        Text(viewModel.localizedText("未验证，可先保存再到站点页测试", "Not verified — you can save now and test on the site page"))
+                            .font(.system(size: 10, weight: .regular))
+                            .foregroundStyle(Color.white.opacity(0.40))
+                            .lineLimit(1)
+                    case .testing:
+                        Text(viewModel.localizedText("测试中…", "Testing…"))
+                            .font(.system(size: 10, weight: .regular))
+                            .foregroundStyle(Color.white.opacity(0.60))
+                            .lineLimit(1)
+                    case .success:
                         Text(viewModel.localizedText("链接成功接口正常", "Connection succeeded and endpoint is healthy"))
                             .font(.system(size: 10, weight: .regular))
                             .foregroundStyle(Color(hex: 0x69BD64))
+                            .lineLimit(1)
+                    case .failure(let message):
+                        Text(message)
+                            .font(.system(size: 10, weight: .regular))
+                            .foregroundStyle(Color(hex: 0xEB654F))
+                            .lineLimit(1)
                     }
                 }
                 .padding(.leading, thirdPartyConfigLabelWidth + thirdPartyConfigLabelSpacing - 3)
             }
         }
-    }
-
-    func thirdPartyThresholdRowPlaceholder(valueText: String) -> some View {
-        settingsConfigThresholdStaticRow(
-            title: viewModel.localizedText("余额阈值", "Threshold"),
-            value: 20,
-            displayText: valueText
-        )
     }
 
     func openRelayConfigSection(_ provider: ProviderDescriptor) -> some View {

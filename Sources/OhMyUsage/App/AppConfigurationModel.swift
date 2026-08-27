@@ -241,6 +241,76 @@ final class AppConfigurationModel {
         balanceCredentialMode: RelayCredentialMode = .browserPreferred
     ) -> ProviderDescriptor? {
         let host = requireHost()
+        guard let provider = buildRelaySiteDescriptor(
+            name: name,
+            baseURL: baseURL,
+            preferredAdapterID: preferredAdapterID,
+            userID: userID,
+            balanceCredentialMode: balanceCredentialMode,
+            existingProviders: host.config.providers
+        ) else { return nil }
+
+        host.config.providers.append(provider)
+        if host.config.statusBarProviderID == nil {
+            host.config.statusBarProviderID = provider.id
+        }
+
+        stageRelayCredentialIfNeeded(credentialInput, descriptor: provider)
+
+        persistAndRestart()
+        host.notifyStatusBarDisplayConfigChanged()
+        host.refreshDisplayedStatusBarProviders()
+        return provider
+    }
+
+    /// 新站点草稿面板的真链路测试：用草稿输入构建临时 descriptor，把凭证预写入
+    /// 与正式保存一致的 keychain 槽位（relay 的 keychain account 由站点 host 派生，
+    /// 与后续 addRelaySiteDraft 写入同一个键），再走真实 fetch。
+    /// 临时 descriptor 不进入 providers 列表，测试后清理其运行时快照。
+    func testNewRelaySiteDraft(
+        name: String,
+        baseURL: String,
+        preferredAdapterID: String? = nil,
+        userID: String,
+        credentialInput: String? = nil
+    ) async -> RelayDiagnosticResult {
+        let host = requireHost()
+        guard let descriptor = buildRelaySiteDescriptor(
+            name: name,
+            baseURL: baseURL,
+            preferredAdapterID: preferredAdapterID,
+            userID: userID,
+            balanceCredentialMode: .browserPreferred,
+            existingProviders: host.config.providers
+        ) else {
+            return RelayDiagnosticResult(
+                success: false,
+                fetchHealth: .endpointMisconfigured,
+                resolvedAdapterID: preferredAdapterID ?? "generic-newapi",
+                resolvedAuthSource: nil,
+                message: host.text(.error),
+                snapshotPreview: nil
+            )
+        }
+
+        stageRelayCredentialIfNeeded(credentialInput, descriptor: descriptor)
+
+        let result = await testRelayConnection(descriptor: descriptor)
+        host.providerRefreshModel.mutateProviderState { state in
+            state.snapshots.removeValue(forKey: descriptor.id)
+            state.errors.removeValue(forKey: descriptor.id)
+        }
+        return result
+    }
+
+    private func buildRelaySiteDescriptor(
+        name: String,
+        baseURL: String,
+        preferredAdapterID: String?,
+        userID: String,
+        balanceCredentialMode: RelayCredentialMode,
+        existingProviders: [ProviderDescriptor]
+    ) -> ProviderDescriptor? {
         let normalizedBaseURL = ProviderDescriptor.normalizeRelayBaseURL(baseURL)
         guard !normalizedBaseURL.isEmpty else { return nil }
 
@@ -259,27 +329,17 @@ final class AppConfigurationModel {
         draft.userID = userID.trimmingCharacters(in: .whitespacesAndNewlines)
         draft.quotaDisplayMode = .remaining
 
-        let provider = relayDescriptorPreviewBuilder.build(
+        return relayDescriptorPreviewBuilder.build(
             draft: draft,
-            providers: host.config.providers + [baseProvider]
+            providers: existingProviders + [baseProvider]
         ) ?? baseProvider
+    }
 
-        host.config.providers.append(provider)
-        if host.config.statusBarProviderID == nil {
-            host.config.statusBarProviderID = provider.id
-        }
-
-        if let credentialInput {
-            let trimmedCredential = credentialInput.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmedCredential.isEmpty, let balanceAuth = provider.relayConfig?.balanceAuth {
-                _ = saveToken(trimmedCredential, auth: balanceAuth)
-            }
-        }
-
-        persistAndRestart()
-        host.notifyStatusBarDisplayConfigChanged()
-        host.refreshDisplayedStatusBarProviders()
-        return provider
+    private func stageRelayCredentialIfNeeded(_ credentialInput: String?, descriptor: ProviderDescriptor) {
+        guard let credentialInput else { return }
+        let trimmedCredential = credentialInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedCredential.isEmpty, let balanceAuth = descriptor.relayConfig?.balanceAuth else { return }
+        _ = saveToken(trimmedCredential, auth: balanceAuth)
     }
 
     func addOpenRelay(name: String, baseURL: String, preferredAdapterID: String? = nil) {

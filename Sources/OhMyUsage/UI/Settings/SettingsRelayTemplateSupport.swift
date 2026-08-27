@@ -298,7 +298,7 @@ extension SettingsView {
 
     func applyNewRelayTemplate(_ templateID: String) {
         newRelaySiteDraft.templateID = templateID
-        newRelaySiteDraft.testStatusVisible = false
+        newRelaySiteDraft.testState = .unverified
         guard let preset = relaySiteTemplates.first(where: { $0.id == templateID }) else { return }
         if let suggestedBaseURL = preset.suggestedBaseURL {
             newRelaySiteDraft.baseURL = suggestedBaseURL
@@ -311,7 +311,7 @@ extension SettingsView {
     }
 
     func applyRelayPreset(_ preset: RelayTemplatePreset) {
-        newRelaySiteDraft.testStatusVisible = false
+        newRelaySiteDraft.testState = .unverified
         if let suggestedBaseURL = preset.suggestedBaseURL {
             newRelaySiteDraft.baseURL = suggestedBaseURL
         } else {

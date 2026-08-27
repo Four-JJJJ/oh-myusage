@@ -42,6 +42,16 @@ struct SettingsProviderConfigurationFacade {
             snapshotPreview: nil
         )
     }
+    var testNewRelaySiteDraftHandler: (String, String, String?, String, String?) async -> RelayDiagnosticResult = { _, _, adapterID, _, _ in
+        RelayDiagnosticResult(
+            success: false,
+            fetchHealth: .endpointMisconfigured,
+            resolvedAdapterID: adapterID ?? "generic-newapi",
+            resolvedAuthSource: nil,
+            message: "",
+            snapshotPreview: nil
+        )
+    }
     var importRelayDraftFromBrowserHandler: (RelaySettingsDraft) async -> RelayDiagnosticResult = {
         RelayDiagnosticResult(
             success: false,
@@ -98,6 +108,16 @@ struct SettingsProviderConfigurationFacade {
                 snapshotPreview: nil
             )
         },
+        testNewRelaySiteDraft: @escaping (String, String, String?, String, String?) async -> RelayDiagnosticResult = { _, _, adapterID, _, _ in
+            RelayDiagnosticResult(
+                success: false,
+                fetchHealth: .endpointMisconfigured,
+                resolvedAdapterID: adapterID ?? "generic-newapi",
+                resolvedAuthSource: nil,
+                message: "",
+                snapshotPreview: nil
+            )
+        },
         importRelayDraftFromBrowser: @escaping (RelaySettingsDraft) async -> RelayDiagnosticResult = {
             RelayDiagnosticResult(
                 success: false,
@@ -134,6 +154,7 @@ struct SettingsProviderConfigurationFacade {
         commitProviderThresholdHandler = commitProviderThreshold
         saveRelayDraftHandler = saveRelayDraft
         testRelayDraftHandler = testRelayDraft
+        testNewRelaySiteDraftHandler = testNewRelaySiteDraft
         importRelayDraftFromBrowserHandler = importRelayDraftFromBrowser
         updateThirdPartyQuotaDisplayModeHandler = updateThirdPartyQuotaDisplayMode
         removeProviderHandler = removeProvider
@@ -172,6 +193,11 @@ struct SettingsProviderConfigurationFacade {
             commitProviderThreshold: { viewModel.commitProviderThreshold($0, providerID: $1) },
             saveRelayDraft: { viewModel.saveRelayDraft($0) },
             testRelayDraft: { await viewModel.testRelayDraft($0) },
+            testNewRelaySiteDraft: { name, baseURL, adapterID, userID, credential in
+                await viewModel.testNewRelaySiteDraft(
+                    name: name, baseURL: baseURL, preferredAdapterID: adapterID, userID: userID, credentialInput: credential
+                )
+            },
             importRelayDraftFromBrowser: { await viewModel.importRelayDraftFromBrowser($0) },
             updateThirdPartyQuotaDisplayMode: { viewModel.updateThirdPartyQuotaDisplayMode(providerID: $0, quotaDisplayMode: $1) },
             removeProvider: { viewModel.removeProvider(providerID: $0) }
@@ -284,6 +310,16 @@ struct SettingsProviderConfigurationFacade {
 
     func testRelayDraft(_ draft: RelaySettingsDraft) async -> RelayDiagnosticResult {
         await testRelayDraftHandler(draft)
+    }
+
+    func testNewRelaySiteDraft(
+        name: String,
+        baseURL: String,
+        preferredAdapterID: String?,
+        userID: String,
+        credentialInput: String?
+    ) async -> RelayDiagnosticResult {
+        await testNewRelaySiteDraftHandler(name, baseURL, preferredAdapterID, userID, credentialInput)
     }
 
     func importRelayDraftFromBrowser(_ draft: RelaySettingsDraft) async -> RelayDiagnosticResult {

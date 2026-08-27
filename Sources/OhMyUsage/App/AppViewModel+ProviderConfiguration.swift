@@ -87,6 +87,13 @@ extension AppViewModel {
     }
     func relayDescriptorForPreview(draft: RelaySettingsDraft) -> ProviderDescriptor? { configurationModel.relayDescriptorForPreview(draft: draft) }
     func testRelayDraft(_ draft: RelaySettingsDraft) async -> RelayDiagnosticResult { await configurationModel.testRelayDraft(draft) }
+    func testNewRelaySiteDraft(
+        name: String, baseURL: String, preferredAdapterID: String? = nil, userID: String, credentialInput: String? = nil
+    ) async -> RelayDiagnosticResult {
+        await configurationModel.testNewRelaySiteDraft(
+            name: name, baseURL: baseURL, preferredAdapterID: preferredAdapterID, userID: userID, credentialInput: credentialInput
+        )
+    }
     func importRelayDraftFromBrowser(_ draft: RelaySettingsDraft) async -> RelayDiagnosticResult { await configurationModel.importRelayDraftFromBrowser(draft) }
     func updateThirdPartyQuotaDisplayMode(providerID: String, quotaDisplayMode: OfficialQuotaDisplayMode) {
         configurationModel.updateThirdPartyQuotaDisplayMode(providerID: providerID, quotaDisplayMode: quotaDisplayMode)

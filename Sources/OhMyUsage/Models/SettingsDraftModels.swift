@@ -151,12 +151,20 @@ struct SettingsProfileDraftState {
     }
 }
 
+enum NewRelaySiteTestState: Equatable {
+    /// 尚未跑过真实链路测试（或测试后又有输入改动）
+    case unverified
+    case testing
+    case success
+    case failure(String)
+}
+
 struct NewRelaySiteDraftState {
     var providerName = ""
     var baseURL = ""
     var credentialInput = ""
     var userID = ""
-    var testStatusVisible = false
+    var testState: NewRelaySiteTestState = .unverified
     var templateID = "generic-newapi"
     var selectedPresetID: String?
 
@@ -165,7 +173,7 @@ struct NewRelaySiteDraftState {
         baseURL = ""
         credentialInput = ""
         userID = ""
-        testStatusVisible = false
+        testState = .unverified
         selectedPresetID = nil
         self.templateID = templateID
     }

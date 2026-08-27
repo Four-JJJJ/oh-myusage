@@ -138,7 +138,7 @@ extension SettingsView {
         newRelaySiteDraft.baseURL = ""
         newRelaySiteDraft.credentialInput = ""
         newRelaySiteDraft.userID = ""
-        newRelaySiteDraft.testStatusVisible = false
+        newRelaySiteDraft.testState = .unverified
         showingRelayNewSiteDraft = true
     }
 
@@ -530,7 +530,7 @@ extension SettingsView {
     }
 
     var relayNewSiteDraftSiteRow: some View {
-        let statusText = newRelaySiteDraft.testStatusVisible
+        let statusText = newRelaySiteDraft.testState == .success
             ? viewModel.localizedText("链接成功接口正常", "Connection succeeded and endpoint is healthy")
             : ""
         let metrics = [
@@ -561,7 +561,7 @@ extension SettingsView {
             currentText: nil,
             planType: nil,
             statusText: statusText,
-            statusColor: newRelaySiteDraft.testStatusVisible ? SettingsVisualTokens.Status.sufficient : .clear,
+            statusColor: newRelaySiteDraft.testState == .success ? SettingsVisualTokens.Status.sufficient : .clear,
             errorText: nil,
             metrics: metrics,
             actions: actions,
@@ -1223,7 +1223,7 @@ extension SettingsView {
             newRelaySiteDraft.baseURL = ""
             newRelaySiteDraft.credentialInput = ""
             newRelaySiteDraft.userID = ""
-            newRelaySiteDraft.testStatusVisible = false
+            newRelaySiteDraft.testState = .unverified
             if newRelaySiteDraft.providerName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 newRelaySiteDraft.providerName = "NewAPI"
             }

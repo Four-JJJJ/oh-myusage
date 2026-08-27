@@ -408,20 +408,4 @@ extension SettingsView {
         }
         .frame(maxWidth: .infinity, minHeight: 28, maxHeight: 28, alignment: .leading)
     }
-
-    func settingsConfigThresholdStaticRow(
-        title: String,
-        value: Double,
-        displayText: String,
-        valueStyle: SettingsThresholdValueStyle = .number
-    ) -> some View {
-        settingsConfigThresholdRow(
-            title: title,
-            value: .constant(value),
-            valueStyle: valueStyle,
-            displayTextOverride: displayText,
-            onEditingChanged: { _ in }
-        )
-        .allowsHitTesting(false)
-    }
 }

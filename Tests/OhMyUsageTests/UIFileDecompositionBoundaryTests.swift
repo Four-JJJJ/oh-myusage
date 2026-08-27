@@ -26,7 +26,6 @@ final class UIFileDecompositionBoundaryTests: XCTestCase {
         let thresholdControls = try String(contentsOf: thresholdControlsURL, encoding: .utf8)
         for focusedResponsibility in [
             "settingsConfigThresholdRow(",
-            "settingsConfigThresholdStaticRow(",
             "SettingsCompactThresholdSlider",
             "SettingsThresholdValueField"
         ] {
@@ -38,7 +37,6 @@ final class UIFileDecompositionBoundaryTests: XCTestCase {
 
         for sharedResponsibility in [
             "settingsConfigThresholdRow(",
-            "settingsConfigThresholdStaticRow(",
             "SettingsCompactThresholdSlider(",
             "SettingsThresholdValueField("
         ] {
