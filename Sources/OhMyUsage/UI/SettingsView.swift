@@ -22,6 +22,8 @@ struct SettingsView: View {
     @State var providerReorderLocalMouseUpMonitor: Any?
     @State var providerReorderGlobalMouseUpMonitor: Any?
     @FocusState var focusedRelayTitleEditorID: String?
+    @FocusState var focusedRelayCredentialProviderID: String?
+    @State var pendingRelayCredentialFocusProviderID: String?
 
     var providerConfigurationFacade: SettingsProviderConfigurationFacade {
         SettingsProviderConfigurationFacade(viewModel: viewModel)

@@ -322,22 +322,6 @@ final class AppConfigurationModel {
         _ = saveToken(trimmedCredential, auth: balanceAuth)
     }
 
-    func addOpenRelay(name: String, baseURL: String, preferredAdapterID: String? = nil) {
-        let host = requireHost()
-        let provider = ProviderDescriptor.makeOpenRelay(
-            name: name,
-            baseURL: baseURL,
-            preferredAdapterID: preferredAdapterID
-        )
-        host.config.providers.append(provider)
-        if host.config.statusBarProviderID == nil {
-            host.config.statusBarProviderID = provider.id
-        }
-        persistAndRestart()
-        host.notifyStatusBarDisplayConfigChanged()
-        host.refreshDisplayedStatusBarProviders()
-    }
-
     func removeProvider(providerID: String) {
         let host = requireHost()
         host.config.providers.removeAll { $0.id == providerID }

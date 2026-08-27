@@ -44,9 +44,6 @@ extension AppViewModel {
             credentialInput: credentialInput, balanceCredentialMode: balanceCredentialMode
         )
     }
-    func addOpenRelay(name: String, baseURL: String, preferredAdapterID: String? = nil) {
-        configurationModel.addOpenRelay(name: name, baseURL: baseURL, preferredAdapterID: preferredAdapterID)
-    }
     func removeProvider(providerID: String) { configurationModel.removeProvider(providerID: providerID) }
     func updateOpenProviderSettings(
         providerID: String, name: String, baseURL: String, preferredAdapterID: String? = nil,

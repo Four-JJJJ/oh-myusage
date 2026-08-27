@@ -18,16 +18,14 @@ extension SettingsView {
 
         guard enabled else { return }
 
-        let beforeIDs = Set(viewModel.config.providers.map(\.id))
-        viewModel.addOpenRelay(
-            name: preset.displayName,
-            baseURL: preset.suggestedBaseURL ?? "https://",
-            preferredAdapterID: preset.id
-        )
-        if let added = viewModel.config.providers.first(where: { !beforeIDs.contains($0.id) }) {
-            navigationState.selectedGroup = .thirdParty
-            navigationState.selectedProviderID = added.id
-        }
+        // Phase 2：preset 开关不再直接创建 provider，改为打开统一的草稿面板并预填 preset 模板
+        cancelActiveRelayTitleEdit()
+        newRelaySiteDraft.reset(using: preset.id)
+        newRelaySiteDraft.selectedPresetID = preset.id
+        applyRelayPreset(preset)
+        navigationState.selectedGroup = .thirdParty
+        navigationState.selectedProviderID = nil
+        showingRelayNewSiteDraft = true
     }
 
     var newAPICustomSection: some View {
@@ -60,31 +58,14 @@ extension SettingsView {
                 if showBaseURLField {
                     relayProminentTextField(viewModel.text(.baseURL), text: $newRelaySiteDraft.baseURL)
                 }
-                settingsActionButton(viewModel.text(.addProvider), prominent: true) {
-                    let resolvedBaseURL = resolvedRelayBaseURLInput(
-                        typedBaseURL: newRelaySiteDraft.baseURL,
-                        manifest: selectedManifest
-                    )
-                    guard !resolvedBaseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                        return
-                    }
-                    let beforeIDs = Set(viewModel.config.providers.map(\.id))
-                    viewModel.addOpenRelay(
-                        name: resolvedRelayNameInput(
-                            typedName: newRelaySiteDraft.providerName,
-                            manifest: selectedManifest
-                        ),
-                        baseURL: resolvedBaseURL,
-                        preferredAdapterID: newRelaySiteDraft.selectedPresetID ?? newRelaySiteDraft.templateID
-                    )
-                    if let added = viewModel.config.providers.first(where: { !beforeIDs.contains($0.id) }) {
-                        navigationState.selectedGroup = .thirdParty
-                        navigationState.selectedProviderID = added.id
-                    }
-                    let templateID = newRelaySiteDraft.templateID
-                    newRelaySiteDraft.reset(using: templateID)
-                    applyNewRelayTemplate(templateID)
+                settingsActionButton(viewModel.localizedText("继续", "Continue"), prominent: true) {
+                    // Phase 2：对话框不再直接创建 provider，改为带着已填的名称/地址
+                    // 打开统一的草稿面板补录凭证后再保存
                     dialogState.isNewAPISiteDialogPresented = false
+                    cancelActiveRelayTitleEdit()
+                    navigationState.selectedGroup = .thirdParty
+                    navigationState.selectedProviderID = nil
+                    showingRelayNewSiteDraft = true
                 }
             }
 
@@ -322,7 +303,7 @@ extension SettingsView {
 
     func selectedNewRelaySiteManifest() -> RelayAdapterManifest {
         if let selectedPresetID = newRelaySiteDraft.selectedPresetID,
-           let selectedPreset = relayBuiltInPresets.first(where: { $0.id == selectedPresetID }) {
+           let selectedPreset = relayTemplatePresets.first(where: { $0.id == selectedPresetID }) {
             return selectedPreset.manifest
         }
         if let selectedTemplate = relaySiteTemplates.first(where: { $0.id == newRelaySiteDraft.templateID }) {
@@ -365,6 +346,16 @@ extension SettingsView {
         navigationState.selectedGroup = .thirdParty
         navigationState.selectedProviderID = added.id
         showingRelayNewSiteDraft = false
+
+        // 保存后若仍缺凭证（余额凭证未填，或额度 token 通道开启但未保存），
+        // 让编辑页自动聚焦对应凭证输入框补录
+        let needsBalanceCredential = added.relayViewConfig?.accountBalance
+            .map { !viewModel.hasToken(auth: $0.auth) } ?? false
+        let needsQuotaCredential = (added.relayConfig?.tokenChannelEnabled ?? false)
+            && !viewModel.hasToken(for: added)
+        if needsBalanceCredential || needsQuotaCredential {
+            pendingRelayCredentialFocusProviderID = added.id
+        }
 
         let templateID = newRelaySiteDraft.templateID
         newRelaySiteDraft.reset(using: templateID)

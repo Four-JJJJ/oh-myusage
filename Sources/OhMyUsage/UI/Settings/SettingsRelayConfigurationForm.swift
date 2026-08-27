@@ -220,6 +220,7 @@ extension SettingsView {
                                     ),
                                     width: credentialFieldWidth
                                 )
+                                .focused($focusedRelayCredentialProviderID, equals: provider.id)
                                 .onSubmit(saveBalanceCredential)
                             } else {
                                 let hasSavedToken = providerConfiguration.hasToken(for: provider)
@@ -232,6 +233,7 @@ extension SettingsView {
                                     ),
                                     width: credentialFieldWidth
                                 )
+                                .focused($focusedRelayCredentialProviderID, equals: provider.id)
                                 .onSubmit(saveQuotaCredential)
                             }
                         }
@@ -319,10 +321,38 @@ extension SettingsView {
             }
             .padding(.leading, thirdPartyConfigLabelWidth + thirdPartyConfigLabelSpacing - 3)
         }
+        .onAppear { focusPendingRelayCredentialIfNeeded(provider) }
+        .onChange(of: navigationState.selectedProviderID) { _, _ in
+            focusPendingRelayCredentialIfNeeded(provider)
+        }
+    }
+
+    /// 保存新站点后若缺凭证，编辑页出现时自动聚焦凭证输入框补录
+    func focusPendingRelayCredentialIfNeeded(_ provider: ProviderDescriptor) {
+        guard pendingRelayCredentialFocusProviderID == provider.id else { return }
+        pendingRelayCredentialFocusProviderID = nil
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+            focusedRelayCredentialProviderID = provider.id
+        }
     }
 
     @ViewBuilder
     var relayNewSiteDraftConfigPanel: some View {
+        let newSiteManifest = selectedNewRelaySiteManifest()
+        let newSiteRequiredInputs = relayRequiredInputs(
+            for: newSiteManifest,
+            tokenChannelEnabled: newSiteManifest.tokenRequest != nil && newSiteManifest.match.defaultTokenChannelEnabled,
+            accountChannelEnabled: newSiteManifest.match.defaultBalanceChannelEnabled,
+            showsManualUserID: relayTemplateNeedsManualUserID(newSiteManifest)
+        )
+        let showBaseURLField = newSiteRequiredInputs.contains(.baseURL)
+        let showCredentialField = newSiteRequiredInputs.contains(.balanceAuth) || newSiteRequiredInputs.contains(.quotaAuth)
+        let showUserIDField = newSiteRequiredInputs.contains(.userID)
+        let credentialTemplate = relayCredentialTemplate(
+            authHeader: newSiteManifest.balanceRequest.authHeader,
+            authScheme: newSiteManifest.balanceRequest.authScheme
+        )
+
         settingsConfigurationSection(title: viewModel.localizedText("配置", "Configuration")) {
             settingsConfigurationRows {
                 relayCompactConfigRow(title: viewModel.localizedText("用量偏好", "Usage Preference")) {
@@ -337,17 +367,21 @@ extension SettingsView {
                     .allowsHitTesting(false)
                 }
 
-                relayCompactConfigRow(title: viewModel.localizedText("站点地址", "Site Address")) {
-                    settingsConfigTextField(
-                        viewModel.localizedText("填写站点访问地址", "Enter site URL"),
-                        text: Binding(
-                            get: { newRelaySiteDraft.baseURL },
-                            set: {
-                                newRelaySiteDraft.baseURL = $0
-                                newRelaySiteDraft.testState = .unverified
-                            }
+                if showBaseURLField {
+                    relayCompactConfigRow(title: viewModel.localizedText("站点地址", "Site Address")) {
+                        settingsConfigTextField(
+                            viewModel.localizedText("填写站点访问地址", "Enter site URL"),
+                            text: Binding(
+                                get: { newRelaySiteDraft.baseURL },
+                                set: {
+                                    newRelaySiteDraft.baseURL = $0
+                                    newRelaySiteDraft.testState = .unverified
+                                }
+                            )
                         )
-                    )
+                    }
+                } else if let suggestedBaseURL = suggestedBaseURL(for: newSiteManifest) {
+                    thirdPartyHintText("Base URL: \(suggestedBaseURL)")
                 }
 
                 VStack(alignment: .leading, spacing: 5) {
@@ -369,30 +403,47 @@ extension SettingsView {
                     )
                 }
 
-                relayCompactConfigRow(title: viewModel.localizedText("凭证", "Credential")) {
-                    settingsConfigSecureField(
-                        viewModel.localizedText("Authorization Bearer或者cookies", "Authorization Bearer or cookies"),
-                        text: Binding(
-                            get: { newRelaySiteDraft.credentialInput },
-                            set: {
-                                newRelaySiteDraft.credentialInput = $0
-                                newRelaySiteDraft.testState = .unverified
-                            }
-                        )
-                    )
+                if showCredentialField {
+                    VStack(alignment: .leading, spacing: 5) {
+                        relayCompactConfigRow(title: viewModel.localizedText("凭证", "Credential")) {
+                            settingsConfigSecureField(
+                                credentialTemplate.placeholder,
+                                text: Binding(
+                                    get: { newRelaySiteDraft.credentialInput },
+                                    set: {
+                                        newRelaySiteDraft.credentialInput = $0
+                                        newRelaySiteDraft.testState = .unverified
+                                    }
+                                )
+                            )
+                        }
+
+                        thirdPartyHintText(credentialTemplate.hint)
+                        if let balanceHint = relaySetupHint(for: newSiteManifest, field: .balanceAuth) {
+                            thirdPartyHintText(balanceHint)
+                        }
+                    }
                 }
 
-                relayCompactConfigRow(title: "User ID") {
-                    settingsConfigTextField(
-                        viewModel.localizedText("个人设置中的User ID", "User ID from personal settings"),
-                        text: Binding(
-                            get: { newRelaySiteDraft.userID },
-                            set: {
-                                newRelaySiteDraft.userID = $0
-                                newRelaySiteDraft.testState = .unverified
-                            }
-                        )
-                    )
+                if showUserIDField {
+                    VStack(alignment: .leading, spacing: 5) {
+                        relayCompactConfigRow(title: "User ID") {
+                            settingsConfigTextField(
+                                viewModel.localizedText("个人设置中的User ID", "User ID from personal settings"),
+                                text: Binding(
+                                    get: { newRelaySiteDraft.userID },
+                                    set: {
+                                        newRelaySiteDraft.userID = $0
+                                        newRelaySiteDraft.testState = .unverified
+                                    }
+                                )
+                            )
+                        }
+
+                        if let userIDHint = relaySetupHint(for: newSiteManifest, field: .userID) {
+                            thirdPartyHintText(userIDHint)
+                        }
+                    }
                 }
 
                 HStack(spacing: 12) {
