@@ -325,7 +325,7 @@ final class StatusBarController: NSObject {
             let fallback = NSImage(systemSymbolName: "moon.stars.fill", accessibilityDescription: "Kimi")
             fallback?.isTemplate = true
             return fallback
-        case .relay, .open, .dragon, .claude, .gemini, .copilot, .microsoftCopilot, .zai, .zaiBalance, .amp, .cursor, .jetbrains, .kiro, .windsurf, .grok, .trae, .openrouterCredits, .openrouterAPI, .ollamaCloud, .opencodeGo:
+        case .relay, .open, .dragon, .claude, .gemini, .copilot, .microsoftCopilot, .zai, .zaiBalance, .amp, .cursor, .jetbrains, .kiro, .windsurf, .grok, .trae, .openrouterCredits, .openrouterAPI, .ollamaCloud, .opencodeGo, .qwen, .qwenBalance:
             let fallback = NSImage(systemSymbolName: "globe", accessibilityDescription: "Relay")
             fallback?.isTemplate = true
             return fallback

@@ -40,7 +40,7 @@ final class AppOfficialProfileLifecycleCoordinator {
             ) { profile in
                 await refreshClaudeProfile(profile, descriptor)
             }
-        case .relay, .open, .dragon, .gemini, .copilot, .microsoftCopilot, .zai, .zaiBalance, .amp, .cursor, .jetbrains, .kiro, .windsurf, .kimi, .kimiBalance, .grok, .trae, .openrouterCredits, .openrouterAPI, .ollamaCloud, .opencodeGo:
+        case .relay, .open, .dragon, .gemini, .copilot, .microsoftCopilot, .zai, .zaiBalance, .amp, .cursor, .jetbrains, .kiro, .windsurf, .kimi, .kimiBalance, .grok, .trae, .openrouterCredits, .openrouterAPI, .ollamaCloud, .opencodeGo, .qwen, .qwenBalance:
             break
         }
     }
@@ -82,7 +82,7 @@ final class AppOfficialProfileLifecycleCoordinator {
             ) { profile in
                 await refreshClaudeProfile(profile, descriptor)
             }
-        case .relay, .open, .dragon, .gemini, .copilot, .microsoftCopilot, .zai, .zaiBalance, .amp, .cursor, .jetbrains, .kiro, .windsurf, .kimi, .kimiBalance, .grok, .trae, .openrouterCredits, .openrouterAPI, .ollamaCloud, .opencodeGo:
+        case .relay, .open, .dragon, .gemini, .copilot, .microsoftCopilot, .zai, .zaiBalance, .amp, .cursor, .jetbrains, .kiro, .windsurf, .kimi, .kimiBalance, .grok, .trae, .openrouterCredits, .openrouterAPI, .ollamaCloud, .opencodeGo, .qwen, .qwenBalance:
             break
         }
     }

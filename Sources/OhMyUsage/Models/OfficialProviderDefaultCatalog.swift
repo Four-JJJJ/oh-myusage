@@ -245,6 +245,37 @@ enum OfficialProviderDefaultCatalog {
         )
     }
 
+    static func qwen() -> ProviderDescriptor {
+        ProviderDescriptor(
+            id: "qwen-official",
+            name: "Qwen",
+            family: .official,
+            type: .qwen,
+            enabled: false,
+            pollIntervalSec: 60,
+            threshold: AlertRule(lowRemaining: 20, maxConsecutiveFailures: 2, notifyOnAuthError: true),
+            auth: .none,
+            baseURL: baseURL(for: .qwen),
+            officialConfig: config(for: .qwen)
+        )
+    }
+
+    /// 千问AI平台按量付费余额（platform.qianwenai.com），与 Coding Plan 额度独立配置。
+    static func qwenBalance() -> ProviderDescriptor {
+        ProviderDescriptor(
+            id: "qwen-balance-official",
+            name: "Qwen (API)",
+            family: .official,
+            type: .qwenBalance,
+            enabled: false,
+            pollIntervalSec: 300,
+            threshold: AlertRule(lowRemaining: 20, maxConsecutiveFailures: 2, notifyOnAuthError: true),
+            auth: .none,
+            baseURL: baseURL(for: .qwenBalance),
+            officialConfig: config(for: .qwenBalance)
+        )
+    }
+
     static func trae() -> ProviderDescriptor {
         ProviderDescriptor(
             id: "trae-official",
@@ -377,6 +408,8 @@ enum OfficialProviderDefaultCatalog {
             return "https://ollama.com"
         case .opencodeGo:
             return "https://opencode.ai"
+        case .qwen, .qwenBalance:
+            return "https://platform.qianwenai.com"
         case .relay, .open, .dragon:
             return ""
         }
@@ -429,6 +462,13 @@ enum OfficialProviderDefaultCatalog {
                 sourceMode: .auto,
                 webMode: .autoImport,
                 manualCookieAccount: "official/opencode-go/auth-cookie",
+                autoDiscoveryEnabled: true
+            )
+        case .qwen, .qwenBalance:
+            return OfficialProviderConfig(
+                sourceMode: .auto,
+                webMode: .autoImport,
+                manualCookieAccount: QwenProvider.manualCookieAccount,
                 autoDiscoveryEnabled: true
             )
         case .relay, .open, .dragon:

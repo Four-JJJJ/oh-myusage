@@ -135,7 +135,9 @@ final class AppConfigTests: XCTestCase {
                 "openrouter-credits-official",
                 "openrouter-api-official",
                 "ollama-cloud-official",
-                "opencode-go-official"
+                "opencode-go-official",
+                "qwen-official",
+                "qwen-balance-official"
             ]
         XCTAssertEqual(Array(ids.suffix(expectedSuffix.count)), expectedSuffix)
 

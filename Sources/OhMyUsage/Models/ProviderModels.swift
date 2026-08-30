@@ -60,7 +60,7 @@ extension ProviderDescriptor {
         switch type {
         case .relay, .open, .dragon:
             return true
-        case .codex, .claude, .gemini, .copilot, .microsoftCopilot, .zai, .zaiBalance, .amp, .cursor, .jetbrains, .kiro, .windsurf, .kimi, .kimiBalance, .grok, .trae, .openrouterCredits, .openrouterAPI, .ollamaCloud, .opencodeGo:
+        case .codex, .claude, .gemini, .copilot, .microsoftCopilot, .zai, .zaiBalance, .amp, .cursor, .jetbrains, .kiro, .windsurf, .kimi, .kimiBalance, .grok, .trae, .openrouterCredits, .openrouterAPI, .ollamaCloud, .opencodeGo, .qwen, .qwenBalance:
             return false
         }
     }

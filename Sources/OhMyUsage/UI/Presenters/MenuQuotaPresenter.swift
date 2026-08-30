@@ -235,9 +235,14 @@ enum MenuQuotaPresenter {
                 MenuQuotaMetric(id: "\(provider.id)-placeholder-session", title: placeholderMetricTitle(localization.quotaFiveHour, provider: provider, language: language), displayPercent: 0, healthPercent: 0, resetAt: nil, isAvailable: true, valueTextOverride: nil, kind: nil),
                 MenuQuotaMetric(id: "\(provider.id)-placeholder-weekly", title: placeholderMetricTitle(localization.quotaWeekly, provider: provider, language: language), displayPercent: 0, healthPercent: 0, resetAt: nil, isAvailable: true, valueTextOverride: nil, kind: nil)
             ]
-        case .zaiBalance, .kimiBalance:
+        case .zaiBalance, .kimiBalance, .qwenBalance:
             return [
                 MenuQuotaMetric(id: "\(provider.id)-placeholder-balance", title: "Balance", displayPercent: 0, healthPercent: 0, resetAt: nil, isAvailable: true, valueTextOverride: nil, kind: nil)
+            ]
+        case .qwen:
+            return [
+                MenuQuotaMetric(id: "\(provider.id)-placeholder-weekly", title: placeholderMetricTitle(localization.quotaWeekly, provider: provider, language: language), displayPercent: 0, healthPercent: 0, resetAt: nil, isAvailable: true, valueTextOverride: nil, kind: nil),
+                MenuQuotaMetric(id: "\(provider.id)-placeholder-credits", title: "加油包", displayPercent: 0, healthPercent: 0, resetAt: nil, isAvailable: true, valueTextOverride: nil, kind: nil)
             ]
         case .amp:
             return [

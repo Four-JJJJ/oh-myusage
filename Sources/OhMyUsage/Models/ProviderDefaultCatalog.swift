@@ -25,7 +25,9 @@ enum ProviderDefaultCatalog {
                 OfficialProviderDefaultCatalog.openRouterCredits(),
                 OfficialProviderDefaultCatalog.openRouterAPI(),
                 OfficialProviderDefaultCatalog.ollamaCloud(),
-                OfficialProviderDefaultCatalog.openCodeGo()
+                OfficialProviderDefaultCatalog.openCodeGo(),
+                OfficialProviderDefaultCatalog.qwen(),
+                OfficialProviderDefaultCatalog.qwenBalance()
             ]
     }
 }

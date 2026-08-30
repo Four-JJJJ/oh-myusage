@@ -143,6 +143,21 @@ enum ProviderTypeMetadataCatalog {
             supportedSourceModes: webSourceModes,
             supportedWebModes: importableWebModes
         ),
+        .qwen: ProviderTypeMetadata(
+            displayName: "Qwen",
+            iconName: "menu_qwen_icon",
+            fallbackSystemIcon: "sparkles",
+            supportedSourceModes: webSourceModes,
+            supportedWebModes: importableWebModes
+        ),
+        .qwenBalance: ProviderTypeMetadata(
+            displayName: "Qwen (API)",
+            iconName: "menu_qwen_icon",
+            fallbackSystemIcon: "sparkles",
+            preferredMetricCount: 1,
+            supportedSourceModes: webSourceModes,
+            supportedWebModes: importableWebModes
+        ),
         .relay: relayMetadata,
         .open: relayMetadata,
         .dragon: relayMetadata

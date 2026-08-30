@@ -100,6 +100,14 @@ extension ProviderDescriptor {
         OfficialProviderDefaultCatalog.openCodeGo()
     }
 
+    static func defaultOfficialQwen() -> ProviderDescriptor {
+        OfficialProviderDefaultCatalog.qwen()
+    }
+
+    static func defaultOfficialQwenBalance() -> ProviderDescriptor {
+        OfficialProviderDefaultCatalog.qwenBalance()
+    }
+
     static func defaultOpenAilinyu() -> ProviderDescriptor {
         RelayProviderDefaultCatalog.defaultOpenAilinyu()
     }

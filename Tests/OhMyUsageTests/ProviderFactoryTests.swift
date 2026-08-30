@@ -29,7 +29,9 @@ final class ProviderFactoryTests: XCTestCase {
             (.relayProvider(type: .dragon), RelayProvider.self),
             (.defaultOfficialKimi(), KimiSmartProvider.self),
             (.defaultOfficialKimiBalance(), MoonshotBalanceProvider.self),
-            (.defaultOfficialGrok(), GrokProvider.self)
+            (.defaultOfficialGrok(), GrokProvider.self),
+            (.defaultOfficialQwen(), QwenProvider.self),
+            (.defaultOfficialQwenBalance(), QwenProvider.self)
         ]
 
         XCTAssertEqual(cases.map(\.provider.type), ProviderType.allCases)

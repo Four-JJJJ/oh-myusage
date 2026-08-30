@@ -300,13 +300,16 @@ extension SettingsView {
                         kind: .custom
                     )
                 ]
-            case .zaiBalance, .kimiBalance:
+            case .zaiBalance, .kimiBalance, .qwenBalance:
+                // 纯余额卡片没有配额窗口：按余额映射健康度，与菜单金额卡同一套阈值
+                //（>50 充足 / >0 紧张 / <=0 耗尽），避免快照正常时误报「耗尽」。
+                let healthPercent = Self.pureBalanceHealthPercent(snapshot: snapshot)
                 windows = [
                     UsageQuotaWindow(
                         id: "\(provider.id)-placeholder-balance",
                         title: viewModel.localizedText("余额", "Balance"),
-                        remainingPercent: 0,
-                        usedPercent: 100,
+                        remainingPercent: healthPercent,
+                        usedPercent: 100 - healthPercent,
                         resetAt: nil,
                         kind: .credits
                     )
@@ -327,6 +330,25 @@ extension SettingsView {
                     UsageQuotaWindow(
                         id: "\(provider.id)-placeholder-limit",
                         title: "Limit",
+                        remainingPercent: 0,
+                        usedPercent: 100,
+                        resetAt: nil,
+                        kind: .credits
+                    )
+                ]
+            case .qwen:
+                windows = [
+                    UsageQuotaWindow(
+                        id: "\(provider.id)-placeholder-weekly",
+                        title: viewModel.text(.quotaWeekly),
+                        remainingPercent: 0,
+                        usedPercent: 100,
+                        resetAt: nil,
+                        kind: .weekly
+                    ),
+                    UsageQuotaWindow(
+                        id: "\(provider.id)-placeholder-credits",
+                        title: "加油包",
                         remainingPercent: 0,
                         usedPercent: 100,
                         resetAt: nil,
@@ -631,6 +653,10 @@ extension SettingsView {
         snapshot: UsageSnapshot?,
         displayPercent: Double
     ) -> String {
+        // 纯余额卡片（Z.ai / Kimi / Qwen 的 API 卡）显示金额而非百分比，与菜单金额卡一致。
+        if Self.isPureBalanceProvider(provider.type) {
+            return Self.pureBalanceValueText(provider: provider, snapshot: snapshot)
+        }
         if provider.type == .trae, provider.traeDisplaysAmount {
             if let amount = traeAmountValue(
                 window: window,
@@ -647,6 +673,30 @@ extension SettingsView {
             return "-"
         }
         return "\(Int(displayPercent.rounded()))%"
+    }
+
+    static func isPureBalanceProvider(_ type: ProviderType) -> Bool {
+        type == .zaiBalance || type == .kimiBalance || type == .qwenBalance
+    }
+
+    /// 余额健康度映射：对齐菜单金额卡阈值（>50 充足 / >0 紧张 / <=0 耗尽）。
+    static func pureBalanceHealthPercent(snapshot: UsageSnapshot?) -> Double {
+        guard let snapshot, let remaining = snapshot.remaining else { return 0 }
+        if remaining > 50 { return 100 }
+        if remaining > 0 { return 20 }
+        return 0
+    }
+
+    /// 余额数值文本：无快照时显示「-」而非误导性的「0%」；格式与菜单金额卡一致（两位小数）。
+    static func pureBalanceValueText(provider: ProviderDescriptor, snapshot: UsageSnapshot?) -> String {
+        guard let snapshot else { return "-" }
+        let value = provider.displaysUsedQuota ? snapshot.used : snapshot.remaining
+        guard let value else { return "-" }
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .decimal
+        formatter.maximumFractionDigits = 2
+        formatter.minimumFractionDigits = 2
+        return formatter.string(from: NSNumber(value: value)) ?? String(format: "%.2f", value)
     }
 
     func traeAmountValue(

@@ -378,8 +378,18 @@ extension SettingsView {
                 "获取说明：登录 trae.ai 后打开开发者工具 Network，刷新页面，复制 /trae/api/v1/pay/ide_user_ent_usage 请求头 Authorization（Cloud-IDE-JWT ...）粘贴到上方。",
                 "How to get token: sign in to trae.ai, open DevTools Network, refresh, then copy Authorization from /trae/api/v1/pay/ide_user_ent_usage (Cloud-IDE-JWT ...) and paste above."
             )
-        case .opencodeWorkspaceID, .manualCookie, .opencodeManualCookie, .relayBalanceAuth, .relayQuotaAuth:
+        case .opencodeWorkspaceID, .opencodeManualCookie, .relayBalanceAuth, .relayQuotaAuth:
             return nil
+        case .manualCookie:
+            switch provider.type {
+            case .qwen, .qwenBalance:
+                return viewModel.localizedText(
+                    "获取说明：浏览器登录千问AI平台（platform.qianwenai.com）后，手动刷新会自动导入登录 Cookie；也可打开开发者工具 Network，刷新页面，复制任意 platform.qianwenai.com 请求的 Cookie 请求头粘贴到上方。「Qwen」与「Qwen (API)」共用同一份 Cookie，填一次即可。",
+                    "How to get cookie: sign in to platform.qianwenai.com in your browser — a manual refresh imports the session cookie automatically; or open DevTools Network, refresh the page, and paste the Cookie header of any platform.qianwenai.com request above. The same cookie is shared between the Qwen and Qwen (API) cards."
+                )
+            default:
+                return nil
+            }
         }
     }
 

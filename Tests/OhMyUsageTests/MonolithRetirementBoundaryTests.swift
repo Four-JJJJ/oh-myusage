@@ -413,7 +413,9 @@ final class MonolithRetirementBoundaryTests: XCTestCase {
                     "openrouter-credits-official",
                     "openrouter-api-official",
                     "ollama-cloud-official",
-                    "opencode-go-official"
+                    "opencode-go-official",
+                    "qwen-official",
+                    "qwen-balance-official"
                 ]
         )
 

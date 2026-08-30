@@ -806,6 +806,10 @@ final class AppConfigurationModel {
             return "Ollama Cloud"
         case .opencodeGo:
             return "OpenCode Go"
+        case .qwen:
+            return "Qwen"
+        case .qwenBalance:
+            return "Qwen (API)"
         case .grok:
             return "Grok"
         case .relay, .open, .dragon:

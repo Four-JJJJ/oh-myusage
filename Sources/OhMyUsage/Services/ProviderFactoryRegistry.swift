@@ -139,6 +139,20 @@ struct ProviderFactoryRegistry {
             },
             .grok: { descriptor, _ in
                 GrokProvider(descriptor: descriptor)
+            },
+            .qwen: { descriptor, dependencies in
+                QwenProvider(
+                    descriptor: descriptor,
+                    keychain: dependencies.keychain,
+                    browserCookieService: dependencies.browserCookieService
+                )
+            },
+            .qwenBalance: { descriptor, dependencies in
+                QwenProvider(
+                    descriptor: descriptor,
+                    keychain: dependencies.keychain,
+                    browserCookieService: dependencies.browserCookieService
+                )
             }
         ]
     }
