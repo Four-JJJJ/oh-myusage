@@ -22,6 +22,8 @@ For extension and integration paths after the refactor, see [EXTENDING.md](./EXT
 | JetBrains AI | local data | Local XML usage parsing |
 | Kiro | CLI/local output | Credit-based usage |
 | OpenCode Go | opencode.ai web usage + local sqlite fallback | Remote truth first with local fallback when remote fails |
+| Qwen | platform.qianwenai.com web session | Token Plan personal edition: 7-day rolling quota window, credit packs, plan tier and reset time; browser cookie auto-import |
+| Qwen (API) | platform.qianwenai.com web session | Pay-as-you-go balance (CNY); shares the same cookie with the Qwen card |
 
 ## Third-Party Relay Templates
 

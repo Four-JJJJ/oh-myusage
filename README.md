@@ -9,6 +9,17 @@ oh-myusage 把官方订阅额度、模型使用窗口、第三方中转余额、
 
 [下载最新版本](https://github.com/Four-JJJJ/oh-myusage/releases/latest) · [安装说明](docs/DOWNLOAD.md) · [支持的服务](docs/PROVIDERS.md) · [扩展指南](docs/EXTENDING.md) · [发布清单](docs/RELEASE_CHECKLIST.md) · [English](docs/README.en.md)
 
+## V2.4.6 更新
+
+V2.4.6 新增千问AI平台官方来源（Qwen Coding Plan 限额卡与 Qwen (API) 余额卡），并统一所有 API 余额卡的设置页展示。
+
+| 方向 | 改进 |
+| --- | --- |
+| Qwen | 新增千问 Token Plan 个人版额度卡：7 天滚动限额、加油包 Credits、套餐档位与重置时间；浏览器登录 platform.qianwenai.com 后手动刷新即可自动导入登录态，也可手动粘贴 Cookie |
+| Qwen (API) | 新增千问按量付费余额卡，显示 CNY 可用额度，与 Qwen 卡共用同一份 Cookie |
+| 余额卡展示 | 设置页账号卡的 API 余额统一显示真实金额（两位小数），不再显示误导性百分比；状态按余额阈值映射（充足/紧张/耗尽），Z.ai / Kimi / Qwen 三家一致 |
+| 渠道图标 | 渠道图标切换为 lobehub 单色图标，深浅双主题自动适配 |
+
 ## V2.4.5 更新
 
 V2.4.5 新增 Kimi (API) 余额卡，统一 Z.ai / Kimi 卡片命名，并为官方服务补上凭证获取指引。
