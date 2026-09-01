@@ -30,11 +30,16 @@ enum AppCompositionFactory {
         updateCheckStatusClearDelaySeconds: TimeInterval = 10,
         settingsPersistenceStatusClearDelaySeconds: TimeInterval = 4
     ) -> AppDependencyGraph {
-        let resolvedProviderFactory = providerFactory ?? ProviderFactory(keychain: keychain)
+        let credentialBroker = CredentialBroker(keychain: keychain)
+        let resolvedProviderFactory = providerFactory ?? ProviderFactory(keychain: keychain, credentialBroker: credentialBroker)
         return AppDependencyGraph(
             keychain: keychain,
+            credentialBroker: credentialBroker,
             configurationRepository: configurationRepository,
-            credentialAccessService: CredentialAccessService(keychain: keychain),
+            credentialAccessService: CredentialAccessService(
+                keychain: keychain,
+                credentialBroker: credentialBroker
+            ),
             codexSlotStore: codexSlotStore,
             codexProfileStore: codexProfileStore,
             codexDesktopAuthService: codexDesktopAuthService,

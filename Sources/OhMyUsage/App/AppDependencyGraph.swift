@@ -5,6 +5,7 @@ import Foundation
 @MainActor
 struct AppDependencyGraph {
     let keychain: KeychainService
+    let credentialBroker: CredentialBroker
     let configurationRepository: any AppConfigurationRepositorying
     let credentialAccessService: CredentialAccessService
     let codexSlotStore: CodexAccountSlotStore

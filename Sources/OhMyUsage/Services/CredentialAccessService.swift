@@ -3,11 +3,13 @@ import Foundation
 @MainActor
 final class CredentialAccessService {
     private let keychain: KeychainService
+    private let credentialBroker: CredentialBroker
     private var lookupInFlight: Set<String> = []
     private var lookupMissingKeys: Set<String> = []
 
-    init(keychain: KeychainService) {
+    init(keychain: KeychainService, credentialBroker: CredentialBroker? = nil) {
         self.keychain = keychain
+        self.credentialBroker = credentialBroker ?? CredentialBroker(keychain: keychain)
     }
 
     var debugLookupInFlightCount: Int {
@@ -49,8 +51,10 @@ final class CredentialAccessService {
         ) != nil
     }
 
+    /// Credential writes go through the shared `CredentialBroker` so settings-page
+    /// saves and provider reads observe the same cache in one place.
     func saveCredential(_ value: String, service: String, account: String) -> Bool {
-        let ok = keychain.saveToken(value, service: service, account: account)
+        let ok = credentialBroker.saveToken(value, service: service, account: account)
         if ok {
             markLookupCached(service: service, account: account)
         }
@@ -60,12 +64,14 @@ final class CredentialAccessService {
     func resetAllStoredCredentials() {
         lookupInFlight.removeAll()
         lookupMissingKeys.removeAll()
+        credentialBroker.invalidateCache(service: nil, account: nil)
         keychain.resetAllStoredCredentials()
     }
 
     func invalidateLookupCache() {
         lookupInFlight.removeAll()
         lookupMissingKeys.removeAll()
+        credentialBroker.invalidateCache(service: nil, account: nil)
     }
 
     private func scheduleLookup(

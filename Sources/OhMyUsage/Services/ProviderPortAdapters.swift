@@ -1,7 +1,13 @@
 import Foundation
+import OhMyUsageInfrastructure
 import OhMyUsageProviders
 
 extension KeychainService: TokenCredentialStoring {}
+
+/// Providers keep depending on the `TokenCredentialStoring` port; the shared broker
+/// satisfies it (and the Infrastructure `CredentialStoring` port) via these adapters.
+extension CredentialBroker: TokenCredentialStoring {}
+extension CredentialBroker: CredentialStoring {}
 
 extension KimiBrowserCookieService: KimiBrowserCookieDetecting {}
 

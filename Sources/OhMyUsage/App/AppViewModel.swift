@@ -10,6 +10,7 @@ import UserNotifications
 final class AppViewModel {
     let keychain: KeychainService
     let configurationRepository: any AppConfigurationRepositorying
+    @ObservationIgnored let credentialBroker: CredentialBroker
     @ObservationIgnored let credentialAccessService: CredentialAccessService
     let thirdPartyBalanceBaselineStore = ThirdPartyBalanceBaselineStore()
     let codexSlotStore: CodexAccountSlotStore
@@ -383,6 +384,7 @@ final class AppViewModel {
         performsProductionBootstrapSideEffects: Bool
     ) {
         self.keychain = dependencyGraph.keychain
+        self.credentialBroker = dependencyGraph.credentialBroker
         self.configurationRepository = dependencyGraph.configurationRepository
         self.credentialAccessService = dependencyGraph.credentialAccessService
         self.codexSlotStore = dependencyGraph.codexSlotStore
@@ -492,7 +494,7 @@ final class AppViewModel {
                 self?.invalidateCredentialLookupCache()
             },
             prepareSecureStoreAccess: { [weak self] in
-                self?.keychain.prepareSecureStoreAccess() ?? false
+                self?.credentialBroker.prepareSecureStoreAccess().succeeded ?? false
             },
             presentSecureStorageAccessUI: { [weak self] in
                 guard let self else { return }
