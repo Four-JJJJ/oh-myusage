@@ -14,6 +14,7 @@ enum PermissionPrompt: Identifiable, Equatable {
     case fullDisk
     case autoDiscovery
     case resetLocalData
+    case deleteLocalCredentials
 
     var id: String {
         switch self {
@@ -22,6 +23,7 @@ enum PermissionPrompt: Identifiable, Equatable {
         case .fullDisk: return "fullDisk"
         case .autoDiscovery: return "autoDiscovery"
         case .resetLocalData: return "resetLocalData"
+        case .deleteLocalCredentials: return "deleteLocalCredentials"
         }
     }
 }

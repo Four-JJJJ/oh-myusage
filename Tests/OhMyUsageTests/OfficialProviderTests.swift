@@ -387,6 +387,343 @@ final class OfficialProviderTests: XCTestCase {
         XCTAssertTrue(persisted.contains("fresh-refresh-token"))
     }
 
+    func testCodexLoadCredentialsPrefersVaultOverLocalFilesAndSkipsExternalKeychain() async throws {
+        let homeDirectory = try makeTemporaryHomeDirectory(prefix: "codex-vault-priority")
+        let authDirectory = homeDirectory.appendingPathComponent(".config/codex", isDirectory: true)
+        try writeText(
+            codexAuthJSON(accessToken: "file-codex-access"),
+            to: authDirectory.appendingPathComponent("auth.json")
+        )
+        let (defaults, suiteName) = makeTestDefaults()
+        defer { removeTestDefaults(named: suiteName) }
+        let keychain = makeTestKeychain()
+        let vault = OfficialOAuthVaultStore(keychain: keychain, defaults: defaults)
+        XCTAssertTrue(
+            vault.saveOAuthJSON(provider: .codex, rawJSON: codexAuthJSON(accessToken: "vault-codex-access"))
+        )
+
+        var authorizationHeaders: [String] = []
+        OfficialMockURLProtocol.requestHandler = { request in
+            let url = try XCTUnwrap(request.url)
+            XCTAssertEqual(url.absoluteString, "https://chatgpt.com/backend-api/wham/usage")
+            authorizationHeaders.append(request.value(forHTTPHeaderField: "Authorization") ?? "")
+            let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            let body = """
+            {
+              "plan_type": "plus",
+              "rate_limit": {
+                "primary_window": { "used_percent": 25, "reset_at": 1760000000 },
+                "secondary_window": { "used_percent": 60, "reset_at": 1760500000 }
+              }
+            }
+            """
+            return (response, Data(body.utf8))
+        }
+        defer { OfficialMockURLProtocol.requestHandler = nil }
+
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [OfficialMockURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+
+        var descriptor = ProviderDescriptor.defaultOfficialCodex()
+        descriptor.id = "codex-vault-priority-\(UUID().uuidString)"
+        descriptor.officialConfig?.sourceMode = .api
+        descriptor.officialConfig?.webMode = .disabled
+
+        let provider = CodexProvider(
+            descriptor: descriptor,
+            session: session,
+            keychain: keychain,
+            browserCookieService: BrowserCookieService(),
+            cache: FetchedAtOfficialSnapshotCache(),
+            gate: PassthroughOfficialFetchGate(),
+            homeDirectory: { homeDirectory.path },
+            environment: { [:] }
+        )
+
+        _ = try await provider.fetch(forceRefresh: true)
+
+        XCTAssertEqual(authorizationHeaders, ["Bearer vault-codex-access"])
+    }
+
+    func testCodexRefreshUpdatesVaultWhenCredentialComesFromVault() async throws {
+        let homeDirectory = try makeTemporaryHomeDirectory(prefix: "codex-vault-refresh")
+        let (defaults, suiteName) = makeTestDefaults()
+        defer { removeTestDefaults(named: suiteName) }
+        let keychain = makeTestKeychain()
+        let vault = OfficialOAuthVaultStore(keychain: keychain, defaults: defaults)
+        let idToken = makeJWT(email: "vault-refresh@example.com")
+        XCTAssertTrue(
+            vault.saveOAuthJSON(
+                provider: .codex,
+                rawJSON: #"""
+                {
+                  "last_refresh": "2020-01-01T00:00:00Z",
+                  "tokens": {
+                    "access_token": "stale-vault-codex-access",
+                    "refresh_token": "vault-codex-refresh-token",
+                    "account_id": "vault-codex-account",
+                    "id_token": "\#(idToken)"
+                  }
+                }
+                """#
+            )
+        )
+
+        OfficialMockURLProtocol.requestHandler = { request in
+            let url = try XCTUnwrap(request.url)
+            if url.absoluteString == "https://auth.openai.com/oauth/token" {
+                let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
+                let bodyJSON = #"""
+                {
+                  "access_token": "fresh-vault-codex-access",
+                  "refresh_token": "fresh-vault-codex-refresh",
+                  "id_token": "\#(idToken)"
+                }
+                """#
+                return (response, Data(bodyJSON.utf8))
+            }
+
+            XCTAssertEqual(url.absoluteString, "https://chatgpt.com/backend-api/wham/usage")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer fresh-vault-codex-access")
+            let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            let body = """
+            {
+              "plan_type": "plus",
+              "rate_limit": {
+                "primary_window": { "used_percent": 10, "reset_at": 1760000000 },
+                "secondary_window": { "used_percent": 20, "reset_at": 1760500000 }
+              }
+            }
+            """
+            return (response, Data(body.utf8))
+        }
+        defer { OfficialMockURLProtocol.requestHandler = nil }
+
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [OfficialMockURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+
+        var descriptor = ProviderDescriptor.defaultOfficialCodex()
+        descriptor.id = "codex-vault-refresh-\(UUID().uuidString)"
+        descriptor.officialConfig?.sourceMode = .api
+        descriptor.officialConfig?.webMode = .disabled
+
+        let provider = CodexProvider(
+            descriptor: descriptor,
+            session: session,
+            keychain: keychain,
+            browserCookieService: BrowserCookieService(),
+            cache: FetchedAtOfficialSnapshotCache(),
+            gate: PassthroughOfficialFetchGate(),
+            homeDirectory: { homeDirectory.path },
+            environment: { [:] }
+        )
+
+        let snapshot = try await provider.fetch(forceRefresh: false)
+
+        XCTAssertEqual(snapshot.remaining ?? -1, 80, accuracy: 0.001)
+        let vaultJSON = try XCTUnwrap(vault.readOAuthJSON(provider: .codex))
+        XCTAssertTrue(vaultJSON.contains("fresh-vault-codex-access"))
+        XCTAssertTrue(vaultJSON.contains("fresh-vault-codex-refresh"))
+        XCTAssertFalse(vaultJSON.contains("stale-vault-codex-access"))
+    }
+
+    func testCodexMissingCredentialWhenVaultAndFilesAbsent() async throws {
+        let homeDirectory = try makeTemporaryHomeDirectory(prefix: "codex-vault-missing")
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [OfficialMockURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+
+        var descriptor = ProviderDescriptor.defaultOfficialCodex()
+        descriptor.id = "codex-vault-missing-\(UUID().uuidString)"
+        descriptor.officialConfig?.sourceMode = .api
+        descriptor.officialConfig?.webMode = .disabled
+
+        let provider = CodexProvider(
+            descriptor: descriptor,
+            session: session,
+            keychain: makeTestKeychain(),
+            browserCookieService: BrowserCookieService(),
+            cache: FetchedAtOfficialSnapshotCache(),
+            gate: PassthroughOfficialFetchGate(),
+            homeDirectory: { homeDirectory.path },
+            environment: { [:] }
+        )
+
+        do {
+            _ = try await provider.fetch(forceRefresh: false)
+            XCTFail("expected missing credential failure")
+        } catch let error as ProviderError {
+            guard case .missingCredential = error else {
+                return XCTFail("unexpected provider error: \(error)")
+            }
+        } catch {
+            XCTFail("unexpected error: \(error)")
+        }
+    }
+
+    func testClaudeLoadCredentialsPrefersVaultOverLocalFiles() async throws {
+        let homeDirectory = try makeTemporaryHomeDirectory(prefix: "claude-vault-priority")
+        try writeText(
+            claudeCredentialsJSON(accessToken: "file-claude-access"),
+            to: homeDirectory.appendingPathComponent(".claude/.credentials.json")
+        )
+        let (defaults, suiteName) = makeTestDefaults()
+        defer { removeTestDefaults(named: suiteName) }
+        let keychain = makeTestKeychain()
+        let vault = OfficialOAuthVaultStore(keychain: keychain, defaults: defaults)
+        XCTAssertTrue(
+            vault.saveOAuthJSON(provider: .claude, rawJSON: claudeCredentialsJSON(accessToken: "vault-claude-access"))
+        )
+
+        var authorizationHeaders: [String] = []
+        OfficialMockURLProtocol.requestHandler = { request in
+            let url = try XCTUnwrap(request.url)
+            XCTAssertEqual(url.absoluteString, "https://api.anthropic.com/api/oauth/usage")
+            authorizationHeaders.append(request.value(forHTTPHeaderField: "Authorization") ?? "")
+            let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            let body = """
+            {
+              "five_hour": { "utilization": 30, "resets_at": "2026-04-11T10:00:00Z" },
+              "seven_day": { "utilization": 55, "resets_at": "2026-04-17T00:00:00Z" }
+            }
+            """
+            return (response, Data(body.utf8))
+        }
+        defer { OfficialMockURLProtocol.requestHandler = nil }
+
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [OfficialMockURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+
+        var descriptor = ProviderDescriptor.defaultOfficialClaude()
+        descriptor.id = "claude-vault-priority-\(UUID().uuidString)"
+        descriptor.officialConfig?.sourceMode = .api
+        descriptor.officialConfig?.webMode = .disabled
+
+        let provider = ClaudeProvider(
+            descriptor: descriptor,
+            session: session,
+            keychain: keychain,
+            browserCookieService: BrowserCookieService(),
+            cache: FetchedAtOfficialSnapshotCache(),
+            gate: PassthroughOfficialFetchGate(),
+            homeDirectory: { homeDirectory.path }
+        )
+
+        _ = try await provider.fetch(forceRefresh: true)
+
+        XCTAssertEqual(authorizationHeaders, ["Bearer vault-claude-access"])
+    }
+
+    func testClaudeRefreshUpdatesVaultWhenCredentialComesFromVault() async throws {
+        let homeDirectory = try makeTemporaryHomeDirectory(prefix: "claude-vault-refresh")
+        let (defaults, suiteName) = makeTestDefaults()
+        defer { removeTestDefaults(named: suiteName) }
+        let keychain = makeTestKeychain()
+        let vault = OfficialOAuthVaultStore(keychain: keychain, defaults: defaults)
+        let soonExpiryMs = Date().timeIntervalSince1970 * 1000 + 1_000
+        XCTAssertTrue(
+            vault.saveOAuthJSON(
+                provider: .claude,
+                rawJSON: #"""
+                {
+                  "claudeAiOauth": {
+                    "accessToken": "stale-vault-claude-access",
+                    "refreshToken": "vault-claude-refresh-token",
+                    "expiresAt": \#(soonExpiryMs),
+                    "subscriptionType": "pro",
+                    "scopes": ["user:profile"]
+                  }
+                }
+                """#
+            )
+        )
+
+        OfficialMockURLProtocol.requestHandler = { request in
+            let url = try XCTUnwrap(request.url)
+            if url.absoluteString == "https://platform.claude.com/v1/oauth/token" {
+                let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
+                let bodyJSON = """
+                {
+                  "access_token": "fresh-vault-claude-access",
+                  "refresh_token": "fresh-vault-claude-refresh",
+                  "expires_in": 3600
+                }
+                """
+                return (response, Data(bodyJSON.utf8))
+            }
+
+            XCTAssertEqual(url.absoluteString, "https://api.anthropic.com/api/oauth/usage")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer fresh-vault-claude-access")
+            let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            let body = """
+            {
+              "five_hour": { "utilization": 20, "resets_at": "2026-04-11T10:00:00Z" },
+              "seven_day": { "utilization": 40, "resets_at": "2026-04-17T00:00:00Z" }
+            }
+            """
+            return (response, Data(body.utf8))
+        }
+        defer { OfficialMockURLProtocol.requestHandler = nil }
+
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [OfficialMockURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+
+        var descriptor = ProviderDescriptor.defaultOfficialClaude()
+        descriptor.id = "claude-vault-refresh-\(UUID().uuidString)"
+        descriptor.officialConfig?.sourceMode = .api
+        descriptor.officialConfig?.webMode = .disabled
+
+        let provider = ClaudeProvider(
+            descriptor: descriptor,
+            session: session,
+            keychain: keychain,
+            browserCookieService: BrowserCookieService(),
+            cache: FetchedAtOfficialSnapshotCache(),
+            gate: PassthroughOfficialFetchGate(),
+            homeDirectory: { homeDirectory.path }
+        )
+
+        _ = try await provider.fetch(forceRefresh: false)
+
+        let vaultJSON = try XCTUnwrap(vault.readOAuthJSON(provider: .claude))
+        XCTAssertTrue(vaultJSON.contains("fresh-vault-claude-access"))
+        XCTAssertTrue(vaultJSON.contains("fresh-vault-claude-refresh"))
+        XCTAssertFalse(vaultJSON.contains("stale-vault-claude-access"))
+    }
+
+    private func codexAuthJSON(accessToken: String) -> String {
+        let idToken = makeJWT(email: "vault-priority@example.com")
+        return #"""
+        {
+          "last_refresh": "\#(ISO8601DateFormatter().string(from: Date()))",
+          "tokens": {
+            "access_token": "\#(accessToken)",
+            "refresh_token": "vault-codex-refresh",
+            "account_id": "vault-codex-account",
+            "id_token": "\#(idToken)"
+          }
+        }
+        """#
+    }
+
+    private func claudeCredentialsJSON(accessToken: String) -> String {
+        #"""
+        {
+          "claudeAiOauth": {
+            "accessToken": "\#(accessToken)",
+            "refreshToken": "vault-claude-refresh",
+            "expiresAt": 4102444800000,
+            "subscriptionType": "pro",
+            "scopes": ["user:profile"]
+          }
+        }
+        """#
+    }
+
     func testClaudeForceRefreshDoesNotReturnStaleCachedSnapshot() async throws {
         let homeDirectory = try makeTemporaryHomeDirectory(prefix: "claude-provider-tests")
         let credentialsPath = homeDirectory.appendingPathComponent(".claude/.credentials.json")
@@ -855,6 +1192,49 @@ final class OfficialProviderTests: XCTestCase {
         )
         XCTAssertEqual(refreshed.header, "session=forced")
         XCTAssertEqual(spy.detectCookieHeaderCallCount, 2)
+    }
+
+    func testWebOverlayBackgroundRefreshUsesBackgroundIntentAndNeverAuthRecovery() async throws {
+        let providerKey = "test-overlay-intent-\(UUID().uuidString)"
+        let host = "\(providerKey).example.com"
+        let spy = SpyBrowserCookieDetector()
+        let strategy = OfficialBrowserCookieImportStrategy(
+            providerKey: providerKey,
+            hostContains: host,
+            namedCookie: nil,
+            autoImportMissingCredential: "missing auto cookie",
+            manualCredentialFallback: "manual cookie",
+            normalizeManualHeader: { $0 },
+            normalizeDetectedHeader: { $0 }
+        )
+
+        // Background refresh resolves with the .background intent only; the
+        // browser service itself refuses live lookups for that intent.
+        await XCTAssertThrowsProviderError {
+            _ = try await OfficialProviderWebOverlayRuntime.resolveCookieHeader(
+                official: OfficialProviderConfig(sourceMode: .web, webMode: .autoImport),
+                descriptorID: "\(providerKey)-descriptor",
+                keychain: makeTestKeychain(),
+                browserCookieService: spy,
+                forceRefresh: false,
+                strategy: strategy
+            )
+        }
+        XCTAssertEqual(spy.recordedIntents, [.background])
+
+        // The user-initiated force refresh is the interactive import path.
+        spy.cookieHeaderResult = BrowserCookieHeader(header: "session=forced", source: "Auto:Test")
+        let refreshed = try await OfficialProviderWebOverlayRuntime.resolveCookieHeader(
+            official: OfficialProviderConfig(sourceMode: .web, webMode: .autoImport),
+            descriptorID: "\(providerKey)-descriptor",
+            keychain: makeTestKeychain(),
+            browserCookieService: spy,
+            forceRefresh: true,
+            strategy: strategy
+        )
+        XCTAssertEqual(refreshed.header, "session=forced")
+        XCTAssertEqual(spy.recordedIntents, [.background, .interactiveImport])
+        XCTAssertFalse(spy.recordedIntents.contains(.authRecovery), "Web overlay never triggers browser recovery on its own")
     }
 
     func testClaudeWebBackoffSkipsRepeatedBrowserRead() async throws {
@@ -2176,6 +2556,7 @@ private final class SpyBrowserCookieDetector: BrowserCookieDetecting {
     var detectNamedCookieCallCount = 0
     var cookieHeaderResult: BrowserCookieHeader?
     var namedCookieResult: BrowserCookieHeader?
+    private(set) var recordedIntents: [BrowserCredentialAccessIntent] = []
 
     func detectCookieHeader(
         hostContains: String,
@@ -2183,6 +2564,7 @@ private final class SpyBrowserCookieDetector: BrowserCookieDetecting {
         accessIntent: BrowserCredentialAccessIntent
     ) -> BrowserCookieHeader? {
         detectCookieHeaderCallCount += 1
+        recordedIntents.append(accessIntent)
         return cookieHeaderResult
     }
 
@@ -2193,6 +2575,7 @@ private final class SpyBrowserCookieDetector: BrowserCookieDetecting {
         accessIntent: BrowserCredentialAccessIntent
     ) -> BrowserCookieHeader? {
         detectNamedCookieCallCount += 1
+        recordedIntents.append(accessIntent)
         return namedCookieResult
     }
 }

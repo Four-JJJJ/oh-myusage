@@ -6,11 +6,13 @@ import Foundation
 struct AppDependencyGraph {
     let keychain: KeychainService
     let credentialBroker: CredentialBroker
+    let oauthVaultStore: OfficialOAuthVaultStore
     let configurationRepository: any AppConfigurationRepositorying
     let credentialAccessService: CredentialAccessService
     let codexSlotStore: CodexAccountSlotStore
     let codexProfileStore: CodexAccountProfileStore
     let codexDesktopAuthService: CodexDesktopAuthService
+    let claudeDesktopAuthService: ClaudeDesktopAuthService
     let codexDesktopAppService: CodexDesktopAppService
     let codexProfileSnapshotService: CodexProfileSnapshotService
     let notifications: NotificationService

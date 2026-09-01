@@ -183,6 +183,74 @@ final class OAuthImportOrchestratorTests: XCTestCase {
         )
     }
 
+    @MainActor
+    func testCodexImportWritesVaultBeforeReportingSuccess() async {
+        let (defaults, suiteName) = makeTestDefaults()
+        defer { removeTestDefaults(named: suiteName) }
+        let vault = OfficialOAuthVaultStore(keychain: makeTestKeychain(), defaults: defaults)
+        let rawJSON = Self.sampleCodexAuthJSON(accountID: "acc-a", email: "a@example.com")
+        let orchestrator = OAuthImportOrchestrator(
+            commandRunner: { _, _ in
+                OAuthImportCommandResult(status: 0, timedOut: false, wasCancelled: false, stdout: "ok", stderr: "")
+            },
+            credentialLoader: { provider in
+                guard provider == .codex else { return nil }
+                return OAuthImportCredential(
+                    rawJSON: rawJSON,
+                    fingerprint: "finger-a",
+                    accountEmail: "a@example.com"
+                )
+            },
+            oauthVault: vault
+        )
+
+        var phases: [OAuthImportPhase] = []
+        let result = await orchestrator.importAccount(provider: .codex, slotID: .a) { state in
+            phases.append(state.phase)
+        }
+
+        guard case .success = result else {
+            return XCTFail("expected success, got \(result)")
+        }
+        XCTAssertEqual(phases.last, .succeeded)
+        // The normalized OAuth JSON is in the app vault before the import completes.
+        XCTAssertEqual(vault.readOAuthJSON(provider: .codex), rawJSON)
+        XCTAssertTrue(vault.isMigrationComplete(provider: .codex))
+    }
+
+    @MainActor
+    func testImportFailsWhenVaultWriteFails() async {
+        let (defaults, suiteName) = makeTestDefaults()
+        defer { removeTestDefaults(named: suiteName) }
+        let vault = OfficialOAuthVaultStore(keychain: FailingTokenCredentialStore(), defaults: defaults)
+        let orchestrator = OAuthImportOrchestrator(
+            commandRunner: { _, _ in
+                OAuthImportCommandResult(status: 0, timedOut: false, wasCancelled: false, stdout: "ok", stderr: "")
+            },
+            credentialLoader: { provider in
+                guard provider == .claude else { return nil }
+                return OAuthImportCredential(
+                    rawJSON: Self.sampleClaudeCredentialsJSON(email: "claude@example.com"),
+                    fingerprint: "finger-claude",
+                    accountEmail: "claude@example.com"
+                )
+            },
+            oauthVault: vault
+        )
+
+        var phases: [OAuthImportPhase] = []
+        let result = await orchestrator.importAccount(provider: .claude, slotID: .a) { state in
+            phases.append(state.phase)
+        }
+
+        guard case .failure(let error) = result else {
+            return XCTFail("expected failure, got \(result)")
+        }
+        XCTAssertEqual(error, .vaultWriteFailed)
+        XCTAssertEqual(phases.last, .failed)
+        XCTAssertNil(vault.readOAuthJSON(provider: .claude))
+    }
+
     private static func sampleCodexAuthJSON(accountID: String, email: String) -> String {
         let payload = Data(#"{"email":"\#(email)"}"#.utf8).base64EncodedString()
             .replacingOccurrences(of: "+", with: "-")

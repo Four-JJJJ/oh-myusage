@@ -28,6 +28,8 @@ struct AccountStore {
 struct PermissionStore {
     var notificationAuthorizationStatus: UNAuthorizationStatus = .notDetermined
     var secureStorageReady = false
+    /// App-vault level credential access state for the fixed status copy set (doc 7.5).
+    var credentialAccessState: CredentialAccessState = .notConfigured
     var fullDiskAccessGranted = false
     var fullDiskAccessRelevant = false
     var fullDiskAccessRequested = false

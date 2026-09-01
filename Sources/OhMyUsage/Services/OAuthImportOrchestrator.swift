@@ -58,6 +58,7 @@ enum OAuthImportError: LocalizedError, Equatable {
     case cancelled
     case missingCredential
     case invalidCredential
+    case vaultWriteFailed
 
     var errorDescription: String? {
         switch self {
@@ -73,6 +74,8 @@ enum OAuthImportError: LocalizedError, Equatable {
             return "No local credential was detected after login"
         case .invalidCredential:
             return "The detected local credential is invalid"
+        case .vaultWriteFailed:
+            return "Failed to store the imported OAuth credential in the app vault"
         }
     }
 }
@@ -102,6 +105,7 @@ actor OAuthImportOrchestrator {
 
     private let commandRunner: (@Sendable (OAuthImportCLICommand, TimeInterval) async -> OAuthImportCommandResult)?
     private let credentialLoader: (@Sendable (OAuthImportProvider) -> OAuthImportCredential?)?
+    private let oauthVault: OfficialOAuthVaultStore?
 
     private var runningProcesses: [OAuthImportProvider: Process] = [:]
     private var cancellationRequests: Set<OAuthImportProvider> = []
@@ -143,10 +147,12 @@ actor OAuthImportOrchestrator {
 
     init(
         commandRunner: (@Sendable (OAuthImportCLICommand, TimeInterval) async -> OAuthImportCommandResult)? = nil,
-        credentialLoader: (@Sendable (OAuthImportProvider) -> OAuthImportCredential?)? = nil
+        credentialLoader: (@Sendable (OAuthImportProvider) -> OAuthImportCredential?)? = nil,
+        oauthVault: OfficialOAuthVaultStore? = nil
     ) {
         self.commandRunner = commandRunner
         self.credentialLoader = credentialLoader
+        self.oauthVault = oauthVault
     }
 
     func importAccount(
@@ -375,6 +381,22 @@ actor OAuthImportOrchestrator {
                 stateHandler: stateHandler
             )
             return .failure(.missingCredential)
+        }
+
+        // Phase 1 §7.6: the import only completes after the normalized OAuth JSON
+        // was parse-verified and written into the app vault (via the shared broker).
+        // The `.succeeded` completion marker is emitted only after that write.
+        if let oauthVault, !oauthVault.saveOAuthJSON(provider: provider, rawJSON: credential.rawJSON) {
+            await emitState(
+                provider: provider,
+                slotID: slotID,
+                mode: mode,
+                phase: .failed,
+                detail: nil,
+                startedAt: startedAt,
+                stateHandler: stateHandler
+            )
+            return .failure(.vaultWriteFailed)
         }
 
         await emitState(

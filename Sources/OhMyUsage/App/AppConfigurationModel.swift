@@ -41,6 +41,39 @@ final class AppConfigurationModel {
             config: &host.config
         )
         applyProviderListMutation(outcome)
+        prepareSecureStoreForEnabledProviderIfNeeded(enabled: enabled, providerID: providerID)
+    }
+
+    /// 首次授权流程（doc 7.5）：用户启用需要凭证的 Provider 时，才发起一次交互式
+    /// 准备；vault 已就绪、本次会话已拒绝过、或 Provider 不需要 vault 凭证时不打扰。
+    /// 就绪判断只读 vault 准备标志 + 缓存元数据（非交互）。
+    private func prepareSecureStoreForEnabledProviderIfNeeded(enabled: Bool, providerID: String) {
+        guard enabled else { return }
+        let host = requireHost()
+        guard !host.keychain.isSecureStoreReady(),
+              host.credentialAccessState != .systemAccessRequired else { return }
+        guard let provider = host.config.providers.first(where: { $0.id == providerID }),
+              Self.providerRequiresVaultCredentials(provider) else { return }
+        host.prepareSecureStorageAccess()
+    }
+
+    /// 该 Provider 是否依赖应用 vault 凭证（keychain 授权槽位 / 手动 Cookie /
+    /// relay 余额凭证）。纯本地文件来源（如 Codex auth.json）不算。
+    static func providerRequiresVaultCredentials(_ descriptor: ProviderDescriptor) -> Bool {
+        if descriptor.auth.kind != .none,
+           descriptor.auth.keychainService != nil,
+           descriptor.auth.keychainAccount != nil {
+            return true
+        }
+        if descriptor.officialConfig?.manualCookieAccount != nil {
+            return true
+        }
+        if let balanceAuth = descriptor.relayConfig?.balanceAuth,
+           balanceAuth.keychainService != nil,
+           balanceAuth.keychainAccount != nil {
+            return true
+        }
+        return false
     }
 
     func reorderEnabledProviders(
@@ -186,6 +219,60 @@ final class AppConfigurationModel {
                 host.credentialAccessService.invalidateLookupCache()
             }
         )
+    }
+
+    /// 单一凭证状态查询：把共享 broker 的 `CredentialAccessState` 映射进
+    /// 权限/状态展示（doc 7.5 固定文案），非交互、不弹窗。
+    func credentialAccessState(for descriptor: ProviderDescriptor) -> CredentialAccessState {
+        let host = requireHost()
+        return host.credentialAccessService.credentialAccessState(
+            service: descriptor.auth.keychainService,
+            account: descriptor.auth.keychainAccount
+        )
+    }
+
+    /// 删除本机凭证：枚举配置内所有 vault 凭证槽位 + 底层存储已知条目，
+    /// 逐条经共享 broker 的 `deleteToken` 实删 vault 数据，并刷新凭证状态。
+    /// 不修改模型配置和其他本地数据（与“重置所有数据”的边界）。
+    @discardableResult
+    func deleteAllLocalCredentials() -> Bool {
+        let host = requireHost()
+        let allDeleted = host.credentialAccessService.deleteAllCredentials(
+            extraServiceAccounts: Self.credentialTargets(in: host.config.providers)
+        )
+        applyCredentialMutationOutcome(
+            AppCredentialMutationOutcome(didPersistCredential: false, shouldBumpLookupVersion: true)
+        )
+        host.refreshPermissionStatusesNow()
+        return allDeleted
+    }
+
+    /// 当前配置内全部已知 vault 凭证槽位（auth 授权槽位、官方手动 Cookie、
+    /// relay 余额凭证），去重后返回。仅含槽位标识，不含任何凭证内容。
+    static func credentialTargets(
+        in providers: [ProviderDescriptor]
+    ) -> [(service: String, account: String)] {
+        var seen = Set<String>()
+        var targets: [(service: String, account: String)] = []
+        func append(_ service: String?, _ account: String?) {
+            guard let service, let account else { return }
+            let trimmedService = service.trimmingCharacters(in: .whitespacesAndNewlines)
+            let trimmedAccount = account.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmedService.isEmpty, !trimmedAccount.isEmpty else { return }
+            let key = "\(trimmedService)::\(trimmedAccount)"
+            guard seen.insert(key).inserted else { return }
+            targets.append((trimmedService, trimmedAccount))
+        }
+        for provider in providers {
+            append(provider.auth.keychainService, provider.auth.keychainAccount)
+            if let account = provider.officialConfig?.manualCookieAccount {
+                append(KeychainService.defaultServiceName, account)
+            }
+            if let balanceAuth = provider.relayConfig?.balanceAuth {
+                append(balanceAuth.keychainService, balanceAuth.keychainAccount)
+            }
+        }
+        return targets
     }
 
     // MARK: - Relay / open providers

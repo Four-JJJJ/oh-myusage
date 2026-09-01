@@ -222,14 +222,18 @@ final class AppOfficialProfilesModel {
                 }
                 let provider = host.providerFactory.makeProvider(for: descriptor)
                 let fetched = try await provider.fetch(forceRefresh: true)
-                if let currentAuthJSON = host.codexDesktopAuthService.currentAuthJSON() {
+                let snapshot = self.markCodexSnapshotActive(fetched, preferredSlotID: slotID)
+                // Capture refreshes the Codex desktop app performed while the
+                // verification fetch ran (files are the system truth here), and
+                // keep the app vault in sync with them.
+                if let currentAuthJSON = host.codexDesktopAuthService.currentSystemFileAuthJSON() {
                     _ = host.codexProfileStore.updateStoredAuthJSON(
                         slotID: slotID,
                         authJSON: currentAuthJSON
                     )
+                    host.codexDesktopAuthService.saveVaultOAuthJSON(currentAuthJSON)
                     self.syncCodexProfilesCurrentState()
                 }
-                let snapshot = self.markCodexSnapshotActive(fetched, preferredSlotID: slotID)
                 return OfficialAccountSwitchVerificationResult(
                     descriptor: descriptor,
                     snapshot: snapshot

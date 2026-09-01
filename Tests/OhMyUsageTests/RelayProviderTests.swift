@@ -2479,8 +2479,14 @@ final class RelayProviderTests: XCTestCase {
         XCTAssertEqual(snapshot.rawMeta["account.authSource"], "browserBearer:browser")
     }
 
-    func testBrowserOnlyModeIgnoresSavedCookieAndUsesBrowserCookie() async throws {
+    func testBrowserOnlyBackgroundReimportsExpiredVaultCookieThroughGatedRecovery() async throws {
+        let host = "browseronly-recovery-\(UUID().uuidString).example".lowercased()
         RelayMockURLProtocol.requestHandler = { request in
+            let cookie = request.value(forHTTPHeaderField: "Cookie") ?? ""
+            if cookie.contains("stale-cookie") {
+                let unauthorized = HTTPURLResponse(url: request.url!, statusCode: 401, httpVersion: nil, headerFields: nil)!
+                return (unauthorized, Data(#"{"error":"expired"}"#.utf8))
+            }
             XCTAssertEqual(request.value(forHTTPHeaderField: "Cookie"), "api-platform_serviceToken=fresh-browser-cookie; userid=40004")
             let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
             switch request.url?.path {
@@ -2501,19 +2507,28 @@ final class RelayProviderTests: XCTestCase {
 
         let service = "OhMyUsageTests-\(UUID().uuidString)"
         let keychain = makeTestKeychain()
-        XCTAssertTrue(keychain.saveToken("api-platform_serviceToken=stale-cookie; userid=11111", service: service, account: "platform.xiaomimimo.com/system-token"))
+        XCTAssertTrue(keychain.saveToken(
+            "api-platform_serviceToken=stale-cookie; userid=11111",
+            service: service,
+            account: "\(host)/system-token"
+        ))
 
-        var descriptor = makeRelayDescriptor(service: service, adapterID: "xiaomimimo", baseURL: "https://platform.xiaomimimo.com")
+        var descriptor = makeRelayDescriptor(service: service, adapterID: "xiaomimimo", baseURL: "https://\(host)")
         descriptor.relayConfig?.balanceCredentialMode = .browserOnly
 
+        var browserCookieLookupCount = 0
         let provider = RelayProvider(
             descriptor: descriptor,
             session: session,
             keychain: keychain,
             browserCredentialService: BrowserCredentialService(
-                cookieHeaderOverride: { host in
-                    guard host == "platform.xiaomimimo.com" else { return nil }
-                    return BrowserDetectedCredential(value: "api-platform_serviceToken=fresh-browser-cookie; userid=40004", source: "browser")
+                cookieHeaderOverride: { candidateHost in
+                    guard candidateHost == host else { return nil }
+                    browserCookieLookupCount += 1
+                    return BrowserDetectedCredential(
+                        value: "api-platform_serviceToken=fresh-browser-cookie; userid=40004",
+                        source: "browser"
+                    )
                 }
             )
         )
@@ -2521,6 +2536,118 @@ final class RelayProviderTests: XCTestCase {
         let snapshot = try await provider.fetch()
         XCTAssertEqual(snapshot.remaining ?? -1, 18.80, accuracy: 0.001)
         XCTAssertEqual(snapshot.rawMeta["account.authSource"], "browserCookieHeader:browser")
+        XCTAssertEqual(
+            keychain.readToken(service: service, account: "\(host)/system-token"),
+            "api-platform_serviceToken=fresh-browser-cookie; userid=40004",
+            "Recovered browser cookies are persisted into the vault"
+        )
+        XCTAssertEqual(browserCookieLookupCount, 1, "Background recovery scans the browser at most once per backoff window")
+
+        let refreshed = try await provider.fetch()
+        XCTAssertEqual(refreshed.remaining ?? -1, 18.80, accuracy: 0.001)
+        XCTAssertEqual(refreshed.rawMeta["account.authSource"], "savedCookieHeader", "Background polls prefer the vault credential")
+        XCTAssertEqual(browserCookieLookupCount, 1, "Subsequent background polls must not rescan browsers")
+    }
+
+    func testBrowserOnlyBackgroundPollPrefersVaultCookieWithoutBrowserLookup() async throws {
+        let host = "browseronly-vault-\(UUID().uuidString).example".lowercased()
+        RelayMockURLProtocol.requestHandler = { request in
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Cookie"), "api-platform_serviceToken=vault-cookie; userid=7")
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            switch request.url?.path {
+            case "/api/v1/userProfile":
+                return (response, Data(#"{"data":{"nickname":"mimo-user"}}"#.utf8))
+            case "/api/v1/balance":
+                return (response, Data(#"{"data":{"availableBalance":"12.34"}}"#.utf8))
+            default:
+                XCTFail("Unexpected path \(request.url?.path ?? "nil")")
+                return (response, Data(#"{}"#.utf8))
+            }
+        }
+        defer { RelayMockURLProtocol.requestHandler = nil }
+
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [RelayMockURLProtocol.self]
+        let session = URLSession(configuration: config)
+
+        let service = "OhMyUsageTests-\(UUID().uuidString)"
+        let keychain = makeTestKeychain()
+        XCTAssertTrue(keychain.saveToken(
+            "api-platform_serviceToken=vault-cookie; userid=7",
+            service: service,
+            account: "\(host)/system-token"
+        ))
+
+        var descriptor = makeRelayDescriptor(service: service, adapterID: "xiaomimimo", baseURL: "https://\(host)")
+        descriptor.relayConfig?.balanceCredentialMode = .browserOnly
+
+        var browserCookieLookupCount = 0
+        let provider = RelayProvider(
+            descriptor: descriptor,
+            session: session,
+            keychain: keychain,
+            browserCredentialService: BrowserCredentialService(
+                cookieHeaderOverride: { _ in
+                    browserCookieLookupCount += 1
+                    return BrowserDetectedCredential(
+                        value: "api-platform_serviceToken=live-cookie; userid=8",
+                        source: "browser"
+                    )
+                }
+            )
+        )
+
+        let snapshot = try await provider.fetch()
+        XCTAssertEqual(snapshot.remaining ?? -1, 12.34, accuracy: 0.001)
+        XCTAssertEqual(snapshot.rawMeta["account.authSource"], "savedCookieHeader")
+        XCTAssertEqual(browserCookieLookupCount, 0, "Background polls with a vault credential never touch browser stores")
+    }
+
+    func testBrowserOnlyBackgroundPollNeverUsesInteractiveImportIntent() async throws {
+        let host = "browseronly-intent-\(UUID().uuidString).example".lowercased()
+        RelayMockURLProtocol.requestHandler = { _ in
+            XCTFail("Missing credential should stop before any network request")
+            let response = HTTPURLResponse(url: URL(string: "https://\(host)/api/v1/userProfile")!, statusCode: 500, httpVersion: nil, headerFields: nil)!
+            return (response, Data())
+        }
+        defer { RelayMockURLProtocol.requestHandler = nil }
+
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [RelayMockURLProtocol.self]
+        let session = URLSession(configuration: config)
+
+        let service = "OhMyUsageTests-\(UUID().uuidString)"
+        var descriptor = makeRelayDescriptor(service: service, adapterID: "xiaomimimo", baseURL: "https://\(host)")
+        descriptor.relayConfig?.balanceCredentialMode = .browserOnly
+
+        let spy = RelayIntentRecordingBrowserCredentialService()
+        let provider = RelayProvider(
+            descriptor: descriptor,
+            session: session,
+            keychain: makeTestKeychain(),
+            browserCredentialService: spy
+        )
+
+        do {
+            _ = try await provider.fetch()
+            XCTFail("Expected unauthorizedDetail")
+        } catch let error as ProviderError {
+            guard case .unauthorizedDetail(let message) = error else {
+                return XCTFail("Expected unauthorizedDetail, got \(error)")
+            }
+            XCTAssertTrue(message.contains("No live XiaomiMIMO login"))
+        }
+
+        let intents = spy.recordedIntents.map(relayIntentName)
+        XCTAssertFalse(intents.contains("interactiveImport"), "Background polls must not run interactive browser imports")
+        XCTAssertEqual(intents.filter { $0 == "authRecovery" }.count, 1, "Recovery runs at most once before the backoff kicks in")
+
+        do {
+            _ = try await provider.fetch()
+            XCTFail("Expected unauthorizedDetail")
+        } catch {}
+        XCTAssertEqual(spy.recordedIntents.map(relayIntentName).filter { $0 == "authRecovery" }.count, 1, "The recovery backoff prevents per-poll browser scans")
+        XCTAssertFalse(spy.recordedIntents.map(relayIntentName).contains("interactiveImport"))
     }
 
     func testDeepseekSummaryExtractsWalletBalance() async throws {
@@ -2965,6 +3092,14 @@ final class RelayProviderTests: XCTestCase {
         return descriptor
     }
 
+    private func relayIntentName(_ intent: BrowserCredentialAccessIntent) -> String {
+        switch intent {
+        case .background: return "background"
+        case .interactiveImport: return "interactiveImport"
+        case .authRecovery: return "authRecovery"
+        }
+    }
+
     private func makeJWT(exp: Int) -> String {
         let header = #"{"alg":"HS256","typ":"JWT"}"#
         let payload = #"{"exp":\#(exp)}"#
@@ -2977,6 +3112,35 @@ final class RelayProviderTests: XCTestCase {
             .replacingOccurrences(of: "+", with: "-")
             .replacingOccurrences(of: "/", with: "_")
             .replacingOccurrences(of: "=", with: "")
+    }
+}
+
+private final class RelayIntentRecordingBrowserCredentialService: BrowserCredentialProviding {
+    private(set) var recordedIntents: [BrowserCredentialAccessIntent] = []
+
+    func detectBearerTokenCandidates(
+        host: String,
+        accessIntent: BrowserCredentialAccessIntent
+    ) -> [BrowserDetectedCredential] {
+        recordedIntents.append(accessIntent)
+        return []
+    }
+
+    func detectCookieHeader(
+        host: String,
+        accessIntent: BrowserCredentialAccessIntent
+    ) -> BrowserDetectedCredential? {
+        recordedIntents.append(accessIntent)
+        return nil
+    }
+
+    func detectNamedCookie(
+        name: String,
+        host: String,
+        accessIntent: BrowserCredentialAccessIntent
+    ) -> BrowserDetectedCredential? {
+        recordedIntents.append(accessIntent)
+        return nil
     }
 }
 

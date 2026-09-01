@@ -18,11 +18,11 @@ final class AppViewModel {
     let codexProfileSnapshotService: CodexProfileSnapshotService
     let codexDesktopAuthService: CodexDesktopAuthService
     let codexDesktopAppService: CodexDesktopAppService
-    let oauthImportOrchestrator = OAuthImportOrchestrator()
+    let oauthImportOrchestrator: OAuthImportOrchestrator
     let claudeSlotStore = ClaudeAccountSlotStore()
     let claudeProfileStore = ClaudeAccountProfileStore()
     let claudeProfileSnapshotService = ClaudeProfileSnapshotService()
-    let claudeDesktopAuthService = ClaudeDesktopAuthService()
+    let claudeDesktopAuthService: ClaudeDesktopAuthService
     let launchAtLoginService = LaunchAtLoginService()
     let notifications: NotificationService
     @ObservationIgnored private let localSessionSignalMonitor = LocalSessionCompletionSignalMonitor()
@@ -160,6 +160,10 @@ final class AppViewModel {
     var secureStorageReady: Bool {
         get { sessionStore.permissionState.secureStorageReady }
         set { sessionStore.permissionState.secureStorageReady = newValue }
+    }
+    var credentialAccessState: CredentialAccessState {
+        get { sessionStore.permissionState.credentialAccessState }
+        set { sessionStore.permissionState.credentialAccessState = newValue }
     }
     var fullDiskAccessGranted: Bool {
         get { sessionStore.permissionState.fullDiskAccessGranted }
@@ -391,6 +395,10 @@ final class AppViewModel {
         self.codexProfileStore = dependencyGraph.codexProfileStore
         self.codexDesktopAuthService = dependencyGraph.codexDesktopAuthService
         self.codexDesktopAppService = dependencyGraph.codexDesktopAppService
+        // Phase 1 §7.6: OAuth imports persist their normalized JSON into the app
+        // vault through the shared broker-backed vault store.
+        self.oauthImportOrchestrator = OAuthImportOrchestrator(oauthVault: dependencyGraph.oauthVaultStore)
+        self.claudeDesktopAuthService = dependencyGraph.claudeDesktopAuthService
         self.codexProfileSnapshotService = dependencyGraph.codexProfileSnapshotService
         self.notifications = dependencyGraph.notifications
         self.providerRefreshModel = dependencyGraph.providerRefreshModel

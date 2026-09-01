@@ -17,6 +17,10 @@ final class ClaudeProvider: UsageProvider, @unchecked Sendable {
     private let gate: any OfficialFetchGating
     private let homeDirectory: () -> String
     private let shell: any ShellCommandRunning
+    private let oauthVault: OfficialOAuthVaultStore
+    /// External `Claude Code-credentials` Keychain reads are restricted to explicit
+    /// import / auth-recovery flows; ordinary polling keeps this disabled.
+    private let allowsExternalKeychainReads: Bool
 
     let descriptor: ProviderDescriptor
 
@@ -29,7 +33,9 @@ final class ClaudeProvider: UsageProvider, @unchecked Sendable {
         cache: any OfficialSnapshotCaching = ClaudeProvider.cache,
         gate: any OfficialFetchGating = ClaudeProvider.gate,
         homeDirectory: @escaping () -> String = { NSHomeDirectory() },
-        shell: any ShellCommandRunning = DefaultShellCommandRunner()
+        shell: any ShellCommandRunning = DefaultShellCommandRunner(),
+        allowsExternalKeychainReads: Bool = false,
+        oauthVault: OfficialOAuthVaultStore? = nil
     ) {
         self.descriptor = descriptor
         self.session = session
@@ -40,6 +46,8 @@ final class ClaudeProvider: UsageProvider, @unchecked Sendable {
         self.gate = gate
         self.homeDirectory = homeDirectory
         self.shell = shell
+        self.allowsExternalKeychainReads = allowsExternalKeychainReads
+        self.oauthVault = oauthVault ?? OfficialOAuthVaultStore(keychain: keychain)
     }
 
     func fetch() async throws -> UsageSnapshot {
@@ -127,19 +135,31 @@ final class ClaudeProvider: UsageProvider, @unchecked Sendable {
     }
 
     private func loadCredentials() throws -> ClaudeCredentials {
-        let home = homeDirectory()
-        let path = "\(home)/.claude/.credentials.json"
-        if FileManager.default.fileExists(atPath: path),
-           let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
+        // Fixed read priority (Phase 1 §7.6): app vault → local credential files
+        // → external Keychain. The external `Claude Code-credentials` item is only
+        // readable on explicit import / auth-recovery flows, never in polling.
+        if let raw = oauthVault.readOAuthJSON(provider: .claude),
+           let data = raw.data(using: .utf8),
            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-           let credentials = parseClaudeCredentials(json: json, source: .file(path)) {
+           let credentials = parseClaudeCredentials(json: json, source: .vault, rawJSON: raw) {
             return credentials
         }
 
-        if let raw = SecurityCredentialReader.readGenericPassword(service: "Claude Code-credentials"),
+        let home = homeDirectory()
+        let path = "\(home)/.claude/.credentials.json"
+        if FileManager.default.fileExists(atPath: path),
+           let raw = try? String(contentsOf: URL(fileURLWithPath: path), encoding: .utf8),
            let data = raw.data(using: .utf8),
            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-           let credentials = parseClaudeCredentials(json: json, source: .keychain) {
+           let credentials = parseClaudeCredentials(json: json, source: .file(path), rawJSON: raw) {
+            return credentials
+        }
+
+        if allowsExternalKeychainReads,
+           let raw = SecurityCredentialReader.readGenericPassword(service: OfficialOAuthVaultStore.claudeExternalKeychainService),
+           let data = raw.data(using: .utf8),
+           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let credentials = parseClaudeCredentials(json: json, source: .keychain, rawJSON: raw) {
             return credentials
         }
 
@@ -152,14 +172,19 @@ final class ClaudeProvider: UsageProvider, @unchecked Sendable {
                 subscriptionType: nil,
                 scopes: [],
                 source: .environment,
-                inferenceOnly: true
+                inferenceOnly: true,
+                rawJSON: nil
             )
         }
 
         throw ProviderError.missingCredential("~/.claude/.credentials.json")
     }
 
-    private func parseClaudeCredentials(json: [String: Any], source: ClaudeCredentialSource) -> ClaudeCredentials? {
+    private func parseClaudeCredentials(
+        json: [String: Any],
+        source: ClaudeCredentialSource,
+        rawJSON: String? = nil
+    ) -> ClaudeCredentials? {
         guard let oauth = json["claudeAiOauth"] as? [String: Any],
               let accessToken = OfficialValueParser.string(oauth["accessToken"]) else {
             return nil
@@ -176,7 +201,8 @@ final class ClaudeProvider: UsageProvider, @unchecked Sendable {
             subscriptionType: subscriptionType,
             scopes: scopes,
             source: source,
-            inferenceOnly: inferenceOnly
+            inferenceOnly: inferenceOnly,
+            rawJSON: rawJSON
         )
     }
 
@@ -219,7 +245,31 @@ final class ClaudeProvider: UsageProvider, @unchecked Sendable {
         if case let .file(path) = credentials.source {
             persist(credentials: updated, path: path)
         }
+        updateVaultAfterRefresh(credentials: updated)
         return updated
+    }
+
+    /// Persists the refreshed normalized OAuth JSON into the app vault (Phase 1 §7.6).
+    /// Best effort: verification and the write happen inside the vault store, and the
+    /// local file remains the non-interactive fallback when the vault write fails.
+    private func updateVaultAfterRefresh(credentials: ClaudeCredentials) {
+        guard let baseRawJSON = credentials.rawJSON else { return }
+        guard let normalized = try? OfficialProfileSnapshotRuntime.mutateJSONObjectString(
+            baseRawJSON,
+            invalidResponseMessage: "invalid claude oauth json",
+            writingOptions: [.prettyPrinted, .sortedKeys],
+            mutate: { json in
+                var oauth = (json["claudeAiOauth"] as? [String: Any]) ?? [:]
+                oauth["accessToken"] = credentials.accessToken
+                oauth["refreshToken"] = credentials.refreshToken
+                oauth["expiresAt"] = credentials.expiresAtMs
+                oauth["subscriptionType"] = credentials.subscriptionType
+                json["claudeAiOauth"] = oauth
+            }
+        ) else {
+            return
+        }
+        oauthVault.saveOAuthJSON(provider: .claude, rawJSON: normalized)
     }
 
     private func persist(credentials: ClaudeCredentials, path: String) {
@@ -828,6 +878,7 @@ private struct ClaudeCredentials {
     var scopes: [String]
     var source: ClaudeCredentialSource
     var inferenceOnly: Bool
+    var rawJSON: String?
 
     var accountLabel: String? {
         nil
@@ -838,4 +889,5 @@ private enum ClaudeCredentialSource {
     case file(String)
     case keychain
     case environment
+    case vault
 }

@@ -865,6 +865,73 @@ final class BrowserCredentialServiceTests: XCTestCase {
         )
     }
 
+    func testBackgroundIntentSkipsBrowserCookiePathEnumerationEntirely() throws {
+        var enumerationCount = 0
+        let cookieReader = BrowserCookieDatabaseReader(
+            cookiePathCacheTTL: 30,
+            cookiePathEnumerator: { _, _ in
+                enumerationCount += 1
+                return []
+            }
+        )
+        let service = BrowserCookieService(cookieReader: cookieReader, browserOrder: [.chrome])
+
+        // Background intent must short-circuit before any browser store work.
+        XCTAssertNil(
+            service.detectCookieHeader(
+                hostContains: "policy.example.invalid",
+                accessIntent: .background
+            )
+        )
+        XCTAssertNil(
+            service.detectNamedCookie(
+                name: "sessionKey",
+                hostContains: "policy.example.invalid",
+                accessIntent: .background
+            )
+        )
+        XCTAssertEqual(enumerationCount, 0)
+
+        // Interactive import is the user-initiated path and may enumerate.
+        XCTAssertNil(
+            service.detectCookieHeader(
+                hostContains: "policy.example.invalid",
+                accessIntent: .interactiveImport
+            )
+        )
+        XCTAssertEqual(enumerationCount, 1)
+    }
+
+    func testCookiePathCacheStoresOnlyPathsAndNeverCredentialPlaintext() throws {
+        let databasePath = try makeCookieDatabase(
+            sql: """
+            CREATE TABLE cookies (name TEXT, value TEXT, host TEXT);
+            INSERT INTO cookies VALUES ('sessionKey', 'plain-secret-value', '.pathcache.example.invalid');
+            """
+        )
+        defer { try? FileManager.default.removeItem(atPath: databasePath) }
+
+        let cookieReader = BrowserCookieDatabaseReader(
+            cookiePathCacheTTL: 60,
+            cookiePathEnumerator: { _, _ in [databasePath] }
+        )
+        let service = BrowserCookieService(cookieReader: cookieReader, browserOrder: [.chrome])
+        XCTAssertEqual(
+            service.detectNamedCookie(
+                name: "sessionKey",
+                hostContains: "pathcache.example.invalid",
+                accessIntent: .interactiveImport
+            )?.header,
+            "sessionKey=plain-secret-value"
+        )
+
+        let cacheDump = Mirror(reflecting: cookieReader).children
+            .first { $0.label == "cookiePathCache" }
+            .map { String(describing: $0.value) } ?? ""
+        XCTAssertTrue(cacheDump.contains(databasePath), "The path cache keeps enumerated cookie database paths")
+        XCTAssertFalse(cacheDump.contains("plain-secret-value"), "The path cache must never hold credential plaintext")
+    }
+
     private func makeBearerStorageDirectory(host: String, token: String) throws -> URL {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("OhMyUsageTests", isDirectory: true)

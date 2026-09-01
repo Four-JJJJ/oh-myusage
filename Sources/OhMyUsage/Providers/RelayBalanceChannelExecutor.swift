@@ -19,8 +19,9 @@ struct RelayBalanceChannelExecutor {
         let requests = RelayRequestResolver.resolveBalanceRequests(manifest: manifest, relayConfig: relayConfig)
         let credentialMode = relayConfig.balanceCredentialMode ?? .manualPreferred
         let requestForCandidates = requests.first ?? RelayRequestResolver.resolveBalanceRequest(manifest: manifest, relayConfig: relayConfig)
-        let primaryBrowserAccessIntent: BrowserCredentialAccessIntent =
-            credentialMode == .browserOnly ? .interactiveImport : browserAccessIntent
+        // The access intent is passed through unchanged: background polls must
+        // never trigger live browser storage reads, and interactive imports only
+        // happen on the user-initiated force-refresh path.
 
         let savedCredential = credentialResolver.readSavedCredential(auth: relayConfig.balanceAuth)
         let hasMiniMaxAPIKey = manifest.id == "minimax"
@@ -49,7 +50,7 @@ struct RelayBalanceChannelExecutor {
                 includeSavedCredentials: true,
                 includeBrowserCredentials: false,
                 includeExpiredSentinel: true,
-                browserAccessIntent: primaryBrowserAccessIntent
+                browserAccessIntent: browserAccessIntent
             )
         case .browserPreferred:
             primaryCandidates = credentialResolver.resolveBalanceCandidates(
@@ -61,19 +62,22 @@ struct RelayBalanceChannelExecutor {
                 includeSavedCredentials: !forceRefresh,
                 includeBrowserCredentials: forceRefresh,
                 includeExpiredSentinel: !forceRefresh,
-                browserAccessIntent: primaryBrowserAccessIntent
+                browserAccessIntent: browserAccessIntent
             )
         case .browserOnly:
+            // Browser Only still prefers the vault credential persisted by the
+            // last successful import during background polls; live browser
+            // lookups stay behind force refresh and the gated recovery path.
             primaryCandidates = credentialResolver.resolveBalanceCandidates(
                 baseURL: baseURL,
                 manifest: manifest,
                 relayConfig: relayConfig,
                 request: requestForCandidates,
                 strategies: manifest.authStrategies,
-                includeSavedCredentials: false,
+                includeSavedCredentials: !forceRefresh,
                 includeBrowserCredentials: true,
                 includeExpiredSentinel: false,
-                browserAccessIntent: primaryBrowserAccessIntent
+                browserAccessIntent: browserAccessIntent
             )
         }
 
@@ -236,7 +240,10 @@ struct RelayBalanceChannelExecutor {
         primaryCandidates: [RelayCredentialCandidate],
         fallbackCandidates: [RelayCredentialCandidate]
     ) -> Bool {
-        guard credentialMode == .browserPreferred,
+        // Browser Preferred and Browser Only may import a missing credential
+        // through the gated recovery path; the recovery backoff bounds how
+        // often a background poll can touch the browser stores.
+        guard credentialMode != .manualPreferred,
               !forceRefresh,
               primaryCandidates.isEmpty,
               fallbackCandidates.isEmpty,

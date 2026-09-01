@@ -2,6 +2,64 @@ import AppKit
 import Foundation
 import UserNotifications
 
+/// Fixed user-facing copy set for credential status (doc 7.5):
+/// 未配置 / 已准备，可后台读取 / 需要重新登录 / 系统拒绝访问 / 浏览器会话已过期 / 凭证刷新失败.
+/// Extends the broker's coarse `CredentialAccessState` with the provider-level
+/// re-login condition so permission UI can show the precise state.
+enum AppCredentialAccessDisplayState: Equatable {
+    case notConfigured
+    case ready
+    case reloginRequired
+    case systemAccessRequired
+    case browserSessionExpired
+    case credentialRefreshFailed
+
+    /// Maps `CredentialAccessState` (via `AppPermissionModel` / `CredentialAccessService`)
+    /// into the fixed copy set. `reloginRequired` is derived from provider-level
+    /// auth failures while the vault itself stays prepared.
+    static func resolve(
+        vaultState: CredentialAccessState,
+        secureStorageReady: Bool,
+        hasProviderAuthFailure: Bool
+    ) -> AppCredentialAccessDisplayState {
+        switch vaultState {
+        case .systemAccessRequired:
+            return .systemAccessRequired
+        case .expired:
+            return .browserSessionExpired
+        case .blocked:
+            return .credentialRefreshFailed
+        case .notConfigured:
+            return .notConfigured
+        case .ready:
+            if hasProviderAuthFailure {
+                return .reloginRequired
+            }
+            return secureStorageReady ? .ready : .notConfigured
+        }
+    }
+
+    var localizationKey: L10nKey {
+        switch self {
+        case .notConfigured: return .credentialStatusNotConfigured
+        case .ready: return .credentialStatusReady
+        case .reloginRequired: return .credentialStatusReloginRequired
+        case .systemAccessRequired: return .credentialStatusSystemAccessRequired
+        case .browserSessionExpired: return .credentialStatusSessionExpired
+        case .credentialRefreshFailed: return .credentialStatusRefreshFailed
+        }
+    }
+
+    /// Green = ready, orange = degraded/needs re-auth, red = action required.
+    var statusColorHex: UInt32 {
+        switch self {
+        case .ready: return 0x69BD64
+        case .reloginRequired, .browserSessionExpired, .credentialRefreshFailed: return 0xD87E3E
+        case .notConfigured, .systemAccessRequired: return 0xD05757
+        }
+    }
+}
+
 /// Owns the Permission session boundary: coordinator + PermissionStore get/set wiring.
 /// Store remains in AppViewModel/sessionStore so Observation projections keep working.
 @MainActor
@@ -101,7 +159,12 @@ final class AppPermissionModel {
     func prepareSecureStorageAccess() -> Bool {
         requirePresentSecureStorageAccessUI()()
         let ok = requirePrepareSecureStoreAccess()()
+        var state = requireState()
+        state.credentialAccessState = ok ? .ready : .systemAccessRequired
+        requireSetState()(state)
         if ok {
+            // Preparation succeeded: clear stale missing-credential caches and
+            // refresh the credential state in one place.
             requireOnSecureStorageBecameReady()()
         }
         refreshPermissionStatuses(force: true)
@@ -160,6 +223,10 @@ final class AppPermissionModel {
             updateSecureStorageReady: { ready in
                 var next = self.requireState()
                 next.secureStorageReady = ready
+                next.credentialAccessState = AppPermissionModel.resolvedVaultAccessState(
+                    ready: ready,
+                    previous: next.credentialAccessState
+                )
                 self.requireSetState()(next)
             },
             onSecureStorageBecameReady: { self.requireOnSecureStorageBecameReady()() },
@@ -190,11 +257,27 @@ final class AppPermissionModel {
         var state = requireState()
         state.notificationAuthorizationStatus = .notDetermined
         state.secureStorageReady = false
+        state.credentialAccessState = .notConfigured
         state.fullDiskAccessGranted = false
         state.fullDiskAccessRelevant = false
         state.fullDiskAccessRequested = false
         state.lastPermissionStatusRefreshAt = .distantPast
         requireSetState()(state)
+    }
+
+    /// App-vault level state resolution for background refreshes. Only the
+    /// persisted prepared flag plus in-memory cache metadata are consulted —
+    /// never an interactive secure-store (or browser Safe Storage) read.
+    /// A failed interactive prepare latches `.systemAccessRequired`; OAuth-level
+    /// `.expired` / `.blocked` states are preserved once reported.
+    static func resolvedVaultAccessState(
+        ready: Bool,
+        previous: CredentialAccessState
+    ) -> CredentialAccessState {
+        if ready {
+            return previous == .expired || previous == .blocked ? previous : .ready
+        }
+        return previous == .systemAccessRequired ? .systemAccessRequired : .notConfigured
     }
 
     private func openSystemSettings(
@@ -286,6 +369,34 @@ final class AppPermissionModel {
 extension AppViewModel {
     var hasNotificationPermission: Bool {
         permissionModel.hasNotificationPermission
+    }
+
+    /// App-vault level credential status mapped into the fixed copy set (doc 7.5).
+    var credentialAccessDisplayState: AppCredentialAccessDisplayState {
+        AppCredentialAccessDisplayState.resolve(
+            vaultState: credentialAccessState,
+            secureStorageReady: secureStorageReady,
+            hasProviderAuthFailure: hasProviderCredentialAuthFailure
+        )
+    }
+
+    /// Provider-level auth failure signal for `需要重新登录`: auth alerts raised by
+    /// monitoring or snapshots reported with `.authExpired` fetch health.
+    var hasProviderCredentialAuthFailure: Bool {
+        if activeAlerts.contains(where: { $0.hasPrefix("auth:") }) {
+            return true
+        }
+        return config.providers.contains { provider in
+            guard provider.enabled, let snapshot = snapshots[provider.id] else { return false }
+            return snapshot.fetchHealth == .authExpired
+        }
+    }
+
+    /// 删除本机凭证：逐条经共享 broker 的 deleteToken 实删 vault 数据，
+    /// 不修改模型配置和其他本地数据。
+    @discardableResult
+    func deleteLocalCredentials() -> Bool {
+        configurationModel.deleteAllLocalCredentials()
     }
 
     var shouldShowPermissionGuide: Bool {

@@ -33,22 +33,124 @@ final class ClaudeDesktopAuthServiceTests: XCTestCase {
         XCTAssertEqual(posix, 0o600)
     }
 
-    func testCurrentCredentialsFallsBackToKeychainWhenFileMissing() {
+    func testApplyCredentialsWritesNormalizedOAuthJSONIntoVault() throws {
         let home = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
             .appendingPathComponent("claude-auth-home-\(UUID().uuidString)", isDirectory: true)
-        let expected = sampleCredentialsJSON(accessToken: "keychain-access", refreshToken: "keychain-refresh")
+        let configDir = home.appendingPathComponent(".claude", isDirectory: true)
+        try FileManager.default.createDirectory(at: configDir, withIntermediateDirectories: true)
+        let (defaults, suiteName) = makeTestDefaults()
+        defer { removeTestDefaults(named: suiteName) }
+        let vault = OfficialOAuthVaultStore(keychain: makeTestKeychain(), defaults: defaults)
+        let service = ClaudeDesktopAuthService(
+            homeDirectory: { home.path },
+            environment: { ["CLAUDE_CONFIG_DIR": configDir.path] },
+            keychainReader: { nil },
+            keychainWriter: { _ in true },
+            oauthVault: vault
+        )
+        let credentialsJSON = sampleCredentialsJSON(accessToken: "vault-access", refreshToken: "vault-refresh")
+
+        try service.applyCredentialsJSON(credentialsJSON)
+
+        XCTAssertEqual(
+            vault.readOAuthJSON(provider: .claude),
+            credentialsJSON.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
+        XCTAssertTrue(vault.isMigrationComplete(provider: .claude))
+    }
+
+    func testApplyCredentialsThrowsWhenVaultWriteFails() throws {
+        let home = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent("claude-auth-home-\(UUID().uuidString)", isDirectory: true)
+        let configDir = home.appendingPathComponent(".claude", isDirectory: true)
+        try FileManager.default.createDirectory(at: configDir, withIntermediateDirectories: true)
+        let (defaults, suiteName) = makeTestDefaults()
+        defer { removeTestDefaults(named: suiteName) }
+        let vault = OfficialOAuthVaultStore(keychain: FailingTokenCredentialStore(), defaults: defaults)
+        let service = ClaudeDesktopAuthService(
+            homeDirectory: { home.path },
+            environment: { ["CLAUDE_CONFIG_DIR": configDir.path] },
+            keychainReader: { nil },
+            keychainWriter: { _ in true },
+            oauthVault: vault
+        )
+
+        XCTAssertThrowsError(
+            try service.applyCredentialsJSON(
+                sampleCredentialsJSON(accessToken: "access-vault-fail", refreshToken: "refresh-vault-fail")
+            )
+        ) { error in
+            guard case ClaudeDesktopAuthError.vaultWriteFailed = error else {
+                return XCTFail("unexpected error: \(error)")
+            }
+        }
+    }
+
+    func testCurrentCredentialsPrefersVaultOverLocalFilesAndSkipsExternalKeychain() throws {
+        let home = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent("claude-auth-home-\(UUID().uuidString)", isDirectory: true)
+        let configDir = home.appendingPathComponent(".claude", isDirectory: true)
+        try FileManager.default.createDirectory(at: configDir, withIntermediateDirectories: true)
+        let fileJSON = sampleCredentialsJSON(accessToken: "file-access", refreshToken: "file-refresh")
+        try fileJSON.write(
+            to: configDir.appendingPathComponent(".credentials.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+        let (defaults, suiteName) = makeTestDefaults()
+        defer { removeTestDefaults(named: suiteName) }
+        let vault = OfficialOAuthVaultStore(keychain: makeTestKeychain(), defaults: defaults)
+        let vaultJSON = sampleCredentialsJSON(accessToken: "vault-access", refreshToken: "vault-refresh")
+        XCTAssertTrue(vault.saveOAuthJSON(provider: .claude, rawJSON: vaultJSON))
+        var externalKeychainReads = 0
+        let service = ClaudeDesktopAuthService(
+            homeDirectory: { home.path },
+            environment: { ["CLAUDE_CONFIG_DIR": configDir.path] },
+            keychainReader: {
+                externalKeychainReads += 1
+                return self.sampleCredentialsJSON(accessToken: "external-access", refreshToken: "external-refresh")
+            },
+            keychainWriter: { _ in true },
+            oauthVault: vault
+        )
+
+        // App vault wins over the local file...
+        XCTAssertEqual(service.currentCredentialsJSON(), vaultJSON.trimmingCharacters(in: .whitespacesAndNewlines))
+        // ...and the external `Claude Code-credentials` keychain item is never read by polling paths.
+        XCTAssertEqual(externalKeychainReads, 0)
+    }
+
+    func testCurrentCredentialsDoesNotReadExternalKeychainWhenVaultAndFilesMissing() {
+        let home = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent("claude-auth-home-\(UUID().uuidString)", isDirectory: true)
+        var externalKeychainReads = 0
         let service = ClaudeDesktopAuthService(
             homeDirectory: { home.path },
             environment: { [:] },
-            keychainReader: { expected },
+            keychainReader: {
+                externalKeychainReads += 1
+                return self.sampleCredentialsJSON(accessToken: "external-access", refreshToken: "external-refresh")
+            },
             keychainWriter: { _ in true }
         )
 
-        XCTAssertEqual(service.currentCredentialsJSON(), expected)
-        XCTAssertEqual(
-            service.currentCredentialFingerprint(),
-            try? ClaudeAccountProfileStore.parseCredentialsJSON(expected).credentialFingerprint
+        XCTAssertNil(service.currentCredentialsJSON())
+        XCTAssertEqual(externalKeychainReads, 0)
+    }
+
+    func testCurrentCredentialsForAuthRecoveryFallsBackToExternalKeychain() {
+        let home = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent("claude-auth-home-\(UUID().uuidString)", isDirectory: true)
+        let externalJSON = sampleCredentialsJSON(accessToken: "keychain-access", refreshToken: "keychain-refresh")
+        let service = ClaudeDesktopAuthService(
+            homeDirectory: { home.path },
+            environment: { [:] },
+            keychainReader: { externalJSON },
+            keychainWriter: { _ in true }
         )
+
+        XCTAssertNil(service.currentCredentialsJSON())
+        XCTAssertEqual(service.currentCredentialsJSONForAuthRecovery(), externalJSON)
     }
 
     func testApplyCredentialsRejectsInvalidJSON() {
