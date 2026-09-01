@@ -108,6 +108,81 @@ final class OpenRouterProviderTests: XCTestCase {
             XCTAssertTrue(detail.contains("management key required"))
         }
     }
+
+    func testFetchMaps401ToUnauthorizedWithoutRetrying() async throws {
+        let service = "OhMyUsageTests-OpenRouter-\(UUID().uuidString)"
+        let account = "official/openrouter/api-key-\(UUID().uuidString)"
+        let keychain = makeTestKeychain()
+        XCTAssertTrue(keychain.saveToken("sk-or-v1-test", service: service, account: account))
+
+        var descriptor = ProviderDescriptor.defaultOfficialOpenRouterAPI()
+        descriptor.auth = AuthConfig(kind: .bearer, keychainService: service, keychainAccount: account)
+
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [OpenRouterMockURLProtocol.self]
+        let session = URLSession(configuration: config)
+        var requestCount = 0
+
+        OpenRouterMockURLProtocol.requestHandler = { request in
+            requestCount += 1
+            XCTAssertEqual(request.url?.path, "/api/v1/key")
+            let response = HTTPURLResponse(url: request.url!, statusCode: 401, httpVersion: nil, headerFields: nil)!
+            return (response, Data(#"{"error":{"message":"No auth credentials found"}}"#.utf8))
+        }
+        defer { OpenRouterMockURLProtocol.requestHandler = nil }
+
+        let provider = OpenRouterProvider(descriptor: descriptor, session: session, keychain: keychain)
+
+        do {
+            _ = try await provider.fetch()
+            XCTFail("Expected ProviderError.unauthorized")
+        } catch let error as ProviderError {
+            guard case .unauthorized = error else {
+                XCTFail("Expected unauthorized, got \(error)")
+                return
+            }
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+        XCTAssertEqual(requestCount, 1)
+    }
+
+    func testFetchMaps429ToRateLimitedWithoutRetrying() async throws {
+        let service = "OhMyUsageTests-OpenRouter-\(UUID().uuidString)"
+        let account = "official/openrouter/api-key-\(UUID().uuidString)"
+        let keychain = makeTestKeychain()
+        XCTAssertTrue(keychain.saveToken("sk-or-v1-test", service: service, account: account))
+
+        var descriptor = ProviderDescriptor.defaultOfficialOpenRouterAPI()
+        descriptor.auth = AuthConfig(kind: .bearer, keychainService: service, keychainAccount: account)
+
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [OpenRouterMockURLProtocol.self]
+        let session = URLSession(configuration: config)
+        var requestCount = 0
+
+        OpenRouterMockURLProtocol.requestHandler = { request in
+            requestCount += 1
+            let response = HTTPURLResponse(url: request.url!, statusCode: 429, httpVersion: nil, headerFields: nil)!
+            return (response, Data(#"{"error":{"message":"Rate limited"}}"#.utf8))
+        }
+        defer { OpenRouterMockURLProtocol.requestHandler = nil }
+
+        let provider = OpenRouterProvider(descriptor: descriptor, session: session, keychain: keychain)
+
+        do {
+            _ = try await provider.fetch()
+            XCTFail("Expected ProviderError.rateLimited")
+        } catch let error as ProviderError {
+            guard case .rateLimited = error else {
+                XCTFail("Expected rateLimited, got \(error)")
+                return
+            }
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+        XCTAssertEqual(requestCount, 1)
+    }
 }
 
 private final class OpenRouterMockURLProtocol: URLProtocol {

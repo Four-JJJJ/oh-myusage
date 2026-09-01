@@ -364,6 +364,260 @@ final class TraeProviderTests: XCTestCase {
         XCTAssertEqual(TraeProvider.normalizeToken("Bearer \(jwt)"), jwt)
     }
 
+    func testFetchBacksOffBrowserRecoveryAfterFailedRecovery() async throws {
+        let keychain = makeTestKeychain()
+        let service = "OhMyUsageTests-Trae-\(UUID().uuidString)"
+        let account = "official/trae/cloud-ide-jwt-\(UUID().uuidString)"
+        XCTAssertTrue(keychain.saveToken("expired.jwt.token", service: service, account: account))
+
+        var descriptor = ProviderDescriptor.defaultOfficialTrae()
+        descriptor.auth = AuthConfig(kind: .bearer, keychainService: service, keychainAccount: account)
+        descriptor.officialConfig?.sourceMode = .auto
+
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [TraeMockURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+
+        TraeMockURLProtocol.requestHandler = { request in
+            let response = HTTPURLResponse(url: request.url!, statusCode: 401, httpVersion: nil, headerFields: nil)!
+            return (response, Data(#"{"msg":"unauthorized"}"#.utf8))
+        }
+        defer { TraeMockURLProtocol.requestHandler = nil }
+
+        let spy = TraeBrowserCandidateSpy(
+            candidatesByHost: [
+                "trae.ai": [BrowserDetectedCredential(value: "fresh.jwt.token", source: "Chrome:localStorage")]
+            ]
+        )
+        let provider = TraeProvider(
+            descriptor: descriptor,
+            session: session,
+            keychain: keychain,
+            browserCredentialService: BrowserCredentialService(
+                bearerCandidatesOverride: spy.candidates(host:),
+                cacheTTL: 0
+            ),
+            browserRecoveryBackoff: WebOverlayRetryBackoff()
+        )
+
+        // First poll: saved token rejected, browser recovery attempted and failed.
+        do {
+            _ = try await provider.fetch(forceRefresh: false)
+            XCTFail("Expected unauthorizedDetail")
+        } catch let error as ProviderError {
+            guard case .unauthorizedDetail = error else {
+                return XCTFail("Expected unauthorizedDetail, got \(error)")
+            }
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+        let callsAfterFirstFetch = spy.calls.count
+        XCTAssertGreaterThan(callsAfterFirstFetch, 0)
+
+        // Second poll: recovery must be backed off, not retried immediately.
+        do {
+            _ = try await provider.fetch(forceRefresh: false)
+            XCTFail("Expected unauthorized")
+        } catch let error as ProviderError {
+            guard case .unauthorized = error else {
+                return XCTFail("Expected unauthorized (primary error), got \(error)")
+            }
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+        XCTAssertEqual(spy.calls.count, callsAfterFirstFetch)
+    }
+
+    func testFetchForceRefreshBypassesBrowserRecoveryBackoff() async throws {
+        let keychain = makeTestKeychain()
+        let service = "OhMyUsageTests-Trae-\(UUID().uuidString)"
+        let account = "official/trae/cloud-ide-jwt-\(UUID().uuidString)"
+        XCTAssertTrue(keychain.saveToken("expired.jwt.token", service: service, account: account))
+
+        var descriptor = ProviderDescriptor.defaultOfficialTrae()
+        descriptor.auth = AuthConfig(kind: .bearer, keychainService: service, keychainAccount: account)
+        descriptor.officialConfig?.sourceMode = .auto
+
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [TraeMockURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+
+        TraeMockURLProtocol.requestHandler = { request in
+            let response = HTTPURLResponse(url: request.url!, statusCode: 401, httpVersion: nil, headerFields: nil)!
+            return (response, Data(#"{"msg":"unauthorized"}"#.utf8))
+        }
+        defer { TraeMockURLProtocol.requestHandler = nil }
+
+        let spy = TraeBrowserCandidateSpy(
+            candidatesByHost: [
+                "trae.ai": [BrowserDetectedCredential(value: "fresh.jwt.token", source: "Chrome:localStorage")]
+            ]
+        )
+        let provider = TraeProvider(
+            descriptor: descriptor,
+            session: session,
+            keychain: keychain,
+            browserCredentialService: BrowserCredentialService(
+                bearerCandidatesOverride: spy.candidates(host:),
+                cacheTTL: 0
+            ),
+            browserRecoveryBackoff: WebOverlayRetryBackoff()
+        )
+
+        do {
+            _ = try await provider.fetch(forceRefresh: false)
+            XCTFail("Expected unauthorizedDetail")
+        } catch let error as ProviderError {
+            guard case .unauthorizedDetail = error else {
+                return XCTFail("Expected unauthorizedDetail, got \(error)")
+            }
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+        let callsAfterBackgroundPoll = spy.calls.count
+
+        // An explicit force refresh is user-initiated and bypasses the backoff.
+        do {
+            _ = try await provider.fetch(forceRefresh: true)
+            XCTFail("Expected unauthorizedDetail")
+        } catch let error as ProviderError {
+            guard case .unauthorizedDetail = error else {
+                return XCTFail("Expected unauthorizedDetail, got \(error)")
+            }
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+        XCTAssertGreaterThan(spy.calls.count, callsAfterBackgroundPoll)
+    }
+
+    func testFetchClearsBrowserRecoveryBackoffAfterSuccessfulRecovery() async throws {
+        let keychain = makeTestKeychain()
+        let service = "OhMyUsageTests-Trae-\(UUID().uuidString)"
+        let account = "official/trae/cloud-ide-jwt-\(UUID().uuidString)"
+        XCTAssertTrue(keychain.saveToken("expired.jwt.token", service: service, account: account))
+
+        var descriptor = ProviderDescriptor.defaultOfficialTrae()
+        descriptor.auth = AuthConfig(kind: .bearer, keychainService: service, keychainAccount: account)
+        descriptor.officialConfig?.sourceMode = .auto
+
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [TraeMockURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        var freshTokenRequestCount = 0
+
+        TraeMockURLProtocol.requestHandler = { request in
+            let auth = request.value(forHTTPHeaderField: "Authorization") ?? ""
+            let statusCode: Int
+            if auth == "Cloud-IDE-JWT expired.jwt.token" {
+                statusCode = 401
+            } else {
+                freshTokenRequestCount += 1
+                statusCode = freshTokenRequestCount == 1 ? 401 : 200
+            }
+            let response = HTTPURLResponse(url: request.url!, statusCode: statusCode, httpVersion: nil, headerFields: nil)!
+            return (response, Data(statusCode == 200 ? Data(Self.successBody.utf8) : Data(#"{"msg":"unauthorized"}"#.utf8)))
+        }
+        defer { TraeMockURLProtocol.requestHandler = nil }
+
+        let spy = TraeBrowserCandidateSpy(
+            candidatesByHost: [
+                "trae.ai": [BrowserDetectedCredential(value: "fresh.jwt.token", source: "Chrome:localStorage")]
+            ]
+        )
+        let provider = TraeProvider(
+            descriptor: descriptor,
+            session: session,
+            keychain: keychain,
+            browserCredentialService: BrowserCredentialService(
+                bearerCandidatesOverride: spy.candidates(host:),
+                cacheTTL: 0
+            ),
+            browserRecoveryBackoff: WebOverlayRetryBackoff()
+        )
+
+        // First poll: recovery attempted, fresh token request fails once -> backoff marked.
+        do {
+            _ = try await provider.fetch(forceRefresh: false)
+            XCTFail("Expected unauthorizedDetail")
+        } catch let error as ProviderError {
+            guard case .unauthorizedDetail = error else {
+                return XCTFail("Expected unauthorizedDetail, got \(error)")
+            }
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+
+        // Explicit force refresh recovers, succeeds and clears the backoff.
+        let recovered = try await provider.fetch(forceRefresh: true)
+        XCTAssertEqual(recovered.sourceLabel, "API")
+
+        // The next background poll may scan the browser again after the clear.
+        XCTAssertTrue(keychain.saveToken("expired.jwt.token", service: service, account: account))
+        let snapshot = try await provider.fetch(forceRefresh: false)
+        XCTAssertEqual(snapshot.sourceLabel, "API")
+        let callsAfterSuccessfulRecovery = spy.calls.count
+        XCTAssertGreaterThanOrEqual(callsAfterSuccessfulRecovery, 4)
+    }
+
+    func testFetchCandidateRateLimitedThrowsRateLimitedWithoutFurtherCandidates() async throws {
+        let keychain = makeTestKeychain()
+        let service = "OhMyUsageTests-Trae-\(UUID().uuidString)"
+        let account = "official/trae/cloud-ide-jwt-\(UUID().uuidString)"
+        XCTAssertTrue(keychain.saveToken("expired.jwt.token", service: service, account: account))
+
+        var descriptor = ProviderDescriptor.defaultOfficialTrae()
+        descriptor.auth = AuthConfig(kind: .bearer, keychainService: service, keychainAccount: account)
+        descriptor.officialConfig?.sourceMode = .auto
+
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [TraeMockURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        var requestCount = 0
+
+        TraeMockURLProtocol.requestHandler = { request in
+            requestCount += 1
+            let auth = request.value(forHTTPHeaderField: "Authorization") ?? ""
+            // Saved token 401s (refreshable); every browser candidate 429s.
+            let statusCode = auth == "Cloud-IDE-JWT expired.jwt.token" ? 401 : 429
+            let response = HTTPURLResponse(url: request.url!, statusCode: statusCode, httpVersion: nil, headerFields: nil)!
+            return (response, Data(#"{"msg":"too many requests"}"#.utf8))
+        }
+        defer { TraeMockURLProtocol.requestHandler = nil }
+
+        let spy = TraeBrowserCandidateSpy(
+            candidatesByHost: [
+                "trae.ai": [
+                    BrowserDetectedCredential(value: "first.jwt.token", source: "Chrome:localStorage"),
+                    BrowserDetectedCredential(value: "second.jwt.token", source: "Arc:localStorage")
+                ]
+            ]
+        )
+        let provider = TraeProvider(
+            descriptor: descriptor,
+            session: session,
+            keychain: keychain,
+            browserCredentialService: BrowserCredentialService(
+                bearerCandidatesOverride: spy.candidates(host:),
+                cacheTTL: 0
+            ),
+            browserRecoveryBackoff: WebOverlayRetryBackoff()
+        )
+
+        // Saved token -> 401 (refreshable) -> first browser candidate -> 429.
+        // 429 is not credential-refreshable and must surface immediately.
+        do {
+            _ = try await provider.fetch(forceRefresh: false)
+            XCTFail("Expected rateLimited")
+        } catch let error as ProviderError {
+            guard case .rateLimited = error else {
+                return XCTFail("Expected rateLimited, got \(error)")
+            }
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+        XCTAssertEqual(requestCount, 2)
+    }
+
     private func assertFetchError(
         statusCode: Int,
         body: String,

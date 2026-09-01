@@ -1,9 +1,172 @@
 import OhMyUsageDomain
 import XCTest
 @testable import OhMyUsage
+import OhMyUsageProviders
 
 @MainActor
 final class AppProviderRefreshCoordinatorTests: XCTestCase {
+    func testDisplayedProvidersForStartupRefreshOnlyIncludesMissingStaleOrEmptySnapshots() {
+        var freshProvider = ProviderDescriptor.defaultOfficialGemini()
+        freshProvider.id = "fresh"
+        freshProvider.enabled = true
+        freshProvider.pollIntervalSec = 300
+
+        var staleProvider = ProviderDescriptor.defaultOfficialGemini()
+        staleProvider.id = "stale"
+        staleProvider.enabled = true
+        staleProvider.pollIntervalSec = 300
+
+        var missingProvider = ProviderDescriptor.defaultOfficialGemini()
+        missingProvider.id = "missing"
+        missingProvider.enabled = true
+
+        var emptyProvider = ProviderDescriptor.defaultOfficialGemini()
+        emptyProvider.id = "empty"
+        emptyProvider.enabled = true
+
+        var disabledProvider = ProviderDescriptor.defaultOfficialGemini()
+        disabledProvider.id = "disabled"
+        disabledProvider.enabled = false
+
+        let now = Date()
+        let snapshots: [String: UsageSnapshot] = [
+            // Updated 10s ago with a 300s poll interval: fresh enough to keep.
+            freshProvider.id: Self.startupSnapshot(source: freshProvider.id, updatedAt: now.addingTimeInterval(-10)),
+            // Updated 400s ago: stale, needs a startup refresh.
+            staleProvider.id: Self.startupSnapshot(source: staleProvider.id, updatedAt: now.addingTimeInterval(-400)),
+            // Empty placeholder (e.g. previous offline failure): always refresh.
+            emptyProvider.id: UsageSnapshot(
+                source: emptyProvider.id,
+                status: .error,
+                fetchHealth: .unreachable,
+                valueFreshness: .empty,
+                remaining: nil,
+                used: nil,
+                limit: nil,
+                unit: "%",
+                updatedAt: now.addingTimeInterval(-5),
+                note: "offline",
+                sourceLabel: "Official"
+            )
+        ]
+
+        let providers = makeCoordinator().displayedProvidersForStartupRefresh(
+            providers: [freshProvider, staleProvider, missingProvider, emptyProvider, disabledProvider],
+            snapshots: snapshots,
+            now: now
+        )
+
+        XCTAssertEqual(
+            Set(providers.map(\.id)),
+            ["stale", "missing", "empty"],
+            "Startup refresh must be limited to displayed providers that are missing, stale, or empty"
+        )
+    }
+
+    func testFetchFailureRetainsPreviousSnapshotAsCachedFallback() async throws {
+        var descriptor = ProviderDescriptor.makeOpenRelay(
+            name: "Failing Relay",
+            baseURL: "https://failing-retention.test"
+        )
+        descriptor.id = "failing-relay"
+        descriptor.enabled = true
+
+        let stateBox = CoordinatorRefreshStateBox()
+        let previousUpdatedAt = Date().addingTimeInterval(-120)
+        stateBox.state.snapshots[descriptor.id] = UsageSnapshot(
+            source: descriptor.id,
+            status: .ok,
+            remaining: 77,
+            used: 23,
+            limit: 100,
+            unit: "%",
+            updatedAt: previousUpdatedAt,
+            note: "ok",
+            sourceLabel: "Test"
+        )
+
+        let coordinator = AppProviderRefreshCoordinator(
+            providerFactory: FailingProviderFactory(),
+            notifications: NotificationService()
+        )
+
+        await coordinator.refreshProvider(
+            descriptor: descriptor,
+            forceRefresh: false,
+            getState: { stateBox.state },
+            setState: { stateBox.state = $0 },
+            beforeRefresh: { _ in },
+            transformFetchedSnapshot: { _, fetched in fetched },
+            postOfficialRefresh: { _, _ in },
+            persistBaselineEntries: { _ in },
+            afterRefresh: {},
+            notifyStatusBarDisplayConfigChanged: {},
+            text: { _ in "" },
+            localizedText: { zhHans, _ in zhHans },
+            language: { .en },
+            boundedSnapshot: { $0 }
+        )
+
+        let retained = try XCTUnwrap(stateBox.state.snapshots[descriptor.id], "Network failure must not clear the previous snapshot")
+        XCTAssertEqual(retained.remaining, 77)
+        XCTAssertEqual(retained.used, 23)
+        XCTAssertEqual(retained.limit, 100)
+        XCTAssertEqual(retained.valueFreshness, .cachedFallback)
+        XCTAssertEqual(retained.fetchHealth, .unreachable)
+    }
+
+    func testRefreshProviderPersistsSnapshotAfterSuccessfulFetch() async throws {
+        var descriptor = ProviderDescriptor.defaultOfficialGemini()
+        descriptor.id = "persist-hook-provider"
+        descriptor.enabled = true
+        descriptor.family = .thirdParty
+
+        let stateBox = CoordinatorRefreshStateBox()
+        let recorder = CoordinatorPersistRecorder()
+        let coordinator = AppProviderRefreshCoordinator(
+            providerFactory: StaticProviderFactory(),
+            notifications: NotificationService()
+        )
+
+        await coordinator.refreshProvider(
+            descriptor: descriptor,
+            forceRefresh: false,
+            getState: { stateBox.state },
+            setState: { stateBox.state = $0 },
+            beforeRefresh: { _ in },
+            transformFetchedSnapshot: { _, fetched in fetched },
+            postOfficialRefresh: { _, _ in },
+            persistBaselineEntries: { _ in },
+            persistSnapshot: { descriptor, snapshot in
+                recorder.record(providerID: descriptor.id, remaining: snapshot.remaining)
+            },
+            afterRefresh: {},
+            notifyStatusBarDisplayConfigChanged: {},
+            text: { _ in "" },
+            localizedText: { zhHans, _ in zhHans },
+            language: { .en },
+            boundedSnapshot: { $0 }
+        )
+
+        let events = recorder.snapshot()
+        XCTAssertEqual(events, ["persist-hook-provider:42"])
+        XCTAssertEqual(stateBox.state.snapshots[descriptor.id]?.remaining, 42)
+    }
+
+    private static func startupSnapshot(source: String, updatedAt: Date) -> UsageSnapshot {
+        UsageSnapshot(
+            source: source,
+            status: .ok,
+            remaining: 50,
+            used: 50,
+            limit: 100,
+            unit: "%",
+            updatedAt: updatedAt,
+            note: "ok",
+            sourceLabel: "Test"
+        )
+    }
+
     func testRefreshDisplayedStatusBarProvidersSkipsDisabledAndDeduplicatesSameID() async throws {
         var first = ProviderDescriptor.defaultOfficialCodex()
         first.id = "first"
@@ -319,5 +482,65 @@ private struct CountingUsageProvider: UsageProvider {
             note: "counting",
             sourceLabel: "Test"
         )
+    }
+}
+
+private struct StaticProviderFactory: ProviderFactorying {
+    func makeProvider(for descriptor: ProviderDescriptor) -> UsageProvider {
+        StaticUsageProvider(descriptor: descriptor)
+    }
+}
+
+private struct StaticUsageProvider: UsageProvider {
+    let descriptor: ProviderDescriptor
+
+    func fetch() async throws -> UsageSnapshot {
+        try await fetch(forceRefresh: false)
+    }
+
+    func fetch(forceRefresh: Bool) async throws -> UsageSnapshot {
+        UsageSnapshot(
+            source: descriptor.id,
+            status: .ok,
+            remaining: 42,
+            used: 8,
+            limit: 50,
+            unit: "%",
+            updatedAt: Date(),
+            note: "static",
+            sourceLabel: "Test"
+        )
+    }
+}
+
+private struct FailingProviderFactory: ProviderFactorying {
+    func makeProvider(for descriptor: ProviderDescriptor) -> UsageProvider {
+        FailingUsageProvider(descriptor: descriptor)
+    }
+}
+
+private struct FailingUsageProvider: UsageProvider {
+    let descriptor: ProviderDescriptor
+
+    func fetch() async throws -> UsageSnapshot {
+        try await fetch(forceRefresh: false)
+    }
+
+    func fetch(forceRefresh: Bool) async throws -> UsageSnapshot {
+        throw ProviderError.timeout("simulated network timeout")
+    }
+}
+
+@MainActor
+private final class CoordinatorPersistRecorder {
+    private var events: [String] = []
+
+    func record(providerID: String, remaining: Double?) {
+        let formatted = remaining.map { String(Int($0)) } ?? "nil"
+        events.append("\(providerID):\(formatted)")
+    }
+
+    func snapshot() -> [String] {
+        events
     }
 }

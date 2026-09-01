@@ -116,6 +116,9 @@ final class CodexProvider: UsageProvider, @unchecked Sendable {
                 accountId: credentials.accountId
             )
         } catch let error as ProviderError {
+            // Doc §8.4: a 401/403 triggers at most one refresh + one retry.
+            // If the pre-emptive refresh already ran (or the retry 401s again),
+            // the error propagates without another refresh attempt.
             guard case .unauthorized = error, !didRefreshBeforeRequest else {
                 throw error
             }
@@ -140,8 +143,12 @@ final class CodexProvider: UsageProvider, @unchecked Sendable {
             fingerprint: Self.credentialFingerprint(credentials.accessToken)
         )
 
-        if includeWebOverlay, let webSnapshot = try? await loadWebSnapshot(forceRefresh: forceRefresh) {
-            snapshot = OfficialProviderWebOverlayRuntime.merge(
+        // Doc §8.4: skip the Web overlay entirely when the OAuth usage response
+        // is complete; otherwise the overlay only fills the missing slots.
+        if includeWebOverlay,
+           !OfficialSnapshotOverlayFiller.isQuotaComplete(snapshot),
+           let webSnapshot = try? await loadWebSnapshot(forceRefresh: forceRefresh) {
+            snapshot = OfficialSnapshotOverlayFiller.fill(
                 primary: snapshot,
                 overlay: webSnapshot,
                 sourceLabel: "API+Web"
@@ -157,8 +164,9 @@ final class CodexProvider: UsageProvider, @unchecked Sendable {
         let official = descriptor.officialConfig ?? ProviderDescriptor.defaultOfficialConfig(type: .codex)
 
         if shouldIncludeWebOverlay(for: official),
+           !OfficialSnapshotOverlayFiller.isQuotaComplete(snapshot),
            let webSnapshot = try? await loadWebSnapshot(forceRefresh: forceRefresh) {
-            snapshot = OfficialProviderWebOverlayRuntime.merge(
+            snapshot = OfficialSnapshotOverlayFiller.fill(
                 primary: snapshot,
                 overlay: webSnapshot,
                 sourceLabel: "CLI-RPC+Web"
@@ -296,19 +304,35 @@ final class CodexProvider: UsageProvider, @unchecked Sendable {
         return components.joined(separator: "|")
     }
 
-    private func currentCredentialCacheIdentity() -> String? {
-        guard let credentials = try? loadCredentials() else { return nil }
+    /// Single canonical credential identity for cache keys (doc §8.4).
+    /// `account_id` and the id_token subject identify the same account, so they
+    /// are no longer both counted into the cache key: the account id wins and
+    /// the subject is only used as a fallback when no account id exists. The
+    /// access-token fingerprint stays as the credential-generation component.
+    static func credentialCacheIdentity(
+        accountId: String?,
+        accountSubject: String?,
+        accessTokenFingerprint: String?
+    ) -> String? {
         var components: [String] = []
-        if let accountID = CodexIdentity.trimmed(credentials.accountId) {
+        if let accountID = CodexIdentity.trimmed(accountId) {
             components.append("account=\(accountID)")
-        }
-        if let subject = CodexIdentity.trimmed(credentials.accountSubject) {
+        } else if let subject = CodexIdentity.trimmed(accountSubject) {
             components.append("subject=\(subject)")
         }
-        if let fingerprint = Self.credentialFingerprint(credentials.accessToken) {
+        if let fingerprint = CodexIdentity.trimmed(accessTokenFingerprint) {
             components.append("fingerprint=\(fingerprint)")
         }
         return components.isEmpty ? nil : components.joined(separator: ",")
+    }
+
+    private func currentCredentialCacheIdentity() -> String? {
+        guard let credentials = try? loadCredentials() else { return nil }
+        return Self.credentialCacheIdentity(
+            accountId: credentials.accountId,
+            accountSubject: credentials.accountSubject,
+            accessTokenFingerprint: Self.credentialFingerprint(credentials.accessToken)
+        )
     }
 
     private func currentManualCookieCacheIdentity(for official: OfficialProviderConfig) -> String? {

@@ -103,6 +103,24 @@ final class AppProviderRefreshModel {
         }
     }
 
+    /// Startup refresh (doc §8.2): only providers currently shown in the menu
+    /// bar whose snapshot is missing or already stale. Fresh restored-cache
+    /// snapshots are left untouched so startup does not fan out requests.
+    func refreshDisplayedStatusBarProvidersForStartup() {
+        let host = requireHost()
+        let staleProviders = coordinator.displayedProvidersForStartupRefresh(
+            providers: host.statusBarProvidersForDisplay(),
+            snapshots: providerState.snapshots
+        )
+        guard !staleProviders.isEmpty else { return }
+        coordinator.refreshDisplayedStatusBarProviders(
+            providers: staleProviders,
+            forceRefresh: false
+        ) { [weak self] descriptor, forceRefresh in
+            await self?.refreshProvider(descriptor, forceRefresh: forceRefresh)
+        }
+    }
+
     func refreshProvider(_ descriptor: ProviderDescriptor, forceRefresh: Bool = false) async {
         let host = requireHost()
         let getState = requireGetState()
@@ -144,6 +162,9 @@ final class AppProviderRefreshModel {
             persistBaselineEntries: { entries in
                 host.thirdPartyBalanceBaselineStore.save(entries)
             },
+            persistSnapshot: { [weak self] descriptor, snapshot in
+                self?.persistSnapshotToCache(descriptor: descriptor, snapshot: snapshot)
+            },
             afterRefresh: {
                 host.pruneThirdPartyBalanceBaselines()
             },
@@ -163,6 +184,16 @@ final class AppProviderRefreshModel {
                 host.boundedSnapshot(snapshot)
             }
         )
+    }
+
+    /// Fire-and-forget persistence of the latest main snapshot (doc §8.2).
+    /// Runs off the main actor so the refresh path is never blocked by file IO.
+    private func persistSnapshotToCache(descriptor: ProviderDescriptor, snapshot: UsageSnapshot) {
+        guard let cache = host?.persistedSnapshotCache else { return }
+        let providerID = descriptor.id
+        Task.detached(priority: .utility) {
+            cache.save(providerID: providerID, snapshot: snapshot)
+        }
     }
 
     private func makeRefreshScheduler() -> ProviderRefreshScheduler {

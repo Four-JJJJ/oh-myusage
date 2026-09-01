@@ -16,16 +16,20 @@ final class CursorProvider: UsageProvider, @unchecked Sendable {
 
     private let session: URLSession
     private let sqlite: any SQLiteQuerying
+    private let stateDatabasePath: String
     let descriptor: ProviderDescriptor
 
     init(
         descriptor: ProviderDescriptor,
         session: URLSession = .shared,
-        sqlite: any SQLiteQuerying = DefaultSQLiteShell()
+        sqlite: any SQLiteQuerying = DefaultSQLiteShell(),
+        stateDatabasePath: String? = nil
     ) {
         self.descriptor = descriptor
         self.session = session
         self.sqlite = sqlite
+        self.stateDatabasePath = stateDatabasePath
+            ?? "\(NSHomeDirectory())/Library/Application Support/Cursor/User/globalStorage/state.vscdb"
     }
 
     func fetch() async throws -> UsageSnapshot {
@@ -67,6 +71,9 @@ final class CursorProvider: UsageProvider, @unchecked Sendable {
         if http.statusCode == 401 || http.statusCode == 403 {
             throw ProviderError.unauthorized
         }
+        if http.statusCode == 429 {
+            throw ProviderError.rateLimited
+        }
         guard (200...299).contains(http.statusCode) else {
             throw ProviderError.invalidResponse("Cursor http \(http.statusCode)")
         }
@@ -79,7 +86,7 @@ final class CursorProvider: UsageProvider, @unchecked Sendable {
     }
 
     private func loadAuth() throws -> CursorAuth {
-        let dbPath = "\(NSHomeDirectory())/Library/Application Support/Cursor/User/globalStorage/state.vscdb"
+        let dbPath = stateDatabasePath
         guard FileManager.default.fileExists(atPath: dbPath) else {
             throw ProviderError.missingCredential(dbPath)
         }
@@ -134,6 +141,9 @@ final class CursorProvider: UsageProvider, @unchecked Sendable {
         }
         if http.statusCode == 400 || http.statusCode == 401 {
             throw ProviderError.unauthorized
+        }
+        if http.statusCode == 429 {
+            throw ProviderError.rateLimited
         }
         guard (200...299).contains(http.statusCode),
               let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],

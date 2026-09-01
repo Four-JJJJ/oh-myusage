@@ -3115,6 +3115,365 @@ final class RelayProviderTests: XCTestCase {
     }
 }
 
+// MARK: - Channel caching and partial-success semantics (plan §8.4 Relay)
+
+extension RelayProviderTests {
+    private final class RequestCounter: @unchecked Sendable {
+        private let lock = NSLock()
+        private var counts: [String: Int] = [:]
+
+        func increment(_ key: String) {
+            lock.lock()
+            counts[key, default: 0] += 1
+            lock.unlock()
+        }
+
+        func count(_ key: String) -> Int {
+            lock.lock()
+            defer { lock.unlock() }
+            return counts[key] ?? 0
+        }
+    }
+
+    private final class ChannelStub: @unchecked Sendable {
+        var tokenAuthorized = true
+        var balanceAuthorized = true
+    }
+
+    private static func httpResponse(_ request: URLRequest, status: Int) -> HTTPURLResponse {
+        HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!
+    }
+
+    /// Counting handler for the generic-newapi dual-channel setup. Every
+    /// request is counted as `"<Authorization>|<path>"` so per-credential
+    /// request totals are assertable.
+    private func installDualChannelHandler(
+        counter: RequestCounter,
+        stub: ChannelStub,
+        balanceQuotaByToken: [String: Double]
+    ) {
+        RelayMockURLProtocol.requestHandler = { request in
+            // `RelayRequestResolver.relayURL` drops trailing slashes
+            // (URL.appending(path:)), so normalize before matching.
+            let path = (request.url?.path ?? "").hasSuffix("/")
+                ? String((request.url?.path ?? "").dropLast())
+                : (request.url?.path ?? "")
+            let auth = request.value(forHTTPHeaderField: "Authorization") ?? ""
+            counter.increment("\(auth)|\(path)")
+            switch path {
+            case "/api/usage/token":
+                if !stub.tokenAuthorized {
+                    return (Self.httpResponse(request, status: 401), Data(#"{"error":"expired"}"#.utf8))
+                }
+                let payload = #"{"data":{"name":"tk-1","total_available":70,"total_granted":100,"total_used":30,"unlimited_quota":false}}"#
+                return (Self.httpResponse(request, status: 200), Data(payload.utf8))
+            case "/v1/dashboard/billing/subscription", "/v1/dashboard/billing/usage":
+                // Best-effort enrichment; a 404 keeps them nil without
+                // affecting the token channel result.
+                return (Self.httpResponse(request, status: 404), Data())
+            case "/api/user/self":
+                if !stub.balanceAuthorized {
+                    return (Self.httpResponse(request, status: 401), Data(#"{"error":"expired"}"#.utf8))
+                }
+                let token = auth.replacingOccurrences(of: "Bearer ", with: "")
+                let quota = balanceQuotaByToken[token] ?? 4_500_000
+                let payload = #"{"success":true,"data":{"quota":\#(quota),"used_quota":500000}}"#
+                return (Self.httpResponse(request, status: 200), Data(payload.utf8))
+            case "/api/status":
+                let payload = #"{"success":true,"data":{"quota_per_unit":50000,"quota_display_type":"USD","display_in_currency":true}}"#
+                return (Self.httpResponse(request, status: 200), Data(payload.utf8))
+            default:
+                XCTFail("Unexpected path \(path)")
+                return (Self.httpResponse(request, status: 200), Data(#"{}"#.utf8))
+            }
+        }
+    }
+
+    private func makeDualChannelDescriptor(id: String, service: String) -> ProviderDescriptor {
+        var descriptor = genericNewAPIDescriptor(service: service, baseURL: "https://relay.example.com", userID: "user-123")
+        descriptor.id = id
+        descriptor.relayConfig?.tokenChannelEnabled = true
+        descriptor.relayConfig?.balanceChannelEnabled = true
+        return descriptor
+    }
+
+    private func makeDualChannelProvider(descriptor: ProviderDescriptor, keychain: KeychainService) -> RelayProvider {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [RelayMockURLProtocol.self]
+        return RelayProvider(
+            descriptor: descriptor,
+            session: URLSession(configuration: config),
+            keychain: keychain,
+            browserCredentialService: BrowserCredentialService(
+                bearerCandidatesOverride: { _ in [] },
+                cookieHeaderOverride: { _ in nil }
+            )
+        )
+    }
+
+    func testBothChannelsRequestedOnceAndReusedFromCacheOnSecondFetch() async throws {
+        let service = "OhMyUsageTests-\(UUID().uuidString)"
+        let keychain = makeTestKeychain()
+        XCTAssertTrue(keychain.saveToken("usage-token", service: service, account: "relay.example.com/sk-token"))
+        XCTAssertTrue(keychain.saveToken("balance-token", service: service, account: "relay.example.com/system-token"))
+
+        let counter = RequestCounter()
+        installDualChannelHandler(counter: counter, stub: ChannelStub(), balanceQuotaByToken: ["balance-token": 4_500_000])
+        defer { RelayMockURLProtocol.requestHandler = nil }
+
+        let provider = makeDualChannelProvider(
+            descriptor: makeDualChannelDescriptor(id: "relay-cache-both-channels", service: service),
+            keychain: keychain
+        )
+
+        let first = try await provider.fetch()
+        XCTAssertEqual(first.remaining ?? -1, 90, accuracy: 0.001, "the balance channel takes display precedence when both succeed")
+        XCTAssertEqual(first.unit, "$")
+        XCTAssertEqual(first.rawMeta["token.authSource"], "saved")
+        XCTAssertEqual(first.rawMeta["account.authSource"], "savedBearer")
+        XCTAssertTrue(first.note.contains("Token remaining 70.00"))
+        XCTAssertEqual(counter.count("Bearer usage-token|/api/usage/token"), 1)
+        XCTAssertEqual(counter.count("Bearer balance-token|/api/user/self"), 1)
+        XCTAssertEqual(counter.count("Bearer balance-token|/api/status"), 1)
+
+        let second = try await provider.fetch()
+        XCTAssertEqual(second.remaining ?? -1, 90, accuracy: 0.001)
+        XCTAssertTrue(second.note.contains("Token remaining 70.00"), "the cached token channel note is preserved")
+        XCTAssertEqual(counter.count("Bearer usage-token|/api/usage/token"), 1, "a fresh token channel result is reused from its own cache")
+        XCTAssertEqual(counter.count("Bearer balance-token|/api/user/self"), 1, "a fresh balance channel result is reused from its own cache")
+        XCTAssertEqual(counter.count("Bearer balance-token|/api/status"), 1)
+    }
+
+    func testTokenOnlyConfigNeverRequestsBalanceChannel() async throws {
+        let service = "OhMyUsageTests-\(UUID().uuidString)"
+        let keychain = makeTestKeychain()
+        XCTAssertTrue(keychain.saveToken("usage-token", service: service, account: "relay.example.com/sk-token"))
+
+        var descriptor = makeDualChannelDescriptor(id: "relay-cache-token-only", service: service)
+        descriptor.relayConfig?.balanceChannelEnabled = false
+
+        let counter = RequestCounter()
+        installDualChannelHandler(counter: counter, stub: ChannelStub(), balanceQuotaByToken: [:])
+        defer { RelayMockURLProtocol.requestHandler = nil }
+
+        let provider = makeDualChannelProvider(descriptor: descriptor, keychain: keychain)
+        let snapshot = try await provider.fetch()
+
+        XCTAssertEqual(snapshot.remaining ?? -1, 70, accuracy: 0.001)
+        XCTAssertEqual(snapshot.unit, "quota")
+        XCTAssertEqual(counter.count("Bearer usage-token|/api/usage/token"), 1)
+        XCTAssertEqual(counter.count("Bearer usage-token|/api/user/self"), 0, "a token-only display config must not request the balance channel")
+        XCTAssertEqual(counter.count("Bearer usage-token|/api/status"), 0)
+    }
+
+    func testBalanceOnlyConfigNeverRequestsTokenChannel() async throws {
+        let service = "OhMyUsageTests-\(UUID().uuidString)"
+        let keychain = makeTestKeychain()
+        XCTAssertTrue(keychain.saveToken("balance-token", service: service, account: "relay.example.com/system-token"))
+
+        // genericNewAPIDescriptor ships with tokenChannelEnabled = false.
+        let descriptor = genericNewAPIDescriptor(service: service, baseURL: "https://relay.example.com", userID: "user-123")
+
+        let counter = RequestCounter()
+        installDualChannelHandler(counter: counter, stub: ChannelStub(), balanceQuotaByToken: ["balance-token": 4_500_000])
+        defer { RelayMockURLProtocol.requestHandler = nil }
+
+        let provider = makeDualChannelProvider(descriptor: descriptor, keychain: keychain)
+        let snapshot = try await provider.fetch()
+
+        XCTAssertEqual(snapshot.remaining ?? -1, 90, accuracy: 0.001)
+        XCTAssertEqual(counter.count("Bearer balance-token|/api/usage/token"), 0, "a balance-only display config must not request the token channel")
+        XCTAssertEqual(counter.count("Bearer balance-token|/api/user/self"), 1)
+    }
+
+    func testTokenChannelSuccessSurvivesBalanceChannelFailure() async throws {
+        let service = "OhMyUsageTests-\(UUID().uuidString)"
+        let keychain = makeTestKeychain()
+        XCTAssertTrue(keychain.saveToken("usage-token", service: service, account: "relay.example.com/sk-token"))
+        XCTAssertTrue(keychain.saveToken("balance-token", service: service, account: "relay.example.com/system-token"))
+
+        let counter = RequestCounter()
+        let stub = ChannelStub()
+        stub.balanceAuthorized = false
+        installDualChannelHandler(counter: counter, stub: stub, balanceQuotaByToken: ["balance-token": 4_500_000])
+        defer { RelayMockURLProtocol.requestHandler = nil }
+
+        let provider = makeDualChannelProvider(
+            descriptor: makeDualChannelDescriptor(id: "relay-cache-token-survives", service: service),
+            keychain: keychain
+        )
+
+        // Partial success: the failing balance channel must not discard the
+        // successful token channel result.
+        let snapshot = try await provider.fetch()
+        XCTAssertEqual(snapshot.remaining ?? -1, 70, accuracy: 0.001)
+        XCTAssertEqual(snapshot.used ?? -1, 30, accuracy: 0.001)
+        XCTAssertEqual(snapshot.limit ?? -1, 100, accuracy: 0.001)
+        XCTAssertEqual(snapshot.unit, "quota")
+        XCTAssertEqual(snapshot.rawMeta["token.authSource"], "saved")
+        XCTAssertNil(snapshot.rawMeta["account.authSource"])
+        XCTAssertTrue(snapshot.note.contains("Token remaining 70.00"))
+        XCTAssertEqual(snapshot.fetchHealth, .ok)
+
+        // Next refresh: the token channel is reused from its cache while the
+        // failed balance channel is retried.
+        let second = try await provider.fetch()
+        XCTAssertEqual(second.remaining ?? -1, 70, accuracy: 0.001)
+        XCTAssertEqual(counter.count("Bearer usage-token|/api/usage/token"), 1, "the successful token channel is not re-requested")
+        XCTAssertEqual(counter.count("Bearer balance-token|/api/user/self"), 2, "the failed balance channel is retried")
+    }
+
+    func testBalanceChannelSuccessSurvivesTokenChannelFailure() async throws {
+        let service = "OhMyUsageTests-\(UUID().uuidString)"
+        let keychain = makeTestKeychain()
+        XCTAssertTrue(keychain.saveToken("usage-token", service: service, account: "relay.example.com/sk-token"))
+        XCTAssertTrue(keychain.saveToken("balance-token", service: service, account: "relay.example.com/system-token"))
+
+        let counter = RequestCounter()
+        let stub = ChannelStub()
+        stub.tokenAuthorized = false
+        installDualChannelHandler(counter: counter, stub: stub, balanceQuotaByToken: ["balance-token": 4_500_000])
+        defer { RelayMockURLProtocol.requestHandler = nil }
+
+        let provider = makeDualChannelProvider(
+            descriptor: makeDualChannelDescriptor(id: "relay-cache-balance-survives", service: service),
+            keychain: keychain
+        )
+
+        let snapshot = try await provider.fetch()
+        XCTAssertEqual(snapshot.remaining ?? -1, 90, accuracy: 0.001)
+        XCTAssertEqual(snapshot.unit, "$")
+        XCTAssertEqual(snapshot.rawMeta["account.authSource"], "savedBearer")
+        XCTAssertEqual(snapshot.authSourceLabel, "savedBearer")
+        XCTAssertNil(snapshot.rawMeta["token.authSource"])
+
+        let second = try await provider.fetch()
+        XCTAssertEqual(second.remaining ?? -1, 90, accuracy: 0.001)
+        XCTAssertEqual(counter.count("Bearer balance-token|/api/user/self"), 1, "the successful balance channel is not re-requested")
+        XCTAssertEqual(counter.count("Bearer usage-token|/api/usage/token"), 2, "the failed token channel is retried")
+    }
+
+    func testBothChannelsFailingProducesOverallFailure() async throws {
+        let service = "OhMyUsageTests-\(UUID().uuidString)"
+        let keychain = makeTestKeychain()
+        XCTAssertTrue(keychain.saveToken("usage-token", service: service, account: "relay.example.com/sk-token"))
+        XCTAssertTrue(keychain.saveToken("balance-token", service: service, account: "relay.example.com/system-token"))
+
+        let counter = RequestCounter()
+        let stub = ChannelStub()
+        stub.tokenAuthorized = false
+        stub.balanceAuthorized = false
+        installDualChannelHandler(counter: counter, stub: stub, balanceQuotaByToken: ["balance-token": 4_500_000])
+        defer { RelayMockURLProtocol.requestHandler = nil }
+
+        let provider = makeDualChannelProvider(
+            descriptor: makeDualChannelDescriptor(id: "relay-cache-both-fail", service: service),
+            keychain: keychain
+        )
+
+        do {
+            _ = try await provider.fetch()
+            XCTFail("Expected an overall failure when both channels fail")
+        } catch let error as ProviderError {
+            guard case .unauthorizedDetail(let message) = error else {
+                return XCTFail("expected unauthorizedDetail, got \(error)")
+            }
+            // The token channel runs first, so its failure (passed through the
+            // friendly-error mapping) is surfaced as the overall error.
+            XCTAssertTrue(message.contains("expired"), "the first channel failure is surfaced, got: \(message)")
+        }
+        XCTAssertEqual(counter.count("Bearer usage-token|/api/usage/token"), 1, "the token channel must have been attempted")
+        XCTAssertEqual(counter.count("Bearer balance-token|/api/user/self"), 1, "the balance channel must have been attempted")
+    }
+
+    func testChannelCacheDoesNotCrossAccounts() async throws {
+        let serviceA = "OhMyUsageTests-\(UUID().uuidString)"
+        let serviceB = "OhMyUsageTests-\(UUID().uuidString)"
+        let keychain = makeTestKeychain()
+        XCTAssertTrue(keychain.saveToken("usage-token-a", service: serviceA, account: "relay.example.com/sk-token"))
+        XCTAssertTrue(keychain.saveToken("balance-a", service: serviceA, account: "relay.example.com/system-token"))
+        XCTAssertTrue(keychain.saveToken("usage-token-b", service: serviceB, account: "relay.example.com/sk-token"))
+        XCTAssertTrue(keychain.saveToken("balance-b", service: serviceB, account: "relay.example.com/system-token"))
+
+        let counter = RequestCounter()
+        installDualChannelHandler(
+            counter: counter,
+            stub: ChannelStub(),
+            balanceQuotaByToken: ["balance-a": 4_500_000, "balance-b": 2_000_000]
+        )
+        defer { RelayMockURLProtocol.requestHandler = nil }
+
+        // Same descriptor id, host and keychain account names — only the
+        // keychain service (and therefore the credential identity) differs,
+        // which is exactly the "account slot switched" scenario.
+        let providerA = makeDualChannelProvider(
+            descriptor: makeDualChannelDescriptor(id: "relay-cache-account-isolation", service: serviceA),
+            keychain: keychain
+        )
+        let providerB = makeDualChannelProvider(
+            descriptor: makeDualChannelDescriptor(id: "relay-cache-account-isolation", service: serviceB),
+            keychain: keychain
+        )
+
+        let firstA = try await providerA.fetch()
+        XCTAssertEqual(firstA.remaining ?? -1, 90, accuracy: 0.001)
+        let firstB = try await providerB.fetch()
+        XCTAssertEqual(firstB.remaining ?? -1, 40, accuracy: 0.001, "account B must not reuse account A's cached channel data")
+        let secondA = try await providerA.fetch()
+        XCTAssertEqual(secondA.remaining ?? -1, 90, accuracy: 0.001, "account A keeps serving its own cached data")
+
+        XCTAssertEqual(counter.count("Bearer balance-a|/api/user/self"), 1)
+        XCTAssertEqual(counter.count("Bearer balance-b|/api/user/self"), 1)
+        XCTAssertEqual(counter.count("Bearer balance-a|/api/status"), 1)
+        XCTAssertEqual(counter.count("Bearer balance-b|/api/status"), 1)
+        XCTAssertEqual(counter.count("Bearer usage-token-a|/api/usage/token"), 1)
+        XCTAssertEqual(counter.count("Bearer usage-token-b|/api/usage/token"), 1)
+    }
+
+    func testChannelCacheKeysStayIndependentAndFingerprinted() {
+        let tokenKey = RelayProvider.tokenChannelCacheKey(
+            descriptorID: "relay-1",
+            baseURL: URL(string: "https://relay.example.com")!,
+            adapterID: "generic-newapi",
+            auth: AuthConfig(kind: .bearer, keychainService: "OhMyUsage", keychainAccount: "relay.example.com/sk-token"),
+            savedCredential: "secret-token-value"
+        )
+        let balanceKey = RelayProvider.balanceChannelCacheKey(
+            descriptorID: "relay-1",
+            baseURL: URL(string: "https://relay.example.com")!,
+            adapterID: "generic-newapi",
+            auth: AuthConfig(kind: .bearer, keychainService: "OhMyUsage", keychainAccount: "relay.example.com/system-token"),
+            savedCredential: "secret-token-value"
+        )
+        let otherAccountKey = RelayProvider.balanceChannelCacheKey(
+            descriptorID: "relay-1",
+            baseURL: URL(string: "https://relay.example.com")!,
+            adapterID: "generic-newapi",
+            auth: AuthConfig(kind: .bearer, keychainService: "OhMyUsage", keychainAccount: "other.example.com/system-token"),
+            savedCredential: "secret-token-value"
+        )
+        let rotatedKey = RelayProvider.balanceChannelCacheKey(
+            descriptorID: "relay-1",
+            baseURL: URL(string: "https://relay.example.com")!,
+            adapterID: "generic-newapi",
+            auth: AuthConfig(kind: .bearer, keychainService: "OhMyUsage", keychainAccount: "relay.example.com/system-token"),
+            savedCredential: "rotated-token-value"
+        )
+
+        XCTAssertFalse(tokenKey.contains("secret-token-value"), "cache keys must not contain credential material")
+        XCTAssertNotEqual(tokenKey, balanceKey, "token and balance channels use independent key namespaces")
+        XCTAssertNotEqual(balanceKey, otherAccountKey, "different accounts must not share cache keys")
+        XCTAssertNotEqual(balanceKey, rotatedKey, "rotated credentials must not reuse the previous entry")
+        XCTAssertTrue(balanceKey.contains(CredentialFingerprint.sha256Hex("secret-token-value")))
+    }
+
+    func testRelayChannelCacheTTLFollowsFetchPlan() {
+        XCTAssertEqual(ProviderFetchPlanRegistry().plan(for: .relay).activeTTL, 120)
+        XCTAssertEqual(ProviderFetchPlanRegistry().plan(for: .open).activeTTL, 120)
+        XCTAssertEqual(ProviderFetchPlanRegistry().plan(for: .dragon).activeTTL, 120)
+    }
+}
+
 private final class RelayIntentRecordingBrowserCredentialService: BrowserCredentialProviding {
     private(set) var recordedIntents: [BrowserCredentialAccessIntent] = []
 

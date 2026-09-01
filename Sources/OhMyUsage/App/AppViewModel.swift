@@ -41,6 +41,9 @@ final class AppViewModel {
     @ObservationIgnored let claudeOfficialProfileRefreshRuntime = ClaudeOfficialProfileRefreshRuntime()
     @ObservationIgnored let permissionModel: AppPermissionModel
     @ObservationIgnored let updateModel: AppUpdateModel
+    /// Durable snapshot cache (doc §8.1/8.2). `nil` in test bootstraps so tests
+    /// never touch the real Application Support directory.
+    @ObservationIgnored let persistedSnapshotCache: PersistedSnapshotCache?
     private var sessionStore = AppSessionStore()
 
     var officialProviderSettingsCoordinator: AppOfficialProviderSettingsCoordinator {
@@ -320,7 +323,8 @@ final class AppViewModel {
             config: configBootstrap.config,
             currentAppVersion: AppVersionResolver.detectCurrentAppVersion(),
             shouldPersistConfigDuringBootstrap: configBootstrap.shouldPersistDuringBootstrap,
-            performsProductionBootstrapSideEffects: true
+            performsProductionBootstrapSideEffects: true,
+            persistedSnapshotCache: PersistedSnapshotCache()
         )
     }
 
@@ -343,7 +347,8 @@ final class AppViewModel {
         usageAnalyticsRefreshCoordinator: UsageAnalyticsRefreshCoordinator = UsageAnalyticsRefreshCoordinator(),
         updateInstallBufferDelaySeconds: TimeInterval = 2,
         updateCheckStatusClearDelaySeconds: TimeInterval = 10,
-        settingsPersistenceStatusClearDelaySeconds: TimeInterval = 4
+        settingsPersistenceStatusClearDelaySeconds: TimeInterval = 4,
+        persistedSnapshotCache: PersistedSnapshotCache? = nil
     ) {
         let dependencyGraph = AppCompositionFactory.makeDependencyGraph(
             configurationRepository: configurationRepository,
@@ -368,7 +373,8 @@ final class AppViewModel {
             config: testingConfig.migratedWithSiteDefaults(),
             currentAppVersion: testingCurrentAppVersion,
             shouldPersistConfigDuringBootstrap: false,
-            performsProductionBootstrapSideEffects: false
+            performsProductionBootstrapSideEffects: false,
+            persistedSnapshotCache: persistedSnapshotCache
         )
     }
 
@@ -385,7 +391,8 @@ final class AppViewModel {
         config: AppConfig,
         currentAppVersion: String,
         shouldPersistConfigDuringBootstrap: Bool,
-        performsProductionBootstrapSideEffects: Bool
+        performsProductionBootstrapSideEffects: Bool,
+        persistedSnapshotCache: PersistedSnapshotCache? = nil
     ) {
         self.keychain = dependencyGraph.keychain
         self.credentialBroker = dependencyGraph.credentialBroker
@@ -404,6 +411,7 @@ final class AppViewModel {
         self.providerRefreshModel = dependencyGraph.providerRefreshModel
         self.permissionModel = dependencyGraph.permissionModel
         self.updateModel = dependencyGraph.updateModel
+        self.persistedSnapshotCache = persistedSnapshotCache
         self.configurationModel = dependencyGraph.configurationModel
         self.config = config
         self.providerFactory = dependencyGraph.providerFactory
@@ -447,12 +455,35 @@ final class AppViewModel {
         syncCodexProfilesCurrentState()
         bootstrapClaudeProfileState()
         restorePersistedOfficialProvidersIfNeeded()
+        restorePersistedSnapshotsFromCacheIfNeeded()
         bindPermissionModel()
         bindUpdateModel()
         bindUsageAnalyticsModel()
         if performsProductionBootstrapSideEffects {
             refreshPermissionStatuses(force: true)
         }
+    }
+
+    /// Restores cached snapshots into provider state on cold start (doc §8.2).
+    /// Restored values are marked `.cachedFallback` and never overwrite data
+    /// that is already present. Providers that no longer exist in the config
+    /// are skipped so removed providers leave no ghost state.
+    func restorePersistedSnapshotsFromCache(_ cache: PersistedSnapshotCache) {
+        let configuredProviderIDs = Set(config.providers.map(\.id))
+        guard !configuredProviderIDs.isEmpty else { return }
+        let latestEntries = cache.loadLatestSnapshots()
+        guard !latestEntries.isEmpty else { return }
+        providerRefreshModel.mutateProviderState { state in
+            for (providerID, entry) in latestEntries
+            where configuredProviderIDs.contains(providerID) && state.snapshots[providerID] == nil {
+                state.snapshots[providerID] = entry.restoredSnapshot
+            }
+        }
+    }
+
+    private func restorePersistedSnapshotsFromCacheIfNeeded() {
+        guard let cache = persistedSnapshotCache else { return }
+        restorePersistedSnapshotsFromCache(cache)
     }
 
     private func bindConfigurationModel() {
@@ -563,7 +594,9 @@ final class AppViewModel {
         hasStarted = true
         refreshPermissionStatuses(force: true)
         restartPolling()
-        refreshDisplayedStatusBarProviders()
+        // Doc §8.2: startup refreshes only displayed providers whose snapshot is
+        // missing or stale; fresh restored-cache snapshots are kept as-is.
+        providerRefreshModel.refreshDisplayedStatusBarProvidersForStartup()
     }
 
     func setMenuPanelVisible(_ visible: Bool) {

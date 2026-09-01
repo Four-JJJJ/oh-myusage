@@ -11,6 +11,9 @@ final class AppProviderRefreshCoordinator {
     typealias SnapshotTransformAction = @MainActor (_ descriptor: ProviderDescriptor, _ fetched: UsageSnapshot) -> UsageSnapshot
     typealias PostOfficialRefreshAction = @MainActor (_ descriptor: ProviderDescriptor, _ forceRefresh: Bool) async -> Void
     typealias PersistBaselineEntriesAction = @MainActor (_ entries: [String: ThirdPartyBalanceBaselineTracker.Entry]) -> Void
+    /// Persists the latest main snapshot for a provider after a successful refresh
+    /// (doc §8.2). Implementations must not block the refresh path.
+    typealias PersistSnapshotAction = @MainActor (_ descriptor: ProviderDescriptor, _ snapshot: UsageSnapshot) -> Void
     typealias AfterRefreshAction = @MainActor () -> Void
     typealias StatusBarNotifyAction = @MainActor () -> Void
     typealias TextProvider = @MainActor (_ key: L10nKey) -> String
@@ -119,6 +122,7 @@ final class AppProviderRefreshCoordinator {
         transformFetchedSnapshot: @escaping SnapshotTransformAction,
         postOfficialRefresh: @escaping PostOfficialRefreshAction,
         persistBaselineEntries: @escaping PersistBaselineEntriesAction,
+        persistSnapshot: @escaping PersistSnapshotAction = { _, _ in },
         afterRefresh: @escaping AfterRefreshAction,
         notifyStatusBarDisplayConfigChanged: @escaping StatusBarNotifyAction,
         text: @escaping TextProvider,
@@ -136,6 +140,7 @@ final class AppProviderRefreshCoordinator {
                 transformFetchedSnapshot: transformFetchedSnapshot,
                 postOfficialRefresh: postOfficialRefresh,
                 persistBaselineEntries: persistBaselineEntries,
+                persistSnapshot: persistSnapshot,
                 afterRefresh: afterRefresh,
                 notifyStatusBarDisplayConfigChanged: notifyStatusBarDisplayConfigChanged,
                 text: text,
@@ -155,6 +160,7 @@ final class AppProviderRefreshCoordinator {
         transformFetchedSnapshot: @escaping SnapshotTransformAction,
         postOfficialRefresh: @escaping PostOfficialRefreshAction,
         persistBaselineEntries: @escaping PersistBaselineEntriesAction,
+        persistSnapshot: @escaping PersistSnapshotAction,
         afterRefresh: @escaping AfterRefreshAction,
         notifyStatusBarDisplayConfigChanged: @escaping StatusBarNotifyAction,
         text: @escaping TextProvider,
@@ -169,9 +175,10 @@ final class AppProviderRefreshCoordinator {
         do {
             let fetched = try await fetchProviderSnapshot(using: provider, forceRefresh: forceRefresh)
             let snapshot = transformFetchedSnapshot(descriptor, fetched)
+            let bounded = boundedSnapshot(snapshot)
 
             mutateState(getState, setState) { state in
-                state.snapshots[descriptor.id] = boundedSnapshot(snapshot)
+                state.snapshots[descriptor.id] = bounded
                 if descriptor.family == .thirdParty {
                     _ = state.thirdPartyBalanceBaselineTracker.record(
                         remaining: Self.resolvedThirdPartyRemainingForBaseline(
@@ -192,6 +199,7 @@ final class AppProviderRefreshCoordinator {
             if descriptor.family == .thirdParty {
                 persistBaselineEntries(getState().thirdPartyBalanceBaselineTracker.snapshotEntries())
             }
+            persistSnapshot(descriptor, bounded)
             notifyStatusBarDisplayConfigChanged()
             if descriptor.family == .official {
                 await postOfficialRefresh(descriptor, forceRefresh)
@@ -446,6 +454,42 @@ final class AppProviderRefreshCoordinator {
 }
 
 extension AppProviderRefreshCoordinator {
+    /// Snapshot age beyond which a startup refresh is allowed, even if the
+    /// provider's own poll interval is very short (doc §8.2: startup only
+    /// refreshes displayed providers whose data is already stale).
+    nonisolated static let startupRefreshStalenessFloorSeconds: TimeInterval = 60
+
+    /// Startup refresh scope: only displayed providers whose snapshot is
+    /// missing, empty, or older than their staleness window.
+    func displayedProvidersForStartupRefresh(
+        providers: [ProviderDescriptor],
+        snapshots: [String: UsageSnapshot],
+        now: Date = Date()
+    ) -> [ProviderDescriptor] {
+        providers.filter { descriptor in
+            Self.needsStartupRefresh(
+                descriptor: descriptor,
+                snapshot: snapshots[descriptor.id],
+                now: now
+            )
+        }
+    }
+
+    nonisolated static func needsStartupRefresh(
+        descriptor: ProviderDescriptor,
+        snapshot: UsageSnapshot?,
+        now: Date
+    ) -> Bool {
+        guard descriptor.enabled else { return false }
+        guard let snapshot else { return true }
+        if snapshot.valueFreshness == .empty { return true }
+        let stalenessSeconds = max(
+            TimeInterval(max(descriptor.pollIntervalSec, 1)),
+            startupRefreshStalenessFloorSeconds
+        )
+        return now.timeIntervalSince(snapshot.updatedAt) >= stalenessSeconds
+    }
+
     nonisolated static func isCancellationError(_ error: Error) -> Bool {
         if error is CancellationError {
             return true

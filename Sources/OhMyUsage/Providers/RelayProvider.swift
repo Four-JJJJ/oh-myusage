@@ -9,6 +9,23 @@ final class RelayProvider: UsageProvider, @unchecked Sendable {
     private let browserCredentialService: any BrowserCredentialProviding
     private let registry: RelayAdapterRegistry
     private let browserRecoveryBackoffInterval: TimeInterval = 10 * 60
+
+    // Plan §8.4: the token channel and the balance channel cache their
+    // successful results independently (separate caches and key namespaces),
+    // so one channel's freshness never extends to the other and a failed
+    // channel is always retried while the other one is reused. TTLs follow the
+    // relay fetch plan (`ProviderFetchPlanRegistry`, activeTTL 120s for the
+    // whole relay family). Keys include the descriptor id, base URL, adapter
+    // and an *irreversible fingerprint* of the saved credential next to the
+    // keychain service/account, so switching accounts, rotating a credential
+    // or re-adding a site can never reuse another account's cached data.
+    private static let tokenChannelCache = ProviderValueCache<TokenChannelResult>(
+        ttl: ProviderFetchPlanRegistry().plan(for: .relay).activeTTL
+    )
+    private static let balanceChannelCache = ProviderValueCache<AccountChannelResult>(
+        ttl: ProviderFetchPlanRegistry().plan(for: .relay).activeTTL
+    )
+
     private var credentialResolver: RelayCredentialResolver {
         RelayCredentialResolver(
             descriptor: descriptor,
@@ -78,13 +95,30 @@ final class RelayProvider: UsageProvider, @unchecked Sendable {
 
         if relayConfig.tokenChannelEnabled, manifest.tokenRequest != nil {
             do {
-                tokenChannel = try await fetchTokenUsageChannel(
+                let cacheKey = Self.tokenChannelCacheKey(
+                    descriptorID: normalized.id,
                     baseURL: baseURL,
-                    relayConfig: relayConfig,
-                    tokenRequest: manifest.tokenRequest!,
-                    manifest: manifest,
-                    forceRefresh: forceRefresh
+                    adapterID: manifest.id,
+                    auth: normalized.auth,
+                    savedCredential: credentialResolver.readSavedCredential(auth: normalized.auth)
                 )
+                if !forceRefresh, let cached = Self.tokenChannelCache.value(for: cacheKey) {
+                    // Plan §8.4: only request a channel when its own cached
+                    // data is missing or stale; user-initiated force refresh
+                    // always goes live so a re-imported credential is
+                    // exercised immediately.
+                    tokenChannel = cached
+                } else {
+                    let result = try await fetchTokenUsageChannel(
+                        baseURL: baseURL,
+                        relayConfig: relayConfig,
+                        tokenRequest: manifest.tokenRequest!,
+                        manifest: manifest,
+                        forceRefresh: forceRefresh
+                    )
+                    Self.tokenChannelCache.store(result, for: cacheKey)
+                    tokenChannel = result
+                }
             } catch {
                 firstError = firstError ?? error
             }
@@ -92,12 +126,25 @@ final class RelayProvider: UsageProvider, @unchecked Sendable {
 
         if relayConfig.balanceChannelEnabled {
             do {
-                balanceChannel = try await fetchBalanceChannel(
+                let cacheKey = Self.balanceChannelCacheKey(
+                    descriptorID: normalized.id,
                     baseURL: baseURL,
-                    relayConfig: relayConfig,
-                    manifest: manifest,
-                    forceRefresh: forceRefresh
+                    adapterID: manifest.id,
+                    auth: relayConfig.balanceAuth,
+                    savedCredential: credentialResolver.readSavedCredential(auth: relayConfig.balanceAuth)
                 )
+                if !forceRefresh, let cached = Self.balanceChannelCache.value(for: cacheKey) {
+                    balanceChannel = cached
+                } else {
+                    let result = try await fetchBalanceChannel(
+                        baseURL: baseURL,
+                        relayConfig: relayConfig,
+                        manifest: manifest,
+                        forceRefresh: forceRefresh
+                    )
+                    Self.balanceChannelCache.store(result, for: cacheKey)
+                    balanceChannel = result
+                }
             } catch {
                 firstError = firstError ?? error
             }
@@ -221,6 +268,50 @@ final class RelayProvider: UsageProvider, @unchecked Sendable {
 
     private func browserAccessIntent(for forceRefresh: Bool) -> BrowserCredentialAccessIntent {
         forceRefresh ? .interactiveImport : .background
+    }
+
+    // MARK: - Channel cache keys
+
+    /// Cache key for the token channel. Namespaced per descriptor, base URL,
+    /// adapter, keychain identity and an irreversible credential fingerprint,
+    /// so different accounts, rotated credentials or re-added sites can never
+    /// share an entry. Only the fingerprint is embedded, never the token value.
+    internal static func tokenChannelCacheKey(
+        descriptorID: String,
+        baseURL: URL,
+        adapterID: String,
+        auth: AuthConfig,
+        savedCredential: String?
+    ) -> String {
+        "relay|token|\(descriptorID)|\(baseURL.absoluteString)|\(adapterID)|\(keychainIdentityComponent(auth))|\(credentialKeyComponent(savedCredential))"
+    }
+
+    /// Cache key for the balance channel; an independent namespace from the
+    /// token channel so the two caches can never collide or cross-contaminate.
+    internal static func balanceChannelCacheKey(
+        descriptorID: String,
+        baseURL: URL,
+        adapterID: String,
+        auth: AuthConfig,
+        savedCredential: String?
+    ) -> String {
+        "relay|balance|\(descriptorID)|\(baseURL.absoluteString)|\(adapterID)|\(keychainIdentityComponent(auth))|\(credentialKeyComponent(savedCredential))"
+    }
+
+    private static func keychainIdentityComponent(_ auth: AuthConfig) -> String {
+        let service = auth.keychainService?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let account = auth.keychainAccount?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return "\(service.isEmpty ? "-" : service)|\(account.isEmpty ? "-" : account)"
+    }
+
+    private static func credentialKeyComponent(_ savedCredential: String?) -> String {
+        let trimmed = savedCredential?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !trimmed.isEmpty else {
+            // No saved credential (e.g. browser-first setups): the account
+            // identity above still separates the cache entries.
+            return "nosavedcredential"
+        }
+        return CredentialFingerprint.sha256Hex(trimmed)
     }
 
 }

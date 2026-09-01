@@ -403,6 +403,260 @@ extension QwenProviderTests {
     }
 }
 
+// MARK: - Session context caching (plan §8.4 Qwen)
+
+extension QwenProviderTests {
+    private final class RequestCounter: @unchecked Sendable {
+        private let lock = NSLock()
+        private var counts: [String: Int] = [:]
+
+        func increment(_ key: String) {
+            lock.lock()
+            counts[key, default: 0] += 1
+            lock.unlock()
+        }
+
+        func count(_ key: String) -> Int {
+            lock.lock()
+            defer { lock.unlock() }
+            return counts[key] ?? 0
+        }
+    }
+
+    private final class GatewayMode: @unchecked Sendable {
+        private let lock = NSLock()
+        private var authorized = true
+
+        var gatewayAuthorized: Bool {
+            get {
+                lock.lock()
+                defer { lock.unlock() }
+                return authorized
+            }
+            set {
+                lock.lock()
+                authorized = newValue
+                lock.unlock()
+            }
+        }
+    }
+
+    private static func httpResponse(_ request: URLRequest, status: Int) -> HTTPURLResponse {
+        HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!
+    }
+
+    private static func sid(from cookieHeader: String) -> String {
+        for pair in cookieHeader.split(separator: ";") {
+            let trimmed = pair.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.hasPrefix("sid=") {
+                return String(trimmed.dropFirst(4))
+            }
+        }
+        return "unknown"
+    }
+
+    /// Counting handler: `sec_token`/`nickName` are derived from the request's
+    /// `sid` cookie so per-account payloads are distinguishable.
+    private static func installSessionCountingHandler(
+        counter: RequestCounter,
+        mode: GatewayMode? = nil
+    ) {
+        QwenMockURLProtocol.requestHandler = { request in
+            let path = request.url?.path ?? ""
+            let sid = Self.sid(from: request.value(forHTTPHeaderField: "Cookie") ?? "")
+            if path == "/tool/user/info.json" {
+                counter.increment("userInfo|\(sid)")
+                let payload = #"{"successResponse":true,"data":{"secToken":"sec-\#(sid)","nickName":"\#(sid)-user"}}"#
+                return (Self.httpResponse(request, status: 200), Data(payload.utf8))
+            }
+            counter.increment("gateway|\(sid)")
+            if let mode, !mode.gatewayAuthorized {
+                // Gateway envelope carrying a 401-class code (string form is
+                // what the envelope error classifier reads).
+                return (Self.httpResponse(request, status: 200), Data(#"{"code":"401","message":"login required"}"#.utf8))
+            }
+            return (
+                Self.httpResponse(request, status: 200),
+                Data(#"{"successResponse":true,"data":{"per1WeekPercentage":0.25,"per1WeekResetTime":1800000000000}}"#.utf8)
+            )
+        }
+    }
+
+    private static func makeSessionTestProvider(
+        descriptor: ProviderDescriptor,
+        keychain: KeychainService,
+        spy: IntentRecordingBrowserCookieDetector
+    ) -> QwenProvider {
+        QwenProvider(
+            descriptor: descriptor,
+            session: Self.makeMockSession(),
+            keychain: keychain,
+            browserCookieService: spy,
+            webReadBackoff: WebOverlayRetryBackoff()
+        )
+    }
+
+    private static func saveVaultCookie(_ cookie: String, descriptor: ProviderDescriptor, keychain: KeychainService) throws -> String {
+        let account = try XCTUnwrap(descriptor.officialConfig?.manualCookieAccount)
+        XCTAssertTrue(keychain.saveToken(cookie, service: KeychainService.defaultServiceName, account: account))
+        return account
+    }
+
+    func testSecondFetchWithUnchangedCookieSkipsSessionContextRequest() async throws {
+        let keychain = makeTestKeychain()
+        let descriptor = Self.makeFetchDescriptor()
+        try Self.saveVaultCookie("sid=vault-cookie; uid=1", descriptor: descriptor, keychain: keychain)
+
+        let counter = RequestCounter()
+        Self.installSessionCountingHandler(counter: counter)
+        defer { QwenMockURLProtocol.requestHandler = nil }
+
+        let spy = IntentRecordingBrowserCookieDetector()
+        let provider = Self.makeSessionTestProvider(descriptor: descriptor, keychain: keychain, spy: spy)
+
+        let first = try await provider.fetch()
+        XCTAssertEqual(first.accountLabel, "vault-cookie-user")
+        XCTAssertEqual(first.extras["webCookieSource"], "Manual")
+        XCTAssertEqual(counter.count("userInfo|vault-cookie"), 1)
+        XCTAssertEqual(counter.count("gateway|vault-cookie"), 3, "usage + subscription + addon list")
+
+        let second = try await provider.fetch()
+        XCTAssertEqual(second.accountLabel, "vault-cookie-user", "the cached account label survives the second fetch")
+        XCTAssertEqual(second.extras["webCookieSource"], "Manual")
+        XCTAssertEqual(counter.count("userInfo|vault-cookie"), 1, "an unchanged cookie must not refetch the session context")
+        XCTAssertEqual(counter.count("gateway|vault-cookie"), 6, "quota data is always fetched live")
+        XCTAssertEqual(spy.detectCookieHeaderCallCount, 0, "background polls never rescan browser cookie stores while the vault cookie works")
+        XCTAssertEqual(spy.recordedIntents.count, 0)
+    }
+
+    func testSessionContextRefetchedWhenCookieValueChanges() async throws {
+        let keychain = makeTestKeychain()
+        let descriptor = Self.makeFetchDescriptor()
+        let account = try Self.saveVaultCookie("sid=cookie-v1; uid=1", descriptor: descriptor, keychain: keychain)
+
+        let counter = RequestCounter()
+        Self.installSessionCountingHandler(counter: counter)
+        defer { QwenMockURLProtocol.requestHandler = nil }
+
+        let provider = Self.makeSessionTestProvider(
+            descriptor: descriptor,
+            keychain: keychain,
+            spy: IntentRecordingBrowserCookieDetector()
+        )
+
+        let first = try await provider.fetch()
+        XCTAssertEqual(first.accountLabel, "cookie-v1-user")
+        XCTAssertEqual(counter.count("userInfo|cookie-v1"), 1)
+
+        XCTAssertTrue(keychain.saveToken("sid=cookie-v2; uid=1", service: KeychainService.defaultServiceName, account: account))
+        let second = try await provider.fetch()
+        XCTAssertEqual(second.accountLabel, "cookie-v2-user", "a new cookie fingerprint refreshes the session context")
+        XCTAssertEqual(counter.count("userInfo|cookie-v1"), 1)
+        XCTAssertEqual(counter.count("userInfo|cookie-v2"), 1)
+        XCTAssertEqual(counter.count("gateway|cookie-v2"), 3)
+    }
+
+    func testSessionContextCacheDoesNotCrossAccounts() async throws {
+        let keychain = makeTestKeychain()
+        var descriptorA = Self.makeFetchDescriptor()
+        descriptorA.id = "qwen-fetch-account-a"
+        try Self.saveVaultCookie("sid=alpha; uid=1", descriptor: descriptorA, keychain: keychain)
+        var descriptorB = Self.makeFetchDescriptor()
+        descriptorB.id = "qwen-fetch-account-b"
+        try Self.saveVaultCookie("sid=beta; uid=2", descriptor: descriptorB, keychain: keychain)
+
+        let counter = RequestCounter()
+        Self.installSessionCountingHandler(counter: counter)
+        defer { QwenMockURLProtocol.requestHandler = nil }
+
+        let providerA = Self.makeSessionTestProvider(
+            descriptor: descriptorA,
+            keychain: keychain,
+            spy: IntentRecordingBrowserCookieDetector()
+        )
+        let providerB = Self.makeSessionTestProvider(
+            descriptor: descriptorB,
+            keychain: keychain,
+            spy: IntentRecordingBrowserCookieDetector()
+        )
+
+        let firstA = try await providerA.fetch()
+        XCTAssertEqual(firstA.accountLabel, "alpha-user")
+        let firstB = try await providerB.fetch()
+        XCTAssertEqual(firstB.accountLabel, "beta-user", "account B must not reuse account A's session context")
+        let secondA = try await providerA.fetch()
+        XCTAssertEqual(secondA.accountLabel, "alpha-user", "account A keeps serving its own cached context")
+
+        XCTAssertEqual(counter.count("userInfo|alpha"), 1)
+        XCTAssertEqual(counter.count("userInfo|beta"), 1)
+        XCTAssertEqual(counter.count("gateway|alpha"), 6)
+        XCTAssertEqual(counter.count("gateway|beta"), 3)
+    }
+
+    func testCachedSessionContextRefreshedOnceAfterAuthFailure() async throws {
+        let keychain = makeTestKeychain()
+        let descriptor = Self.makeFetchDescriptor()
+        try Self.saveVaultCookie("sid=vault-cookie; uid=1", descriptor: descriptor, keychain: keychain)
+
+        let counter = RequestCounter()
+        let mode = GatewayMode()
+        Self.installSessionCountingHandler(counter: counter, mode: mode)
+        defer { QwenMockURLProtocol.requestHandler = nil }
+
+        let provider = Self.makeSessionTestProvider(
+            descriptor: descriptor,
+            keychain: keychain,
+            spy: IntentRecordingBrowserCookieDetector()
+        )
+
+        _ = try await provider.fetch()
+        XCTAssertEqual(counter.count("userInfo|vault-cookie"), 1)
+
+        mode.gatewayAuthorized = false
+        do {
+            _ = try await provider.fetch()
+            XCTFail("Expected the rejected session to fail the fetch")
+        } catch let error as ProviderError {
+            guard case .unauthorizedDetail = error else {
+                return XCTFail("expected unauthorizedDetail, got \(error)")
+            }
+        }
+        XCTAssertEqual(counter.count("userInfo|vault-cookie"), 2, "the cached context is refreshed exactly once before giving up")
+        XCTAssertEqual(counter.count("gateway|vault-cookie"), 5, "first fetch round (3) + one usage attempt per retry round")
+
+        mode.gatewayAuthorized = true
+        let third = try await provider.fetch()
+        XCTAssertEqual(third.status, .ok)
+        XCTAssertEqual(counter.count("userInfo|vault-cookie"), 2, "the retry's fresh context is cached, so no further refetch")
+        XCTAssertEqual(counter.count("gateway|vault-cookie"), 8, "the third fetch adds one full coding-plan round (usage + subscription + addon)")
+    }
+
+    func testSessionCacheKeysCarryFingerprintNotCookieMaterial() {
+        let key = QwenProvider.sessionCacheKey(kind: "secToken", descriptorID: "qwen-1", fingerprint: "deadbeef")
+        XCTAssertEqual(key, "qwen|session|secToken|qwen-1|deadbeef")
+
+        let cookie = "sid=secret-session-value; uid=1"
+        let fingerprint = CredentialFingerprint.sha256Hex(cookie)
+        XCTAssertEqual(fingerprint.count, 64, "SHA-256 hex digest")
+        XCTAssertEqual(CredentialFingerprint.sha256Hex(cookie), fingerprint, "fingerprints are stable for change detection")
+        XCTAssertNotEqual(CredentialFingerprint.sha256Hex("sid=other-session; uid=1"), fingerprint)
+        XCTAssertFalse(fingerprint.contains("secret-session-value"), "the fingerprint must not embed the cookie")
+        XCTAssertFalse(key.contains(cookie))
+
+        let secKey = QwenProvider.sessionCacheKey(kind: "secToken", descriptorID: "qwen-1", fingerprint: fingerprint)
+        let labelKey = QwenProvider.sessionCacheKey(kind: "accountLabel", descriptorID: "qwen-1", fingerprint: fingerprint)
+        XCTAssertNotEqual(secKey, labelKey, "sec_token and the account label use independent cache keys")
+    }
+
+    func testSessionCacheTTLsFollowFetchPlan() {
+        let plan = ProviderFetchPlanRegistry().plan(for: .qwen)
+        XCTAssertEqual(plan.activeTTL, 300, "the web-only provider active TTL is pinned to the fetch plan (300s)")
+        XCTAssertEqual(ProviderFetchPlanRegistry().plan(for: .qwenBalance).activeTTL, 300)
+        XCTAssertGreaterThan(plan.metadataTTL, plan.activeTTL, "the account label TTL must be longer than the sec_token TTL")
+        XCTAssertGreaterThanOrEqual(plan.metadataTTL, 86_400)
+    }
+}
+
 private final class IntentRecordingBrowserCookieDetector: BrowserCookieDetecting {
     var detectCookieHeaderCallCount = 0
     var detectNamedCookieCallCount = 0

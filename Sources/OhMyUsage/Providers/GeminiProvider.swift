@@ -1,3 +1,4 @@
+import CryptoKit
 import OhMyUsageDomain
 import Foundation
 import OhMyUsageProviders
@@ -5,12 +6,28 @@ import OhMyUsageProviders
 final class GeminiProvider: UsageProvider, @unchecked Sendable {
     private static let cache = SnapshotTimestampOfficialSnapshotCache()
     private static let gate = PassthroughOfficialFetchGate()
+    private static let contextCache = GeminiCodeAssistContextCache()
 
-    private let cacheTTL: TimeInterval = 15
+    /// Account/project context from `loadCodeAssist`. Deliberately much longer
+    /// than the quota snapshot TTL (§8.4): repeated refreshes re-issue only
+    /// `retrieveUserQuota`.
+    static let contextTTL: TimeInterval = 6 * 60 * 60
+    /// Plan tier metadata TTL. Longer than the quota data TTL (§8.4) so the
+    /// slow-changing tier is not refetched on every quota refresh.
+    static let planMetadataTTL: TimeInterval = 30 * 60
+    /// Vault account for the refreshed OAuth token inside the app's shared
+    /// credential store (service `oh-myusage`), following the Codex / Claude
+    /// `official/<provider>/oauth-json` convention.
+    static let oauthVaultAccount = "official/gemini/oauth-json"
+    static let credentialServiceName = TokenCredentialStoreServiceNames.defaultServiceName
+
+    private let cacheTTL: TimeInterval
     private let refreshBuffer: TimeInterval = 5 * 60
     private let session: URLSession
     private let cache: any OfficialSnapshotCaching
     private let gate: any OfficialFetchGating
+    private let contextCache: GeminiCodeAssistContextCache
+    private let keychain: (any TokenCredentialStoring)?
     private let homeDirectory: () -> String
     private let shell: any ShellCommandRunning
 
@@ -22,7 +39,10 @@ final class GeminiProvider: UsageProvider, @unchecked Sendable {
         cache: any OfficialSnapshotCaching = GeminiProvider.cache,
         gate: any OfficialFetchGating = GeminiProvider.gate,
         homeDirectory: @escaping () -> String = { NSHomeDirectory() },
-        shell: any ShellCommandRunning = DefaultShellCommandRunner()
+        shell: any ShellCommandRunning = DefaultShellCommandRunner(),
+        contextCache: GeminiCodeAssistContextCache = GeminiProvider.contextCache,
+        keychain: (any TokenCredentialStoring)? = nil,
+        cacheTTL: TimeInterval = 15
     ) {
         self.descriptor = descriptor
         self.session = session
@@ -30,6 +50,9 @@ final class GeminiProvider: UsageProvider, @unchecked Sendable {
         self.gate = gate
         self.homeDirectory = homeDirectory
         self.shell = shell
+        self.contextCache = contextCache
+        self.keychain = keychain
+        self.cacheTTL = cacheTTL
     }
 
     func fetch() async throws -> UsageSnapshot {
@@ -39,19 +62,34 @@ final class GeminiProvider: UsageProvider, @unchecked Sendable {
     func fetch(forceRefresh: Bool) async throws -> UsageSnapshot {
         try await OfficialProviderFetchRuntime.fetch(
             forceRefresh: forceRefresh,
-            cacheLookupKey: descriptor.id,
+            cacheLookupKey: snapshotCacheKey(),
             ttl: cacheTTL,
             cache: cache,
             gate: gate,
-            load: { [self] in try await loadSnapshot() }
+            load: { [self] in try await loadSnapshot(forceRefresh: forceRefresh) }
         )
     }
 
-    private func loadSnapshot() async throws -> UsageSnapshot {
+    /// Snapshot cache key scoped to the discovered account identity so cached
+    /// snapshots are never reused across accounts (§8.2 / §8.5).
+    private func snapshotCacheKey() -> String {
+        guard let credentials = try? loadCredentials() else {
+            return descriptor.id
+        }
+        if let accountLabel = credentials.accountLabel, !accountLabel.isEmpty {
+            return "\(descriptor.id)|account=\(accountLabel)"
+        }
+        if let fingerprint = Self.credentialFingerprint(credentials.refreshToken ?? credentials.accessToken) {
+            return "\(descriptor.id)|fingerprint=\(fingerprint)"
+        }
+        return descriptor.id
+    }
+
+    private func loadSnapshot(forceRefresh: Bool) async throws -> UsageSnapshot {
         let official = descriptor.officialConfig ?? ProviderDescriptor.defaultOfficialConfig(type: .gemini)
         switch official.sourceMode {
         case .api, .auto:
-            return try await loadFromAPI()
+            return try await loadFromAPI(forceRefresh: forceRefresh)
         case .cli:
             throw ProviderError.unavailable("Gemini 官方来源当前仅支持 API 凭证发现")
         case .web:
@@ -59,7 +97,7 @@ final class GeminiProvider: UsageProvider, @unchecked Sendable {
         }
     }
 
-    private func loadFromAPI() async throws -> UsageSnapshot {
+    private func loadFromAPI(forceRefresh: Bool) async throws -> UsageSnapshot {
         let settings = try loadSettings()
         switch settings.authType {
         case "api-key":
@@ -79,7 +117,8 @@ final class GeminiProvider: UsageProvider, @unchecked Sendable {
                 try await requestSnapshot(
                     accessToken: credentials.accessToken,
                     settings: settings,
-                    credentials: credentials
+                    credentials: credentials,
+                    allowCachedContext: !forceRefresh
                 )
             },
             refresh: { [self] credentials in
@@ -92,30 +131,78 @@ final class GeminiProvider: UsageProvider, @unchecked Sendable {
     private func requestSnapshot(
         accessToken: String,
         settings: GeminiSettings,
-        credentials: GeminiCredentials
+        credentials: GeminiCredentials,
+        allowCachedContext: Bool
     ) async throws -> UsageSnapshot {
-        let initialProjectID = settings.selectedProject
+        let contextKey = Self.contextCacheKey(credentials: credentials, selectedProject: settings.selectedProject)
+        let cachedContext = allowCachedContext
+            ? await contextCache.contextIfFresh(forKey: contextKey)
+            : nil
+        let cachedPlan: String? = cachedContext == nil
+            ? nil
+            : await contextCache.planIfFresh(forKey: contextKey)
+
+        // Context and plan metadata both fresh: only the quota request is issued.
+        // `loadCodeAssist` stays part of every full load (both requests are
+        // required, they are not merged).
+        if let cachedContext, let plan = cachedPlan {
+            return try await requestQuotaSnapshot(
+                accessToken: accessToken,
+                credentials: credentials,
+                projectID: cachedContext.projectID,
+                projectLabel: cachedContext.projectLabel,
+                plan: plan
+            )
+        }
+
         let codeAssist = try await requestJSON(
             url: URL(string: "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist")!,
             accessToken: accessToken,
-            body: loadCodeAssistBody(projectID: initialProjectID)
+            body: loadCodeAssistBody(projectID: settings.selectedProject)
         )
         let resolvedProjectID = resolveProjectID(settings: settings, codeAssistRoot: codeAssist)
+        let plan = Self.parsePlan(from: codeAssist) ?? "unknown"
+
+        var projectLabel = resolvedProjectID
+        if let projectID = resolvedProjectID {
+            if let cachedContext,
+               cachedContext.projectID == projectID,
+               let cachedLabel = cachedContext.projectLabel {
+                projectLabel = cachedLabel
+            } else if let resolved = try? await resolveProjectName(accessToken: accessToken, projectID: projectID) {
+                projectLabel = resolved
+            }
+        }
+
+        await contextCache.store(
+            GeminiCodeAssistContext(projectID: resolvedProjectID, projectLabel: projectLabel, plan: plan),
+            forKey: contextKey
+        )
+
+        return try await requestQuotaSnapshot(
+            accessToken: accessToken,
+            credentials: credentials,
+            projectID: resolvedProjectID,
+            projectLabel: projectLabel,
+            plan: plan
+        )
+    }
+
+    private func requestQuotaSnapshot(
+        accessToken: String,
+        credentials: GeminiCredentials,
+        projectID: String?,
+        projectLabel: String?,
+        plan: String
+    ) async throws -> UsageSnapshot {
         let quotaRoot = try await requestJSON(
             url: URL(string: "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota")!,
             accessToken: accessToken,
-            body: retrieveQuotaBody(projectID: resolvedProjectID)
+            body: retrieveQuotaBody(projectID: projectID)
         )
-
-        var projectLabel = resolvedProjectID
-        if let projectId = projectLabel,
-           let resolved = try? await resolveProjectName(accessToken: accessToken, projectID: projectId) {
-            projectLabel = resolved
-        }
-
         return try Self.parseQuotaSnapshot(
             root: quotaRoot,
-            codeAssistRoot: codeAssist,
+            plan: plan,
             descriptor: descriptor,
             sourceLabel: "API",
             accountLabel: credentials.accountLabel,
@@ -203,7 +290,23 @@ final class GeminiProvider: UsageProvider, @unchecked Sendable {
         return nil
     }
 
+    /// Fixed read priority: app vault (refreshed copy of the same OAuth grant)
+    /// → local credential file. The vaulted copy is only trusted when its
+    /// refresh token matches the file, so a CLI re-login always wins.
     private func loadCredentials() throws -> GeminiCredentials {
+        let fileCredentials = try loadFileCredentials()
+        guard let keychain else { return fileCredentials }
+        guard let raw = keychain.readToken(service: Self.credentialServiceName, account: Self.oauthVaultAccount),
+              let vaulted = Self.parseCredentialsJSON(raw, filePath: fileCredentials.filePath),
+              let vaultRefreshToken = vaulted.refreshToken,
+              !vaultRefreshToken.isEmpty,
+              vaultRefreshToken == fileCredentials.refreshToken else {
+            return fileCredentials
+        }
+        return vaulted
+    }
+
+    private func loadFileCredentials() throws -> GeminiCredentials {
         let path = "\(homeDirectory())/.gemini/oauth_creds.json"
         guard FileManager.default.fileExists(atPath: path) else {
             throw ProviderError.missingCredential(path)
@@ -212,20 +315,34 @@ final class GeminiProvider: UsageProvider, @unchecked Sendable {
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw ProviderError.invalidResponse("Gemini oauth credentials decode failed")
         }
+        guard let credentials = Self.parseCredentialsJSON(json: json, filePath: path) else {
+            throw ProviderError.invalidResponse("missing Gemini access_token")
+        }
+        return credentials
+    }
+
+    private static func parseCredentialsJSON(json: [String: Any], filePath: String) -> GeminiCredentials? {
         guard let accessToken = OfficialValueParser.string(json["access_token"] ?? json["accessToken"]),
               !accessToken.isEmpty else {
-            throw ProviderError.invalidResponse("missing Gemini access_token")
+            return nil
         }
         return GeminiCredentials(
             accessToken: accessToken,
             refreshToken: OfficialValueParser.string(json["refresh_token"] ?? json["refreshToken"]),
             expiresAt: parseExpiry(json: json),
             idToken: OfficialValueParser.string(json["id_token"] ?? json["idToken"]),
-            filePath: path
+            filePath: filePath
         )
     }
 
-    private func parseExpiry(json: [String: Any]) -> Date? {
+    private static func parseCredentialsJSON(_ raw: String, filePath: String) -> GeminiCredentials? {
+        guard let json = (try? JSONSerialization.jsonObject(with: Data(raw.utf8))) as? [String: Any] else {
+            return nil
+        }
+        return parseCredentialsJSON(json: json, filePath: filePath)
+    }
+
+    private static func parseExpiry(json: [String: Any]) -> Date? {
         if let raw = OfficialValueParser.double(json["expiry_date"] ?? json["expiryDate"]) {
             return raw > 1_000_000_000_000
                 ? Date(timeIntervalSince1970: raw / 1000)
@@ -277,8 +394,57 @@ final class GeminiProvider: UsageProvider, @unchecked Sendable {
         if let expiresIn = OfficialValueParser.double(refresh.json["expires_in"]) {
             updated.expiresAt = Date().addingTimeInterval(expiresIn)
         }
-        persist(credentials: updated)
+        persistToVault(credentials: updated)
         return updated
+    }
+
+    /// Persists the refreshed OAuth token into the app's shared credential vault
+    /// (service `oh-myusage`, account `official/gemini/oauth-json`) through the
+    /// `TokenCredentialStoring` port. Refreshed tokens are never written back to
+    /// the plaintext `~/.gemini/oauth_creds.json` and never logged (§8.4).
+    private func persistToVault(credentials: GeminiCredentials) {
+        guard let keychain else { return }
+        var payload: [String: Any] = ["access_token": credentials.accessToken]
+        if let refreshToken = credentials.refreshToken, !refreshToken.isEmpty {
+            payload["refresh_token"] = refreshToken
+        }
+        if let idToken = credentials.idToken, !idToken.isEmpty {
+            payload["id_token"] = idToken
+        }
+        if let expiresAt = credentials.expiresAt {
+            payload["expiry_date"] = Int64(expiresAt.timeIntervalSince1970 * 1000)
+        }
+        guard let data = try? JSONSerialization.data(withJSONObject: payload),
+              let raw = String(data: data, encoding: .utf8) else {
+            return
+        }
+        _ = keychain.saveToken(raw, service: Self.credentialServiceName, account: Self.oauthVaultAccount)
+    }
+
+    /// In-memory context cache key scoped to the account identity and the
+    /// selected project, so cached Code Assist context is never reused across
+    /// accounts or project selections (§8.5).
+    private static func contextCacheKey(credentials: GeminiCredentials, selectedProject: String?) -> String {
+        var components = ["gemini", "code-assist"]
+        if let accountLabel = credentials.accountLabel, !accountLabel.isEmpty {
+            components.append("account=\(accountLabel)")
+        } else if let fingerprint = credentialFingerprint(credentials.refreshToken ?? credentials.accessToken) {
+            components.append("fingerprint=\(fingerprint)")
+        } else {
+            components.append("account=unknown")
+        }
+        if let selectedProject, !selectedProject.isEmpty {
+            components.append("project=\(selectedProject)")
+        }
+        return components.joined(separator: "|")
+    }
+
+    private static func credentialFingerprint(_ raw: String?) -> String? {
+        guard let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else {
+            return nil
+        }
+        let digest = SHA256.hash(data: Data(trimmed.utf8))
+        return digest.prefix(8).map { String(format: "%02x", $0) }.joined()
     }
 
     private func resolveClientSecrets() -> (id: String, secret: String)? {
@@ -404,16 +570,6 @@ final class GeminiProvider: UsageProvider, @unchecked Sendable {
         return value.isEmpty ? nil : value
     }
 
-    private func persist(credentials: GeminiCredentials) {
-        let path = credentials.filePath
-        OfficialProviderAuthRuntime.updateJSONObjectFile(path: path) { json in
-            json["access_token"] = credentials.accessToken
-            json["refresh_token"] = credentials.refreshToken
-            json["id_token"] = credentials.idToken
-            json["expiry_date"] = credentials.expiresAt.map { Int64($0.timeIntervalSince1970 * 1000) }
-        }
-    }
-
     private func requestJSON(
         url: URL,
         accessToken: String,
@@ -475,7 +631,24 @@ final class GeminiProvider: UsageProvider, @unchecked Sendable {
         accountLabel: String?,
         projectLabel: String?
     ) throws -> UsageSnapshot {
-        let plan = parsePlan(from: codeAssistRoot) ?? "unknown"
+        try parseQuotaSnapshot(
+            root: root,
+            plan: parsePlan(from: codeAssistRoot) ?? "unknown",
+            descriptor: descriptor,
+            sourceLabel: sourceLabel,
+            accountLabel: accountLabel,
+            projectLabel: projectLabel
+        )
+    }
+
+    internal static func parseQuotaSnapshot(
+        root: [String: Any],
+        plan: String,
+        descriptor: ProviderDescriptor,
+        sourceLabel: String,
+        accountLabel: String?,
+        projectLabel: String?
+    ) throws -> UsageSnapshot {
         let quotas = extractQuotaEntries(from: root)
         guard !quotas.isEmpty else {
             throw ProviderError.invalidResponse("missing Gemini quota entries")
@@ -789,4 +962,58 @@ private struct GeminiQuotaEntry {
     let remainingPercent: Double
     let resetAt: Date?
     let sortRank: Int
+}
+
+/// Account/project context resolved from `loadCodeAssist` (§8.4). Cached
+/// in-process per account + selected project so repeated refreshes only
+/// re-issue `retrieveUserQuota`.
+struct GeminiCodeAssistContext: Equatable, Sendable {
+    let projectID: String?
+    let projectLabel: String?
+    let plan: String
+}
+
+/// Process-wide in-process cache for `GeminiCodeAssistContext`. The context
+/// (project / account info) and the plan tier metadata each carry their own
+/// TTL; both are far longer than the quota snapshot TTL (§8.4).
+actor GeminiCodeAssistContextCache {
+    private struct Entry {
+        let context: GeminiCodeAssistContext
+        let fetchedAt: Date
+    }
+
+    private var entries: [String: Entry] = [:]
+    private let contextTTL: TimeInterval
+    private let planMetadataTTL: TimeInterval
+    private let now: @Sendable () -> Date
+
+    init(
+        contextTTL: TimeInterval = GeminiProvider.contextTTL,
+        planMetadataTTL: TimeInterval = GeminiProvider.planMetadataTTL,
+        now: @escaping @Sendable () -> Date = { Date() }
+    ) {
+        self.contextTTL = max(0, contextTTL)
+        self.planMetadataTTL = max(0, planMetadataTTL)
+        self.now = now
+    }
+
+    func contextIfFresh(forKey key: String) -> GeminiCodeAssistContext? {
+        guard let entry = entries[key],
+              now().timeIntervalSince(entry.fetchedAt) <= contextTTL else {
+            return nil
+        }
+        return entry.context
+    }
+
+    func planIfFresh(forKey key: String) -> String? {
+        guard let entry = entries[key],
+              now().timeIntervalSince(entry.fetchedAt) <= planMetadataTTL else {
+            return nil
+        }
+        return entry.context.plan
+    }
+
+    func store(_ context: GeminiCodeAssistContext, forKey key: String) {
+        entries[key] = Entry(context: context, fetchedAt: now())
+    }
 }
