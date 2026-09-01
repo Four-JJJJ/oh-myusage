@@ -16,6 +16,12 @@ final class AppProviderRefreshModel {
     let coordinator: AppProviderRefreshCoordinator
     var refreshScheduler: ProviderRefreshScheduler?
 
+    /// Injectable network seam (doc §9.5). Defaults to always-online; the
+    /// real `NWPathMonitor` wiring is owned by the composition layer.
+    typealias IsNetworkOnlineProvider = @Sendable () -> Bool
+    private let isNetworkOnline: IsNetworkOnlineProvider
+    private let fetchPlanRegistry = ProviderFetchPlanRegistry()
+
     private weak var host: AppViewModel?
     private var localSessionRefreshCoordinator: LocalSessionRefreshCoordinator?
     private var getState: ProviderStateGetter?
@@ -23,11 +29,14 @@ final class AppProviderRefreshModel {
 
     init(
         providerFactory: any ProviderFactorying,
-        notifications: NotificationService
+        notifications: NotificationService,
+        isNetworkOnline: @escaping IsNetworkOnlineProvider = { true }
     ) {
+        self.isNetworkOnline = isNetworkOnline
         self.coordinator = AppProviderRefreshCoordinator(
             providerFactory: providerFactory,
-            notifications: notifications
+            notifications: notifications,
+            isNetworkOnline: isNetworkOnline
         )
     }
 
@@ -86,11 +95,58 @@ final class AppProviderRefreshModel {
         )
     }
 
-    func refreshNow() {
+    /// User-initiated refresh with an explicit scope (doc §9.4).
+    ///
+    /// Manual refreshes bypass snapshot TTLs (`forceRefresh`), but still go
+    /// through the per-provider in-flight gate (same-provider requests join
+    /// the running task) and the global concurrency cap.
+    func refreshNow(scope: RefreshScope = .all) {
         let host = requireHost()
-        refreshScheduler?.refreshNow(
-            providers: coordinator.refreshScheduleDescriptors(from: host.config.providers)
+        let providers = host.config.providers
+        let visibleProviderIDs = Set(host.statusBarProvidersForDisplay().map(\.id))
+        let scopedProviderIDs = AppProviderRefreshCoordinator.enabledProviderIDs(
+            for: scope,
+            providers: providers,
+            visibleProviderIDs: visibleProviderIDs
         )
+        let scopedProviders = scopedProviderIDs.compactMap { host.descriptor(for: $0) }
+        guard !scopedProviders.isEmpty else { return }
+        refreshScheduler?.refreshNow(
+            providers: coordinator.refreshScheduleDescriptors(from: scopedProviders)
+        )
+    }
+
+    /// Menu bar panel opened (doc §9.4): refresh only visible providers, and
+    /// only those whose snapshot is already stale for the active tier. The
+    /// staleness window is at least the fetch plan's `activeTTL` (plus the
+    /// coordinator's user-cadence / 60s floor), so opening the menu never
+    /// fans out over fresh or non-visible providers.
+    func refreshVisibleProvidersForMenuOpen() {
+        let host = requireHost()
+        let visibleProviders = host.statusBarProvidersForDisplay()
+        guard !visibleProviders.isEmpty else { return }
+        guard isNetworkOnline() else { return }
+
+        let extraStalenessSecondsByID = Dictionary(
+            uniqueKeysWithValues: visibleProviders.map { descriptor in
+                (
+                    descriptor.id,
+                    TimeInterval(fetchPlanRegistry.plan(for: descriptor.type).activeTTL)
+                )
+            }
+        )
+        let staleProviders = coordinator.displayedProvidersForStartupRefresh(
+            providers: visibleProviders,
+            snapshots: providerState.snapshots,
+            extraStalenessSecondsByID: extraStalenessSecondsByID
+        )
+        guard !staleProviders.isEmpty else { return }
+        coordinator.refreshDisplayedStatusBarProviders(
+            providers: staleProviders,
+            forceRefresh: false
+        ) { [weak self] descriptor, forceRefresh in
+            await self?.refreshProvider(descriptor, forceRefresh: forceRefresh)
+        }
     }
 
     func refreshDisplayedStatusBarProviders(forceRefresh: Bool = false) {
@@ -199,6 +255,8 @@ final class AppProviderRefreshModel {
     private func makeRefreshScheduler() -> ProviderRefreshScheduler {
         let localSessionRefreshCoordinator = requireLocalSessionRefreshCoordinator()
         let schedulerConfig = requireHost().config.resourceMode.refreshSchedulerConfig
+        // The concurrency cap follows the active resource mode (doc §9.3).
+        coordinator.updateMaxConcurrentRefreshes(schedulerConfig.maxConcurrentRefreshes)
         return ProviderRefreshScheduler(
             descriptorProvider: { [weak self] providerID in
                 guard let self,
@@ -218,6 +276,22 @@ final class AppProviderRefreshModel {
             failureCountProvider: { [weak self] providerID in
                 self?.providerState.consecutiveFailures[providerID, default: 0] ?? 0
             },
+            // 429 backoff (doc §9.6): the last 429 marks the snapshot's fetch
+            // health (cached-snapshot path keeps the failure counter at 0) or
+            // leaves a rate-limited error message behind.
+            isRateLimitedProvider: { [weak self] providerID in
+                guard let self else { return false }
+                let state = self.providerState
+                if state.snapshots[providerID]?.fetchHealth == .rateLimited {
+                    return true
+                }
+                if let message = state.errors[providerID],
+                   AppProviderRefreshCoordinator.isRateLimitedDiagnosticMessage(message) {
+                    return true
+                }
+                return false
+            },
+            isNetworkOnline: isNetworkOnline,
             refreshAction: { [weak self] providerID, forceRefresh in
                 guard let self,
                       let host = self.host,
@@ -265,8 +339,19 @@ extension AppViewModel {
         providerRefreshModel.restartPolling()
     }
 
-    func refreshNow() {
-        providerRefreshModel.refreshNow()
+    /// Refresh with an explicit scope (doc §9.4). The default `.all` preserves
+    /// the existing "refresh every enabled provider" behavior for callers that
+    /// do not pass a scope.
+    func refreshNow(scope: RefreshScope = .all) {
+        providerRefreshModel.refreshNow(scope: scope)
+    }
+
+    /// Settings provider-detail refresh (doc §9.4): refresh a single selected
+    /// provider, bypassing snapshot TTLs. Joins the in-flight task when the
+    /// provider is already refreshing.
+    func refreshSelectedProvider(_ providerID: String) async {
+        guard let descriptor = descriptor(for: providerID) else { return }
+        await providerRefreshModel.refreshProvider(descriptor, forceRefresh: true)
     }
 
     func refreshProvider(_ descriptor: ProviderDescriptor, forceRefresh: Bool = false) async {

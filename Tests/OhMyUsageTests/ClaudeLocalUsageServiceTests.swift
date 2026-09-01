@@ -294,6 +294,192 @@ final class ClaudeLocalUsageServiceTests: XCTestCase {
         XCTAssertEqual(parseCount, 2)
     }
 
+    func testParsedClaudeUsageExcludesRawChatContent() throws {
+        let now = try fixedDate("2026-04-18T12:00:00Z")
+        try writeProjectFile(
+            root: defaultProjectsRoot,
+            relativePath: "workspace-privacy/session-privacy.jsonl",
+            lines: [
+                // Raw conversation lines that the usage scanner must ignore.
+                jsonLine([
+                    "timestamp": "2026-04-18T10:00:00Z",
+                    "sessionId": "session-privacy",
+                    "type": "user",
+                    "message": [
+                        "role": "user",
+                        "content": "SECRET_CLAUDE_USER_CHAT_5K"
+                    ]
+                ]),
+                jsonLine([
+                    "timestamp": "2026-04-18T10:04:00Z",
+                    "sessionId": "session-privacy",
+                    "type": "assistant",
+                    "message": [
+                        "id": "msg-privacy-think",
+                        "model": "claude-sonnet-4-6",
+                        "content": [
+                            ["type": "thinking", "thinking": "SECRET_CLAUDE_REASONING_NOTE_2M"]
+                        ],
+                        "usage": [
+                            "input_tokens": 1,
+                            "output_tokens": 1
+                        ]
+                    ]
+                ]),
+                jsonLine([
+                    "timestamp": "2026-04-18T10:05:00Z",
+                    "sessionId": "session-privacy",
+                    "uuid": "line-privacy-1",
+                    "type": "assistant",
+                    "message": [
+                        "id": "msg-privacy-1",
+                        "model": "claude-sonnet-4-6",
+                        "content": [
+                            ["type": "text", "text": "SECRET_CLAUDE_REPLY_CHAT_8Z"]
+                        ],
+                        "usage": [
+                            "input_tokens": 7,
+                            "output_tokens": 4,
+                            "cache_creation_input_tokens": 2,
+                            "cache_read_input_tokens": 1
+                        ]
+                    ]
+                ])
+            ]
+        )
+
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let service = ClaudeLocalUsageService(
+            calendar: calendar,
+            nowProvider: { now },
+            defaultClaudeRootPath: defaultProjectsRoot.path
+        )
+
+        let summary = try service.fetchSummary(scope: .allAccounts)
+        let events = try service.fetchEvents(
+            scope: .allAccounts,
+            since: try fixedDate("2026-04-11T00:00:00Z")
+        )
+        // Prove the usage pipeline actually parsed the assistant usage events.
+        XCTAssertEqual(summary.today.totalTokens, 16)
+        XCTAssertEqual(summary.today.responses, 2)
+        XCTAssertEqual(events.count, 2)
+
+        var summaryStrings: [String] = []
+        Self.collectStrings(from: summary, into: &summaryStrings)
+        var eventStrings: [String] = []
+        Self.collectStrings(from: events, into: &eventStrings)
+
+        for sentinel in ["SECRET_CLAUDE_USER_CHAT_5K", "SECRET_CLAUDE_REPLY_CHAT_8Z", "SECRET_CLAUDE_REASONING_NOTE_2M"] {
+            XCTAssertFalse(
+                summaryStrings.contains { $0.contains(sentinel) },
+                "summary must not contain raw chat content (\(sentinel))"
+            )
+            XCTAssertFalse(
+                eventStrings.contains { $0.contains(sentinel) },
+                "parsed events must not contain raw chat content (\(sentinel))"
+            )
+        }
+
+        // `LocalUsageSummary` is the Codable type persisted into the history cache;
+        // its encoded payload must not contain raw chat content either.
+        let persistedPayload = String(data: try JSONEncoder().encode(summary), encoding: .utf8)
+        for sentinel in ["SECRET_CLAUDE_USER_CHAT_5K", "SECRET_CLAUDE_REPLY_CHAT_8Z", "SECRET_CLAUDE_REASONING_NOTE_2M"] {
+            XCTAssertFalse(
+                persistedPayload?.contains(sentinel) ?? true,
+                "persisted summary payload must not contain raw chat content (\(sentinel))"
+            )
+        }
+    }
+
+    @MainActor
+    func testPersistedLocalUsageHistoryCacheExcludesRawChatContent() async throws {
+        let now = try fixedDate("2026-04-18T12:00:00Z")
+        try writeProjectFile(
+            root: defaultProjectsRoot,
+            relativePath: "workspace-cache-privacy/session-cache-privacy.jsonl",
+            lines: [
+                jsonLine([
+                    "timestamp": "2026-04-18T10:00:00Z",
+                    "sessionId": "session-cache-privacy",
+                    "type": "user",
+                    "message": [
+                        "role": "user",
+                        "content": "SECRET_CLAUDE_CACHE_PROMPT_6N"
+                    ]
+                ]),
+                jsonLine([
+                    "timestamp": "2026-04-18T10:05:00Z",
+                    "sessionId": "session-cache-privacy",
+                    "uuid": "line-cache-privacy-1",
+                    "type": "assistant",
+                    "message": [
+                        "id": "msg-cache-privacy-1",
+                        "model": "claude-sonnet-4-6",
+                        "content": [
+                            ["type": "text", "text": "SECRET_CLAUDE_CACHE_REPLY_3P"]
+                        ],
+                        "usage": [
+                            "input_tokens": 7,
+                            "output_tokens": 4
+                        ]
+                    ]
+                ])
+            ]
+        )
+
+        let cacheRoot = temporaryDirectory.appendingPathComponent("cache-root", isDirectory: true)
+        try FileManager.default.createDirectory(at: cacheRoot, withIntermediateDirectories: true)
+        let fingerprint = LocalUsageSourceFingerprint(
+            roots: [defaultProjectsRoot.path],
+            fileCount: 1,
+            totalSize: 128,
+            latestModificationTime: now
+        )
+        var calendarBuilder = Calendar(identifier: .gregorian)
+        calendarBuilder.timeZone = TimeZone(secondsFromGMT: 0)!
+        let calendar = calendarBuilder
+        let nowValue = now
+        let projectsRootPath = defaultProjectsRoot.path
+        let repository = LocalUsageHistoryRepository(
+            baseDirectoryURL: cacheRoot,
+            nowProvider: { nowValue }
+        )
+        let query = LocalUsageHistoryQuery(
+            providerType: .claude,
+            providerID: "claude-official",
+            scope: .allAccounts,
+            identityKey: "cache-privacy"
+        )
+
+        repository.refreshIfNeeded(
+            query: query,
+            force: true,
+            fingerprintProvider: { fingerprint },
+            loader: { _ in
+                let summary = try ClaudeLocalUsageService(
+                    calendar: calendar,
+                    nowProvider: { nowValue },
+                    defaultClaudeRootPath: projectsRootPath
+                ).fetchSummary(scope: .allAccounts)
+                return LocalUsageHistoryLoadResult(summary: summary, sourceFingerprint: fingerprint)
+            },
+            onStateChange: {}
+        )
+        try await Self.waitUntil(repository: repository, query: query) {
+            $0.summary?.today.totalTokens == 11 && !$0.isLoading
+        }
+
+        let cacheURL = cacheRoot
+            .appendingPathComponent("OhMyUsage", isDirectory: true)
+            .appendingPathComponent("local_usage_history_cache.json")
+        let payload = try String(contentsOf: cacheURL, encoding: .utf8)
+        XCTAssertTrue(payload.contains("totalTokens"), "history cache should persist aggregate token fields")
+        XCTAssertFalse(payload.contains("SECRET_CLAUDE_CACHE_PROMPT_6N"), "history cache must not contain raw chat content")
+        XCTAssertFalse(payload.contains("SECRET_CLAUDE_CACHE_REPLY_3P"), "history cache must not contain raw chat content")
+    }
+
     private func writeProjectFile(root: URL, relativePath: String, lines: [String]) throws {
         let fileURL = root.appendingPathComponent(relativePath)
         try FileManager.default.createDirectory(
@@ -336,6 +522,36 @@ final class ClaudeLocalUsageServiceTests: XCTestCase {
     private func jsonLine(_ payload: [String: Any]) -> String {
         let data = try! JSONSerialization.data(withJSONObject: payload)
         return String(data: data, encoding: .utf8)!
+    }
+
+    private static func collectStrings(from value: Any, into output: inout [String]) {
+        if let string = value as? String {
+            output.append(string)
+            return
+        }
+        let mirror = Mirror(reflecting: value)
+        for child in mirror.children {
+            collectStrings(from: child.value, into: &output)
+        }
+        if let superclassMirror = mirror.superclassMirror {
+            collectStrings(from: superclassMirror, into: &output)
+        }
+    }
+
+    @MainActor private static func waitUntil(
+        repository: LocalUsageHistoryRepository,
+        query: LocalUsageHistoryQuery,
+        timeout: TimeInterval = 5,
+        predicate: (LocalUsageHistoryState) -> Bool
+    ) async throws {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if predicate(repository.snapshot(for: query)) {
+                return
+            }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        XCTFail("Timed out waiting for local usage history repository state")
     }
 
     private func fixedDate(_ value: String) throws -> Date {

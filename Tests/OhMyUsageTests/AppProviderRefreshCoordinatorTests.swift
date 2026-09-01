@@ -352,6 +352,146 @@ final class AppProviderRefreshCoordinatorTests: XCTestCase {
         XCTAssertEqual(stateBox.state.snapshots[providerID]?.remaining, 42)
     }
 
+    func testEnabledProviderIDsForScopeResolvesVisibleSelectedAndAll() {
+        var first = ProviderDescriptor.defaultOfficialCodex()
+        first.id = "first"
+        first.enabled = true
+        var second = ProviderDescriptor.defaultOfficialClaude()
+        second.id = "second"
+        second.enabled = true
+        var third = ProviderDescriptor.defaultOfficialGemini()
+        third.id = "third"
+        third.enabled = true
+        var disabled = ProviderDescriptor.defaultOpenAilinyu()
+        disabled.id = "disabled"
+        disabled.enabled = false
+
+        let providers = [first, second, third, disabled]
+        let visibleProviderIDs: Set<String> = ["first", "third", "disabled"]
+
+        // .visible: only enabled providers that are currently displayed.
+        XCTAssertEqual(
+            AppProviderRefreshCoordinator.enabledProviderIDs(
+                for: .visible,
+                providers: providers,
+                visibleProviderIDs: visibleProviderIDs
+            ),
+            ["first", "third"]
+        )
+
+        // .selected: exactly the selected enabled provider.
+        XCTAssertEqual(
+            AppProviderRefreshCoordinator.enabledProviderIDs(
+                for: .selected("second"),
+                providers: providers,
+                visibleProviderIDs: visibleProviderIDs
+            ),
+            ["second"]
+        )
+        XCTAssertEqual(
+            AppProviderRefreshCoordinator.enabledProviderIDs(
+                for: .selected("disabled"),
+                providers: providers,
+                visibleProviderIDs: visibleProviderIDs
+            ),
+            []
+        )
+
+        // .all: every enabled provider.
+        XCTAssertEqual(
+            AppProviderRefreshCoordinator.enabledProviderIDs(
+                for: .all,
+                providers: providers,
+                visibleProviderIDs: visibleProviderIDs
+            ),
+            ["first", "second", "third"]
+        )
+    }
+
+    func testRunExclusiveRefreshCapsGlobalConcurrencyAcrossProviders() async throws {
+        let gate = CoordinatorConcurrencyTrackingGate()
+        let coordinator = AppProviderRefreshCoordinator(
+            providerFactory: UnusedProviderFactory(),
+            notifications: NotificationService(),
+            maxConcurrentRefreshes: 2
+        )
+
+        let tasks = (1...4).map { index -> Task<Void, Never> in
+            let providerID = "provider\(index)"
+            return Task { @MainActor in
+                await coordinator.runExclusiveRefresh(providerID: providerID) {
+                    await gate.enter(providerID)
+                }
+            }
+        }
+
+        // Only two refreshes run at once; the rest wait for a slot.
+        try await waitUntil {
+            await gate.snapshot().entered.count == 2
+        }
+        let firstSnapshot = await gate.snapshot()
+        XCTAssertEqual(firstSnapshot.peak, 2)
+
+        await gate.releaseAll()
+        try await waitUntil {
+            await gate.snapshot().entered.count == 4
+        }
+        let finalSnapshot = await gate.snapshot()
+        XCTAssertEqual(
+            finalSnapshot.peak,
+            2,
+            "Concurrent refresh executions must never exceed maxConcurrentRefreshes"
+        )
+
+        // Unblock the last two waiters before joining the outer tasks.
+        await gate.releaseAll()
+        for task in tasks {
+            await task.value
+        }
+    }
+
+    func testDisplayedProvidersForStartupRefreshHonorsExtraStalenessSeconds() {
+        var provider = ProviderDescriptor.defaultOfficialGemini()
+        provider.id = "plan-stale-aware"
+        provider.enabled = true
+        provider.pollIntervalSec = 60
+
+        let now = Date()
+        // 100s old: stale for the 60s user cadence, fresh for a 300s plan TTL.
+        let snapshot = Self.startupSnapshot(
+            source: provider.id,
+            updatedAt: now.addingTimeInterval(-100)
+        )
+
+        let withoutPlanTTL = makeCoordinator().displayedProvidersForStartupRefresh(
+            providers: [provider],
+            snapshots: [provider.id: snapshot],
+            now: now
+        )
+        XCTAssertEqual(withoutPlanTTL.map(\.id), [provider.id])
+
+        let withPlanTTL = makeCoordinator().displayedProvidersForStartupRefresh(
+            providers: [provider],
+            snapshots: [provider.id: snapshot],
+            now: now,
+            extraStalenessSecondsByID: [provider.id: 300]
+        )
+        XCTAssertTrue(
+            withPlanTTL.isEmpty,
+            "A snapshot within the fetch plan activeTTL must not be refreshed"
+        )
+    }
+
+    func testRefreshScheduleDescriptorCarriesFetchPlanTTLs() {
+        let coordinator = makeCoordinator()
+        let descriptor = coordinator.refreshScheduleDescriptor(
+            for: ProviderDescriptor.defaultOfficialCodex()
+        )
+
+        XCTAssertEqual(descriptor.activeTTLSeconds, 120)
+        XCTAssertEqual(descriptor.backgroundTTLSeconds, 900)
+    }
+
     private func makeCoordinator() -> AppProviderRefreshCoordinator {
         AppProviderRefreshCoordinator(
             providerFactory: UnusedProviderFactory(),
@@ -411,6 +551,38 @@ private actor CoordinatorBlockingRefreshGate {
 
     func snapshot() -> [String] {
         events
+    }
+}
+
+private actor CoordinatorConcurrencyTrackingGate {
+    struct Snapshot: Equatable {
+        let entered: [String]
+        let peak: Int
+    }
+
+    private var entered: [String] = []
+    private var runningCount = 0
+    private var peakCount = 0
+    private var continuations: [CheckedContinuation<Void, Never>] = []
+
+    func enter(_ providerID: String) async {
+        entered.append(providerID)
+        runningCount += 1
+        peakCount = max(peakCount, runningCount)
+        await withCheckedContinuation { continuation in
+            continuations.append(continuation)
+        }
+        runningCount -= 1
+    }
+
+    func releaseAll() {
+        let pending = continuations
+        continuations.removeAll()
+        pending.forEach { $0.resume() }
+    }
+
+    func snapshot() -> Snapshot {
+        Snapshot(entered: entered, peak: peakCount)
     }
 }
 

@@ -18,6 +18,7 @@ struct AppDependencyGraph {
     let notifications: NotificationService
     let providerFactory: any ProviderFactorying
     let providerRefreshModel: AppProviderRefreshModel
+    let networkReachabilityMonitor: NetworkReachabilityMonitor
     let permissionModel: AppPermissionModel
     let updateModel: AppUpdateModel
     let configurationModel: AppConfigurationModel

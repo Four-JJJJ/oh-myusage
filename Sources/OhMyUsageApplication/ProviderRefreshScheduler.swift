@@ -14,34 +14,54 @@ package struct ProviderRefreshScheduleDescriptor: Equatable, Sendable {
     package var id: String
     package var isEnabled: Bool
     package var pollIntervalSec: Int
+    /// Fetch-plan active TTL (doc §8.3/§9.3): a visible provider is never
+    /// polled more aggressively than this. `nil` means no plan floor.
+    package var activeTTLSeconds: TimeInterval?
+    /// Fetch-plan background TTL (doc §8.3/§9.3): the minimum spacing between
+    /// background scheduler refreshes while the provider is not visible.
+    package var backgroundTTLSeconds: TimeInterval?
     package var localSessionWatchKind: LocalSessionWatchKind?
 
     package init(
         id: String,
         isEnabled: Bool,
         pollIntervalSec: Int,
+        activeTTLSeconds: TimeInterval? = nil,
+        backgroundTTLSeconds: TimeInterval? = nil,
         localSessionWatchKind: LocalSessionWatchKind? = nil
     ) {
         self.id = id
         self.isEnabled = isEnabled
         self.pollIntervalSec = pollIntervalSec
+        self.activeTTLSeconds = activeTTLSeconds
+        self.backgroundTTLSeconds = backgroundTTLSeconds
         self.localSessionWatchKind = localSessionWatchKind
     }
 }
 
 package struct ProviderRefreshSchedulerConfig: Equatable, Sendable {
     package var backgroundProviderPollIntervalSeconds: Int
+    /// Poll floor for visible (active) providers (doc §9.3). `0` disables the
+    /// scheduler-level active floor; user config and plan activeTTL still apply.
+    package var activeProviderPollIntervalSeconds: Int
+    /// Upper bound on concurrent refresh executions (doc §9.3). Due items
+    /// beyond the cap are deferred to a later cycle, never dropped.
+    package var maxConcurrentRefreshes: Int
     package var localSessionSignalActiveSleepSeconds: TimeInterval
     package var localSessionSignalIdleSleepSeconds: TimeInterval
     package var inFlightProviderSleepSeconds: TimeInterval
 
     package init(
         backgroundProviderPollIntervalSeconds: Int,
+        activeProviderPollIntervalSeconds: Int = 180,
+        maxConcurrentRefreshes: Int = 2,
         localSessionSignalActiveSleepSeconds: TimeInterval,
         localSessionSignalIdleSleepSeconds: TimeInterval,
         inFlightProviderSleepSeconds: TimeInterval = 5
     ) {
         self.backgroundProviderPollIntervalSeconds = backgroundProviderPollIntervalSeconds
+        self.activeProviderPollIntervalSeconds = max(0, activeProviderPollIntervalSeconds)
+        self.maxConcurrentRefreshes = max(1, maxConcurrentRefreshes)
         self.localSessionSignalActiveSleepSeconds = localSessionSignalActiveSleepSeconds
         self.localSessionSignalIdleSleepSeconds = localSessionSignalIdleSleepSeconds
         self.inFlightProviderSleepSeconds = max(1, inFlightProviderSleepSeconds)
@@ -108,6 +128,8 @@ package final class ProviderRefreshScheduler {
     package typealias ProvidersProvider = @MainActor () -> [ProviderRefreshScheduleDescriptor]
     package typealias ActiveProviderIDsProvider = @MainActor () -> Set<String>
     package typealias FailureCountProvider = @MainActor (_ providerID: String) -> Int
+    package typealias IsRateLimitedProvider = @MainActor (_ providerID: String) -> Bool
+    package typealias IsNetworkOnlineProvider = @Sendable () -> Bool
     package typealias RefreshAction = @MainActor (_ providerID: String, _ forceRefresh: Bool) async -> Void
     package typealias SleepAction = @Sendable (_ seconds: TimeInterval) async throws -> Void
 
@@ -115,6 +137,8 @@ package final class ProviderRefreshScheduler {
     private let providersProvider: ProvidersProvider
     private let activeProviderIDsProvider: ActiveProviderIDsProvider
     private let failureCountProvider: FailureCountProvider
+    private let isRateLimitedProvider: IsRateLimitedProvider
+    private let isNetworkOnline: IsNetworkOnlineProvider
     private let refreshAction: RefreshAction
     private let localSessionRefreshCoordinator: LocalSessionRefreshCoordinator
     private let startupJitterProvider: @Sendable () -> TimeInterval
@@ -134,6 +158,8 @@ package final class ProviderRefreshScheduler {
         providersProvider: @escaping ProvidersProvider,
         activeProviderIDsProvider: @escaping ActiveProviderIDsProvider = { [] },
         failureCountProvider: @escaping FailureCountProvider,
+        isRateLimitedProvider: @escaping IsRateLimitedProvider = { _ in false },
+        isNetworkOnline: @escaping IsNetworkOnlineProvider = { true },
         refreshAction: @escaping RefreshAction,
         localSessionRefreshCoordinator: LocalSessionRefreshCoordinator,
         config: ProviderRefreshSchedulerConfig,
@@ -146,6 +172,8 @@ package final class ProviderRefreshScheduler {
         self.providersProvider = providersProvider
         self.activeProviderIDsProvider = activeProviderIDsProvider
         self.failureCountProvider = failureCountProvider
+        self.isRateLimitedProvider = isRateLimitedProvider
+        self.isNetworkOnline = isNetworkOnline
         self.refreshAction = refreshAction
         self.localSessionRefreshCoordinator = localSessionRefreshCoordinator
         self.config = config
@@ -277,11 +305,36 @@ package final class ProviderRefreshScheduler {
                 return dueAt <= logicalNowStorage
             }
 
+            if !dueProviderIDs.isEmpty, !isNetworkOnline() {
+                // Offline seam (doc §9.5): ordinary background refreshes are
+                // paused while offline. Due items keep their (already past)
+                // due dates and are retried on a later cycle; manual refreshes
+                // do not go through this path.
+                do {
+                    try await sleepAction(config.inFlightProviderSleepSeconds)
+                } catch {
+                    return
+                }
+                continue
+            }
+
+            let availableRefreshSlots = max(
+                0,
+                config.maxConcurrentRefreshes - inFlightRefreshTasks.count
+            )
+            var startedRefreshCount = 0
+            var deferredRefreshCount = 0
             for providerID in dueProviderIDs {
                 guard !Task.isCancelled else { return }
                 guard let descriptor = descriptorProvider(providerID), descriptor.isEnabled else {
                     nextDueAtStorage.removeValue(forKey: providerID)
                     scheduledProviderIDsStorage.remove(providerID)
+                    continue
+                }
+                guard startedRefreshCount < availableRefreshSlots else {
+                    // Concurrency cap (doc §9.3): defer the due item to a later
+                    // cycle instead of dropping it.
+                    deferredRefreshCount += 1
                     continue
                 }
 
@@ -291,9 +344,10 @@ package final class ProviderRefreshScheduler {
                     runID: runID,
                     startedAt: logicalNowStorage
                 )
+                startedRefreshCount += 1
             }
 
-            if dueProviderIDs.isEmpty {
+            if dueProviderIDs.isEmpty || deferredRefreshCount > 0 {
                 do {
                     try await sleepAction(config.inFlightProviderSleepSeconds)
                 } catch {
@@ -342,7 +396,8 @@ package final class ProviderRefreshScheduler {
         let baseInterval = pollBaseInterval(for: descriptor)
         let delay = TimeInterval(BackoffPolicy.delaySeconds(
             baseInterval: baseInterval,
-            consecutiveFailures: failureCount
+            consecutiveFailures: failureCount,
+            isRateLimited: isRateLimitedProvider(providerID)
         ))
         let refreshedAt = max(logicalNowStorage, Date())
         nextDueAtStorage[providerID] = refreshedAt.addingTimeInterval(delay)
@@ -399,12 +454,37 @@ package final class ProviderRefreshScheduler {
         }
     }
 
+    /// Final poll interval for a provider (doc §9.3): a combination of the
+    /// user's configured cadence, the provider fetch plan TTLs carried on the
+    /// descriptor, and the visibility policy. Providers are never forced onto
+    /// one shared interval.
+    ///
+    /// - Visible (active) provider: the user cadence, never more aggressive
+    ///   than the plan's `activeTTL` or the scheduler's active floor.
+    /// - Background provider: at least the scheduler's background interval,
+    ///   the plan's `backgroundTTL` (the minimum background spacing), and the
+    ///   user's configured cadence.
     private func pollBaseInterval(for descriptor: ProviderRefreshScheduleDescriptor) -> Int {
-        let base = max(1, descriptor.pollIntervalSec)
-        let activeIDs = activeProviderIDsProvider()
-        if activeIDs.isEmpty || activeIDs.contains(descriptor.id) {
-            return base
+        let userInterval = max(1, descriptor.pollIntervalSec)
+        let activeProviderIDs = activeProviderIDsProvider()
+        let planActiveFloor = planFloorSeconds(descriptor.activeTTLSeconds)
+        let planBackgroundFloor = planFloorSeconds(descriptor.backgroundTTLSeconds)
+        if activeProviderIDs.isEmpty || activeProviderIDs.contains(descriptor.id) {
+            return max(
+                userInterval,
+                planActiveFloor,
+                max(0, config.activeProviderPollIntervalSeconds)
+            )
         }
-        return max(1, config.backgroundProviderPollIntervalSeconds)
+        return max(
+            max(1, config.backgroundProviderPollIntervalSeconds),
+            planBackgroundFloor,
+            userInterval
+        )
+    }
+
+    private func planFloorSeconds(_ ttlSeconds: TimeInterval?) -> Int {
+        guard let ttlSeconds else { return 0 }
+        return max(0, Int(ttlSeconds.rounded(.up)))
     }
 }

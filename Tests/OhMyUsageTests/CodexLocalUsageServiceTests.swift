@@ -217,6 +217,180 @@ final class CodexLocalUsageServiceTests: XCTestCase {
         XCTAssertEqual(parseCount, 2)
     }
 
+    func testParsedCodexUsageExcludesRawChatContent() throws {
+        let now = try fixedDate("2026-04-18T12:00:00Z")
+        try writeSessionFile(
+            relativePath: "2026/04/18/rollout-chat-content.jsonl",
+            lines: [
+                turnContextLine(timestamp: "2026-04-18T08:00:00Z", model: "gpt-5.4"),
+                // Raw conversation content lines that the usage scanner must ignore.
+                jsonLine([
+                    "timestamp": "2026-04-18T08:01:00Z",
+                    "type": "response_item",
+                    "payload": [
+                        "type": "message",
+                        "role": "user",
+                        "content": [
+                            ["type": "input_text", "text": "SECRET_CODEX_CHAT_PROMPT_3A"]
+                        ]
+                    ]
+                ]),
+                jsonLine([
+                    "timestamp": "2026-04-18T08:02:00Z",
+                    "type": "response_item",
+                    "payload": [
+                        "type": "reasoning",
+                        "summary": [
+                            ["type": "summary_text", "text": "SECRET_CODEX_CHAT_REASONING_6D"]
+                        ]
+                    ]
+                ]),
+                tokenCountTotalLine(timestamp: "2026-04-18T08:05:00Z", total: 42),
+                jsonLine([
+                    "timestamp": "2026-04-18T08:06:00Z",
+                    "type": "event_msg",
+                    "payload": [
+                        "type": "agent_message",
+                        "message": "SECRET_CODEX_CHAT_REPLY_9F"
+                    ]
+                ])
+            ]
+        )
+
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let service = CodexLocalUsageService(
+            calendar: calendar,
+            nowProvider: { now }
+        )
+
+        let summary = try service.fetchSummary(
+            sessionsRootPath: sessionsDirectory.path,
+            scope: .allAccounts
+        )
+        let events = try service.fetchEvents(
+            sessionsRootPath: sessionsDirectory.path,
+            scope: .allAccounts,
+            since: try fixedDate("2026-04-11T00:00:00Z")
+        )
+        // Prove the usage pipeline actually parsed the token events.
+        XCTAssertEqual(summary.today.totalTokens, 42)
+        XCTAssertEqual(summary.today.responses, 1)
+        XCTAssertEqual(events.count, 1)
+
+        var summaryStrings: [String] = []
+        Self.collectStrings(from: summary, into: &summaryStrings)
+        var eventStrings: [String] = []
+        Self.collectStrings(from: events, into: &eventStrings)
+
+        for sentinel in ["SECRET_CODEX_CHAT_PROMPT_3A", "SECRET_CODEX_CHAT_REPLY_9F", "SECRET_CODEX_CHAT_REASONING_6D"] {
+            XCTAssertFalse(
+                summaryStrings.contains { $0.contains(sentinel) },
+                "summary must not contain raw chat content (\(sentinel))"
+            )
+            XCTAssertFalse(
+                eventStrings.contains { $0.contains(sentinel) },
+                "parsed events must not contain raw chat content (\(sentinel))"
+            )
+        }
+
+        // The history cache persists `LocalUsageSummary(codex:)`; its encoded payload
+        // must not contain raw chat content either.
+        let persistedPayload = String(data: try JSONEncoder().encode(LocalUsageSummary(codex: summary)), encoding: .utf8)
+        for sentinel in ["SECRET_CODEX_CHAT_PROMPT_3A", "SECRET_CODEX_CHAT_REPLY_9F", "SECRET_CODEX_CHAT_REASONING_6D"] {
+            XCTAssertFalse(
+                persistedPayload?.contains(sentinel) ?? true,
+                "persisted summary payload must not contain raw chat content (\(sentinel))"
+            )
+        }
+    }
+
+    @MainActor
+    func testPersistedLocalUsageHistoryCacheExcludesRawChatContent() async throws {
+        let now = try fixedDate("2026-04-18T12:00:00Z")
+        try writeSessionFile(
+            relativePath: "2026/04/18/rollout-cache-privacy.jsonl",
+            lines: [
+                turnContextLine(timestamp: "2026-04-18T08:00:00Z", model: "gpt-5.4"),
+                jsonLine([
+                    "timestamp": "2026-04-18T08:01:00Z",
+                    "type": "response_item",
+                    "payload": [
+                        "type": "message",
+                        "role": "user",
+                        "content": [
+                            ["type": "input_text", "text": "SECRET_CODEX_CACHE_PROMPT_4B"]
+                        ]
+                    ]
+                ]),
+                tokenCountTotalLine(timestamp: "2026-04-18T08:05:00Z", total: 37),
+                jsonLine([
+                    "timestamp": "2026-04-18T08:06:00Z",
+                    "type": "event_msg",
+                    "payload": [
+                        "type": "agent_message",
+                        "message": "SECRET_CODEX_CACHE_REPLY_7C"
+                    ]
+                ])
+            ]
+        )
+
+        let cacheRoot = temporaryDirectory.appendingPathComponent("cache-root", isDirectory: true)
+        try FileManager.default.createDirectory(at: cacheRoot, withIntermediateDirectories: true)
+        let fingerprint = LocalUsageSourceFingerprint(
+            roots: [sessionsDirectory.path],
+            fileCount: 1,
+            totalSize: 128,
+            latestModificationTime: now
+        )
+        var calendarBuilder = Calendar(identifier: .gregorian)
+        calendarBuilder.timeZone = TimeZone(secondsFromGMT: 0)!
+        let calendar = calendarBuilder
+        let nowValue = now
+        let sessionsRootPath = sessionsDirectory.path
+        let repository = LocalUsageHistoryRepository(
+            baseDirectoryURL: cacheRoot,
+            nowProvider: { nowValue }
+        )
+        let query = LocalUsageHistoryQuery(
+            providerType: .codex,
+            providerID: "codex-official",
+            scope: .allAccounts,
+            identityKey: "cache-privacy"
+        )
+
+        repository.refreshIfNeeded(
+            query: query,
+            force: true,
+            fingerprintProvider: { fingerprint },
+            loader: { _ in
+                let summary = try CodexLocalUsageService(
+                    calendar: calendar,
+                    nowProvider: { nowValue }
+                ).fetchSummary(
+                    sessionsRootPath: sessionsRootPath,
+                    scope: .allAccounts
+                )
+                return LocalUsageHistoryLoadResult(
+                    summary: LocalUsageSummary(codex: summary),
+                    sourceFingerprint: fingerprint
+                )
+            },
+            onStateChange: {}
+        )
+        try await Self.waitUntil(repository: repository, query: query) {
+            $0.summary?.today.totalTokens == 37 && !$0.isLoading
+        }
+
+        let cacheURL = cacheRoot
+            .appendingPathComponent("OhMyUsage", isDirectory: true)
+            .appendingPathComponent("local_usage_history_cache.json")
+        let payload = try String(contentsOf: cacheURL, encoding: .utf8)
+        XCTAssertTrue(payload.contains("totalTokens"), "history cache should persist aggregate token fields")
+        XCTAssertFalse(payload.contains("SECRET_CODEX_CACHE_PROMPT_4B"), "history cache must not contain raw chat content")
+        XCTAssertFalse(payload.contains("SECRET_CODEX_CACHE_REPLY_7C"), "history cache must not contain raw chat content")
+    }
+
     func testFetchSummaryCurrentAccountFiltersIdentityAndSupportsEscapedQuotes() throws {
         let databasePath = temporaryDirectory.appendingPathComponent("logs_2.sqlite").path
         try createLogsTable(at: databasePath)
@@ -974,6 +1148,36 @@ final class CodexLocalUsageServiceTests: XCTestCase {
         }
 
         return parts.joined(separator: " ")
+    }
+
+    private static func collectStrings(from value: Any, into output: inout [String]) {
+        if let string = value as? String {
+            output.append(string)
+            return
+        }
+        let mirror = Mirror(reflecting: value)
+        for child in mirror.children {
+            collectStrings(from: child.value, into: &output)
+        }
+        if let superclassMirror = mirror.superclassMirror {
+            collectStrings(from: superclassMirror, into: &output)
+        }
+    }
+
+    @MainActor private static func waitUntil(
+        repository: LocalUsageHistoryRepository,
+        query: LocalUsageHistoryQuery,
+        timeout: TimeInterval = 5,
+        predicate: (LocalUsageHistoryState) -> Bool
+    ) async throws {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if predicate(repository.snapshot(for: query)) {
+                return
+            }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        XCTFail("Timed out waiting for local usage history repository state")
     }
 
     private func fixedDate(_ value: String) throws -> Date {

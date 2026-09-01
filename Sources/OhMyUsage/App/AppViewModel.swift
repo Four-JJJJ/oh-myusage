@@ -32,6 +32,7 @@ final class AppViewModel {
     @ObservationIgnored private let detectsInstalledAppVersionForUpdates: Bool
     @ObservationIgnored let usageAnalyticsModel: AppUsageAnalyticsModel
     @ObservationIgnored let providerRefreshModel: AppProviderRefreshModel
+    @ObservationIgnored private let networkReachabilityMonitor: NetworkReachabilityMonitor
     @ObservationIgnored let officialProfilesModel = AppOfficialProfilesModel()
     @ObservationIgnored let configurationModel: AppConfigurationModel
     @ObservationIgnored let resetCoordinator = AppResetCoordinator()
@@ -409,6 +410,7 @@ final class AppViewModel {
         self.codexProfileSnapshotService = dependencyGraph.codexProfileSnapshotService
         self.notifications = dependencyGraph.notifications
         self.providerRefreshModel = dependencyGraph.providerRefreshModel
+        self.networkReachabilityMonitor = dependencyGraph.networkReachabilityMonitor
         self.permissionModel = dependencyGraph.permissionModel
         self.updateModel = dependencyGraph.updateModel
         self.persistedSnapshotCache = persistedSnapshotCache
@@ -597,11 +599,24 @@ final class AppViewModel {
         // Doc §8.2: startup refreshes only displayed providers whose snapshot is
         // missing or stale; fresh restored-cache snapshots are kept as-is.
         providerRefreshModel.refreshDisplayedStatusBarProvidersForStartup()
+        networkReachabilityMonitor.onPathChange = { [weak self] isOnline in
+            guard isOnline else { return }
+            // Doc §9.5: recovery refreshes only expired visible providers;
+            // never a full-provider refresh storm.
+            Task { @MainActor [weak self] in
+                self?.providerRefreshModel.refreshVisibleProvidersForMenuOpen()
+            }
+        }
     }
 
     func setMenuPanelVisible(_ visible: Bool) {
         guard menuPanelVisible != visible else { return }
         menuPanelVisible = visible
+        if visible {
+            // Doc §9.4: opening the menu bar panel refreshes only the visible
+            // providers, and only those whose snapshot is already stale.
+            providerRefreshModel.refreshVisibleProvidersForMenuOpen()
+        }
     }
 
     func setSettingsWindowVisible(_ visible: Bool) {
@@ -878,11 +893,20 @@ final class AppViewModel {
 }
 
 extension ResourceMode {
+    /// Scheduler policy per resource mode (doc §9.3). Existing mode semantics
+    /// are preserved and layered with the new fields: `active` is the visible-
+    /// provider poll floor (180s default, 300s in low-power mode) and
+    /// `maxConcurrentRefreshes` caps refresh execution. The low-power mode
+    /// raises its background floor to 1800s per doc §9.3; per-provider fetch
+    /// plan `backgroundTTL` (900s / 1800s) is combined in the scheduler and is
+    /// the minimum background spacing.
     var refreshSchedulerConfig: ProviderRefreshSchedulerConfig {
         switch self {
         case .background3Minutes:
             return ProviderRefreshSchedulerConfig(
                 backgroundProviderPollIntervalSeconds: intervalSeconds,
+                activeProviderPollIntervalSeconds: 180,
+                maxConcurrentRefreshes: 2,
                 localSessionSignalActiveSleepSeconds: 10,
                 localSessionSignalIdleSleepSeconds: 30,
                 inFlightProviderSleepSeconds: 5
@@ -890,6 +914,8 @@ extension ResourceMode {
         case .background5Minutes:
             return ProviderRefreshSchedulerConfig(
                 backgroundProviderPollIntervalSeconds: intervalSeconds,
+                activeProviderPollIntervalSeconds: 180,
+                maxConcurrentRefreshes: 2,
                 localSessionSignalActiveSleepSeconds: RuntimeDiagnosticsLimits.localSessionSignalActiveSleepSeconds,
                 localSessionSignalIdleSleepSeconds: RuntimeDiagnosticsLimits.localSessionSignalIdleSleepSeconds,
                 inFlightProviderSleepSeconds: 5
@@ -897,13 +923,17 @@ extension ResourceMode {
         case .background10Minutes:
             return ProviderRefreshSchedulerConfig(
                 backgroundProviderPollIntervalSeconds: intervalSeconds,
+                activeProviderPollIntervalSeconds: 180,
+                maxConcurrentRefreshes: 2,
                 localSessionSignalActiveSleepSeconds: 20,
                 localSessionSignalIdleSleepSeconds: 90,
                 inFlightProviderSleepSeconds: 10
             )
         case .background15Minutes:
             return ProviderRefreshSchedulerConfig(
-                backgroundProviderPollIntervalSeconds: intervalSeconds,
+                backgroundProviderPollIntervalSeconds: 1_800,
+                activeProviderPollIntervalSeconds: 300,
+                maxConcurrentRefreshes: 2,
                 localSessionSignalActiveSleepSeconds: 30,
                 localSessionSignalIdleSleepSeconds: 120,
                 inFlightProviderSleepSeconds: 15

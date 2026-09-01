@@ -20,17 +20,59 @@ final class AppProviderRefreshCoordinator {
     typealias LocalizedTextProvider = @MainActor (_ zhHans: String, _ en: String) -> String
     typealias LanguageProvider = @MainActor () -> AppLanguage
     typealias SnapshotBounder = @MainActor (_ snapshot: UsageSnapshot) -> UsageSnapshot
+    /// Injectable network seam (doc §9.5). Defaults to always-online; the real
+    /// `NWPathMonitor` wiring is owned by the composition layer.
+    typealias IsNetworkOnlineProvider = @Sendable () -> Bool
 
     private let providerFactory: any ProviderFactorying
     private let notifications: NotificationService
     private var inFlightRefreshTasks: [String: Task<Void, Never>] = [:]
+    private let isNetworkOnline: IsNetworkOnlineProvider
+    private let fetchPlanRegistry = ProviderFetchPlanRegistry()
+    /// Upper bound on concurrently executing provider refreshes (doc §9.3).
+    private var maxConcurrentRefreshes: Int
+    private var activeRefreshSlotCount = 0
+    private var waitingRefreshSlotContinuations: [CheckedContinuation<Void, Never>] = []
 
     init(
         providerFactory: any ProviderFactorying,
-        notifications: NotificationService
+        notifications: NotificationService,
+        isNetworkOnline: @escaping IsNetworkOnlineProvider = { true },
+        maxConcurrentRefreshes: Int = 2
     ) {
         self.providerFactory = providerFactory
         self.notifications = notifications
+        self.isNetworkOnline = isNetworkOnline
+        self.maxConcurrentRefreshes = max(1, maxConcurrentRefreshes)
+    }
+
+    /// Refreshes the configured concurrency cap (follows the active resource
+    /// mode's `maxConcurrentRefreshes`).
+    func updateMaxConcurrentRefreshes(_ value: Int) {
+        maxConcurrentRefreshes = max(1, value)
+    }
+
+    /// Global concurrency gate (doc §9.3). All provider refresh paths funnel
+    /// through `runExclusiveRefresh`, so acquiring a slot here caps every
+    /// caller (poll, manual, displayed, scope fan-out). Nothing in a refresh
+    /// action re-enters `runExclusiveRefresh`, so a waiting-based gate cannot
+    /// deadlock.
+    private func acquireRefreshSlot() async {
+        if activeRefreshSlotCount < maxConcurrentRefreshes {
+            activeRefreshSlotCount += 1
+            return
+        }
+        await withCheckedContinuation { continuation in
+            waitingRefreshSlotContinuations.append(continuation)
+        }
+        activeRefreshSlotCount += 1
+    }
+
+    private func releaseRefreshSlot() {
+        activeRefreshSlotCount = max(0, activeRefreshSlotCount - 1)
+        if !waitingRefreshSlotContinuations.isEmpty {
+            waitingRefreshSlotContinuations.removeFirst().resume()
+        }
     }
 
     /// Per-provider in-flight gate shared by poll / refreshNow / displayed / local-session paths
@@ -38,7 +80,8 @@ final class AppProviderRefreshCoordinator {
     ///
     /// Strategy: if a refresh for `providerID` is already running, await that task and return
     /// without starting another fetch — including when the new caller requested `forceRefresh`.
-    /// No cancel+rerun; joiners reuse the in-flight result.
+    /// No cancel+rerun; joiners reuse the in-flight result. The global concurrency cap is
+    /// enforced around the action body; joiners waiting on `existing.value` hold no slot.
     func runExclusiveRefresh(
         providerID: String,
         action: @escaping @MainActor () async -> Void
@@ -49,7 +92,9 @@ final class AppProviderRefreshCoordinator {
         }
 
         let task = Task { @MainActor in
+            await self.acquireRefreshSlot()
             await action()
+            self.releaseRefreshSlot()
         }
         inFlightRefreshTasks[providerID] = task
         await task.value
@@ -77,12 +122,53 @@ final class AppProviderRefreshCoordinator {
             localSessionWatchKind = nil
         }
 
+        // Fetch-plan TTLs (doc §8.3/§9.3) ride on the descriptor so the
+        // scheduler can combine user cadence, plan floors, and visibility.
+        let plan = fetchPlanRegistry.plan(for: provider.type)
         return ProviderRefreshScheduleDescriptor(
             id: provider.id,
             isEnabled: provider.enabled,
             pollIntervalSec: provider.pollIntervalSec,
+            activeTTLSeconds: TimeInterval(plan.activeTTL),
+            backgroundTTLSeconds: TimeInterval(plan.backgroundTTL),
             localSessionWatchKind: localSessionWatchKind
         )
+    }
+
+    /// Resolves a `RefreshScope` (doc §9.4) to enabled provider IDs.
+    ///
+    /// `.visible` follows the current menu bar panel population,
+    /// `.selected(providerID)` covers a single settings-page provider, and
+    /// `.all` covers every enabled provider. IDs are deduplicated and keep
+    /// config order.
+    nonisolated static func enabledProviderIDs(
+        for scope: RefreshScope,
+        providers: [ProviderDescriptor],
+        visibleProviderIDs: Set<String>
+    ) -> [String] {
+        var seenIDs: Set<String> = []
+        var resolvedIDs: [String] = []
+
+        func appendIfEnabled(_ descriptor: ProviderDescriptor) {
+            guard descriptor.enabled, seenIDs.insert(descriptor.id).inserted else { return }
+            resolvedIDs.append(descriptor.id)
+        }
+
+        switch scope {
+        case .visible:
+            for descriptor in providers where visibleProviderIDs.contains(descriptor.id) {
+                appendIfEnabled(descriptor)
+            }
+        case .selected(let providerID):
+            for descriptor in providers where descriptor.id == providerID {
+                appendIfEnabled(descriptor)
+            }
+        case .all:
+            for descriptor in providers {
+                appendIfEnabled(descriptor)
+            }
+        }
+        return resolvedIDs
     }
 
     func refreshDisplayedStatusBarProviders(
@@ -459,18 +545,22 @@ extension AppProviderRefreshCoordinator {
     /// refreshes displayed providers whose data is already stale).
     nonisolated static let startupRefreshStalenessFloorSeconds: TimeInterval = 60
 
-    /// Startup refresh scope: only displayed providers whose snapshot is
-    /// missing, empty, or older than their staleness window.
+    /// Startup / menu-open refresh scope: only displayed providers whose
+    /// snapshot is missing, empty, or older than their staleness window.
+    /// `extraStalenessSecondsByID` lets callers widen the staleness window per
+    /// provider (e.g. the fetch plan's `activeTTL` for menu-open refreshes).
     func displayedProvidersForStartupRefresh(
         providers: [ProviderDescriptor],
         snapshots: [String: UsageSnapshot],
-        now: Date = Date()
+        now: Date = Date(),
+        extraStalenessSecondsByID: [String: TimeInterval] = [:]
     ) -> [ProviderDescriptor] {
         providers.filter { descriptor in
             Self.needsStartupRefresh(
                 descriptor: descriptor,
                 snapshot: snapshots[descriptor.id],
-                now: now
+                now: now,
+                extraStalenessSeconds: extraStalenessSecondsByID[descriptor.id] ?? 0
             )
         }
     }
@@ -478,14 +568,16 @@ extension AppProviderRefreshCoordinator {
     nonisolated static func needsStartupRefresh(
         descriptor: ProviderDescriptor,
         snapshot: UsageSnapshot?,
-        now: Date
+        now: Date,
+        extraStalenessSeconds: TimeInterval = 0
     ) -> Bool {
         guard descriptor.enabled else { return false }
         guard let snapshot else { return true }
         if snapshot.valueFreshness == .empty { return true }
         let stalenessSeconds = max(
             TimeInterval(max(descriptor.pollIntervalSec, 1)),
-            startupRefreshStalenessFloorSeconds
+            startupRefreshStalenessFloorSeconds,
+            max(0, extraStalenessSeconds)
         )
         return now.timeIntervalSince(snapshot.updatedAt) >= stalenessSeconds
     }
@@ -505,9 +597,12 @@ extension AppProviderRefreshCoordinator {
             return true
         }
 
-        let nsError = error as NSError
-        let description = nsError.localizedDescription.lowercased()
-        return description.contains("rate limited") || description.contains("429")
+        return isRateLimitedDiagnosticMessage(error.localizedDescription)
+    }
+
+    nonisolated static func isRateLimitedDiagnosticMessage(_ message: String) -> Bool {
+        let lowered = message.lowercased()
+        return lowered.contains("rate limited") || lowered.contains("429")
     }
 
     nonisolated static func classifyFetchHealth(_ error: Error) -> FetchHealth {

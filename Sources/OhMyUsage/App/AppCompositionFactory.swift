@@ -35,6 +35,12 @@ enum AppCompositionFactory {
         // Phase 1 §7.6: the Codex / Claude OAuth JSON vault accounts are read and
         // written through the shared broker-backed vault store.
         let oauthVaultStore = OfficialOAuthVaultStore(keychain: credentialBroker)
+        // Doc §9.5: one shared NWPathMonitor-backed reachability monitor. The
+        // refresh model and scheduler read `isNetworkOnline` to pause background
+        // refresh while offline; AppViewModel.start() wires the recovery callback.
+        // Starting here resolves the path before the first startup refresh.
+        let networkReachabilityMonitor = NetworkReachabilityMonitor()
+        networkReachabilityMonitor.start()
         let resolvedCodexDesktopAuthService = codexDesktopAuthService ?? CodexDesktopAuthService(oauthVault: oauthVaultStore)
         let resolvedClaudeDesktopAuthService = claudeDesktopAuthService ?? ClaudeDesktopAuthService(oauthVault: oauthVaultStore)
         let resolvedProviderFactory = providerFactory ?? ProviderFactory(keychain: keychain, credentialBroker: credentialBroker)
@@ -57,8 +63,12 @@ enum AppCompositionFactory {
             providerFactory: resolvedProviderFactory,
             providerRefreshModel: AppProviderRefreshModel(
                 providerFactory: resolvedProviderFactory,
-                notifications: notificationService
+                notifications: notificationService,
+                isNetworkOnline: { [weak networkReachabilityMonitor] in
+                    networkReachabilityMonitor?.isOnline ?? true
+                }
             ),
+            networkReachabilityMonitor: networkReachabilityMonitor,
             permissionModel: AppPermissionModel(),
             updateModel: AppUpdateModel(
                 appUpdateService: appUpdateService,
