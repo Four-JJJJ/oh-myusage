@@ -9,11 +9,25 @@ final class AppOfficialProfileSyncCoordinatorTests: XCTestCase {
         let profileStore = CodexAccountProfileStore(
             fileURL: root.appendingPathComponent("codex_profiles.json")
         )
+        let (defaults, suiteName) = makeTestDefaults()
+        defer { removeTestDefaults(named: suiteName) }
+        let vault = OfficialOAuthVaultStore(keychain: makeTestKeychain(), defaults: defaults)
+        XCTAssertTrue(
+            vault.saveOAuthJSON(
+                provider: .codex,
+                rawJSON: Self.sampleCodexAuthJSON(accountID: "acc-a", email: "a@example.com")
+            )
+        )
+        var externalKeychainReads = 0
         let authService = CodexDesktopAuthService(
             homeDirectory: { root.path },
             environment: { [:] },
-            keychainReader: { Self.sampleCodexAuthJSON(accountID: "acc-a", email: "a@example.com") },
-            keychainWriter: { _ in true }
+            keychainReader: {
+                externalKeychainReads += 1
+                return Self.sampleCodexAuthJSON(accountID: "acc-a", email: "a@example.com")
+            },
+            keychainWriter: { _ in true },
+            oauthVault: vault
         )
 
         let result = AppOfficialProfileSyncCoordinator().syncCodexProfiles(
@@ -24,6 +38,8 @@ final class AppOfficialProfileSyncCoordinatorTests: XCTestCase {
         XCTAssertEqual(result.profiles.count, 1)
         XCTAssertEqual(result.visibleSlotIDs, [.a])
         XCTAssertEqual(result.profiles.first?.accountEmail, "a@example.com")
+        // Ordinary sync reads the app vault, never the external `Codex Auth` keychain.
+        XCTAssertEqual(externalKeychainReads, 0)
     }
 
     func testBootstrapClaudeProfilesIfNeededReturnsCurrentProfilesWhenAlreadyCompacted() {
@@ -83,17 +99,33 @@ final class AppOfficialProfileSyncCoordinatorTests: XCTestCase {
                 isCurrentSystemAccount: true
             )
         ]
+        let (defaults, suiteName) = makeTestDefaults()
+        defer { removeTestDefaults(named: suiteName) }
+        let vault = OfficialOAuthVaultStore(keychain: makeTestKeychain(), defaults: defaults)
+        XCTAssertTrue(
+            vault.saveOAuthJSON(
+                provider: .claude,
+                rawJSON: Self.sampleClaudeCredentialsJSON(
+                    email: "visible@example.com",
+                    accessToken: "access-visible",
+                    scopes: ["user:profile"]
+                )
+            )
+        )
+        var externalKeychainReads = 0
         let authService = ClaudeDesktopAuthService(
             homeDirectory: { root.path },
             environment: { [:] },
             keychainReader: {
-                Self.sampleClaudeCredentialsJSON(
+                externalKeychainReads += 1
+                return Self.sampleClaudeCredentialsJSON(
                     email: "visible@example.com",
                     accessToken: "access-visible",
                     scopes: ["user:profile"]
                 )
             },
-            keychainWriter: { _ in true }
+            keychainWriter: { _ in true },
+            oauthVault: vault
         )
 
         let result = AppOfficialProfileSyncCoordinator().syncClaudeProfiles(
@@ -108,6 +140,8 @@ final class AppOfficialProfileSyncCoordinatorTests: XCTestCase {
         XCTAssertEqual(result.syncEvaluation.normalizedConfiguredDisplaySlotID, .a)
         XCTAssertEqual(result.syncEvaluation.resolvedDisplaySlotID, .a)
         XCTAssertTrue(result.syncEvaluation.didProfileIdentityChange)
+        // Ordinary sync reads the app vault, never the external `Claude Code-credentials` keychain.
+        XCTAssertEqual(externalKeychainReads, 0)
     }
 
     private func makeTemporaryDirectory() throws -> URL {

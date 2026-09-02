@@ -170,6 +170,19 @@ enum L10nKey {
     case permissionKeychainConfirm
     case permissionKeychainReady
     case permissionKeychainFailed
+    case permissionKeychainPrepareAction
+    case permissionKeychainDeleteAction
+    case permissionKeychainDeleteConfirm
+    case permissionKeychainDeleted
+    case permissionKeychainDeleteFailed
+    case credentialDisclosureReimport
+    case credentialDisclosureManualSetup
+    case credentialStatusNotConfigured
+    case credentialStatusReady
+    case credentialStatusReloginRequired
+    case credentialStatusSystemAccessRequired
+    case credentialStatusSessionExpired
+    case credentialStatusRefreshFailed
     case permissionFullDiskTitle
     case permissionFullDiskHint
     case permissionFullDiskAction
@@ -202,6 +215,17 @@ enum L10nKey {
     case updateAvailableTitle
     case updateAvailableBody
     case updateDownloadAction
+    // Menu data credibility mapping (doc §10.2).
+    case menuDataCredibilityLive
+    case menuDataCredibilityLocalCache
+    case menuDataCredibilityLocalEstimate
+    case menuDataCredibilityPendingRefresh
+    // Menu degraded-state chips (doc §10.1).
+    case menuStatusAuthFailed
+    case menuStatusConfigIssue
+    case menuStatusRateLimited
+    case menuStatusRefreshFailedStale
+    case menuStatusRefreshFailed
 }
 
 enum Localizer {
@@ -378,6 +402,19 @@ enum Localizer {
             case .permissionKeychainConfirm: return "确认后会初始化 oh-myusage 的钥匙串存储，用来安全保存你手动录入的 Cookie、Token 和 API Key。"
             case .permissionKeychainReady: return "钥匙串存储已就绪。"
             case .permissionKeychainFailed: return "钥匙串存储初始化失败，请稍后重试。"
+            case .permissionKeychainPrepareAction: return "准备本机授权"
+            case .permissionKeychainDeleteAction: return "删除本机凭证"
+            case .permissionKeychainDeleteConfirm: return "确认后将删除 oh-myusage 钥匙串 vault 中保存的全部本机凭证（手动录入的 Cookie、Token、API Key 和已导入的登录态）。受影响的数据源需要重新录入凭证或重新导入后才能继续刷新；模型配置和其他本地数据不受影响。"
+            case .permissionKeychainDeleted: return "本机凭证已删除。"
+            case .permissionKeychainDeleteFailed: return "本机凭证删除失败，请稍后重试。"
+            case .credentialDisclosureReimport: return "重新导入凭证"
+            case .credentialDisclosureManualSetup: return "手动配置凭证"
+            case .credentialStatusNotConfigured: return "未配置"
+            case .credentialStatusReady: return "已准备，可后台读取"
+            case .credentialStatusReloginRequired: return "需要重新登录"
+            case .credentialStatusSystemAccessRequired: return "系统拒绝访问"
+            case .credentialStatusSessionExpired: return "浏览器会话已过期"
+            case .credentialStatusRefreshFailed: return "凭证刷新失败"
             case .permissionFullDiskTitle: return "全盘访问"
             case .permissionFullDiskHint: return "用于读取浏览器 Cookie 数据库和本地 CLI/ auth 文件，提升自动识别成功率"
             case .permissionFullDiskAction: return "打开全盘访问设置"
@@ -410,6 +447,15 @@ enum Localizer {
             case .updateAvailableTitle: return "发现新版本"
             case .updateAvailableBody: return "最新 %@（当前 %@）"
             case .updateDownloadAction: return "下载最新安装包"
+            case .menuDataCredibilityLive: return "官方实时"
+            case .menuDataCredibilityLocalCache: return "本地缓存"
+            case .menuDataCredibilityLocalEstimate: return "本地估算"
+            case .menuDataCredibilityPendingRefresh: return "待刷新"
+            case .menuStatusAuthFailed: return "认证失败"
+            case .menuStatusConfigIssue: return "配置异常"
+            case .menuStatusRateLimited: return "限流"
+            case .menuStatusRefreshFailedStale: return "刷新失败，显示旧数据"
+            case .menuStatusRefreshFailed: return "刷新失败"
             }
         case .en:
             switch key {
@@ -582,6 +628,19 @@ enum Localizer {
             case .permissionKeychainConfirm: return "Continue to initialize the oh-myusage Keychain vault for securely storing manually entered cookies, tokens, and API keys."
             case .permissionKeychainReady: return "Keychain storage is ready."
             case .permissionKeychainFailed: return "Keychain storage setup failed. Please try again."
+            case .permissionKeychainPrepareAction: return "Prepare local access"
+            case .permissionKeychainDeleteAction: return "Delete local credentials"
+            case .permissionKeychainDeleteConfirm: return "Continue to delete every credential stored in the oh-myusage Keychain vault (manually entered cookies, tokens, API keys, and imported sessions). Affected providers must re-enter or re-import credentials before refreshing; provider configs and other local data are not touched."
+            case .permissionKeychainDeleted: return "Local credentials were deleted."
+            case .permissionKeychainDeleteFailed: return "Failed to delete local credentials. Please try again."
+            case .credentialDisclosureReimport: return "Re-import Credentials"
+            case .credentialDisclosureManualSetup: return "Set Up Manually"
+            case .credentialStatusNotConfigured: return "Not configured"
+            case .credentialStatusReady: return "Ready for background reads"
+            case .credentialStatusReloginRequired: return "Re-login required"
+            case .credentialStatusSystemAccessRequired: return "System denied access"
+            case .credentialStatusSessionExpired: return "Browser session expired"
+            case .credentialStatusRefreshFailed: return "Credential refresh failed"
             case .permissionFullDiskTitle: return "Full Disk Access"
             case .permissionFullDiskHint: return "Used to read browser cookie databases and local CLI/auth files for better auto-discovery."
             case .permissionFullDiskAction: return "Open Full Disk Access"
@@ -614,6 +673,15 @@ enum Localizer {
             case .updateAvailableTitle: return "Update Available"
             case .updateAvailableBody: return "Latest %@ (current %@)"
             case .updateDownloadAction: return "Download latest installer"
+            case .menuDataCredibilityLive: return "Live"
+            case .menuDataCredibilityLocalCache: return "Cached"
+            case .menuDataCredibilityLocalEstimate: return "Estimated"
+            case .menuDataCredibilityPendingRefresh: return "Pending"
+            case .menuStatusAuthFailed: return "Auth failed"
+            case .menuStatusConfigIssue: return "Config issue"
+            case .menuStatusRateLimited: return "Rate limited"
+            case .menuStatusRefreshFailedStale: return "Refresh failed, showing old data"
+            case .menuStatusRefreshFailed: return "Refresh failed"
             }
         }
     }

@@ -168,6 +168,90 @@ jobs:
               require(isinstance(asset.get("size"), int) and asset["size"] > 0, f"latest.json assets.{key}.size must be positive")
           PY
 
+      - name: Render release notes from template
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+          RELEASE_REPOSITORY: ${{ github.repository }}
+          RELEASE_COMMIT: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # 按 docs/RELEASE_NOTES_TEMPLATE.md 渲染 Release 正文（doc 11.5 必含项：
+          # 版本号、构建 commit、SHA-256、未公证说明、首次打开方法、Keychain 升级说明）。
+          python3 - <<'PY'
+          import os
+          import re
+          import subprocess
+          from pathlib import Path
+
+          tag = os.environ["RELEASE_TAG"]
+          version = os.environ["RELEASE_VERSION"]
+          repo = os.environ["RELEASE_REPOSITORY"]
+          commit = os.environ["RELEASE_COMMIT"][:7]
+          download_base = f"https://github.com/{repo}/releases/download/{tag}"
+
+          sums = Path("dist/SHA256SUMS.txt").read_text(encoding="utf-8").splitlines()
+          digests = {}
+          for line in sums:
+              parts = line.split()
+              if len(parts) == 2:
+                  digests[parts[1]] = parts[0]
+          dmg_sha = digests.get("oh-myusage.dmg", "")
+          zip_sha = digests.get("oh-myusage-macOS.zip", "")
+          if not dmg_sha or not zip_sha:
+              raise SystemExit("SHA256SUMS.txt is missing digests for the dmg or zip asset")
+
+          text = Path("docs/RELEASE_NOTES_TEMPLATE.md").read_text(encoding="utf-8")
+          if "\n---\n" not in text:
+              raise SystemExit("RELEASE_NOTES_TEMPLATE.md is missing the intro separator")
+          body = text.split("\n---\n", 1)[1].strip() + "\n"
+
+          body = body.replace("v<X.Y.Z>", tag)
+          body = body.replace("<X.Y.Z>", version)
+          body = body.replace("<version>（如 2.1.0）", version)
+          body = body.replace("<full-or-short-commit-hash>", commit)
+          body = body.replace("<branch>", tag)
+          asset_urls = iter([
+              f"{download_base}/oh-myusage.dmg",
+              f"{download_base}/oh-myusage-macOS.zip",
+              f"{download_base}/SHA256SUMS.txt",
+          ])
+          body = re.sub(r"<release-asset-url>", lambda _match: next(asset_urls), body)
+          body = body.replace("<digest>  oh-myusage.dmg", f"{dmg_sha}  oh-myusage.dmg")
+          body = body.replace("<digest>  oh-myusage-macOS.zip", f"{zip_sha}  oh-myusage-macOS.zip")
+          body = body.replace(
+              "../docs/INSTALL_UNSIGNED.md",
+              f"https://github.com/{repo}/blob/{tag}/docs/INSTALL_UNSIGNED.md",
+          )
+
+          # “本版变更”整行替换为 GitHub 自动生成的提交摘要；取不到时退回提示语。
+          changes = ""
+          try:
+              result = subprocess.run(
+                  ["gh", "api", f"repos/{repo}/releases/generate-notes", "-f", f"tag_name={tag}", "-q", ".body"],
+                  check=True,
+                  capture_output=True,
+                  text=True,
+              )
+              changes = result.stdout.strip()
+          except subprocess.CalledProcessError:
+              changes = ""
+          if not changes:
+              changes = "详见提交记录 / See the commit history for details."
+          body = body.replace("- <变更要点，逐条列出>", changes)
+
+          # 模板提示发布前删除“已知问题”空节。
+          body = re.sub(r"\*\*已知问题\*\*：\n\n- <如有则列出；没有则删除本节>\n?", "", body)
+
+          if "<" in body and re.search(r"<[a-zA-Z][^>]*>", body):
+              leftover = re.findall(r"<[a-zA-Z][^>]*>", body)
+              raise SystemExit(f"Unsubstituted placeholders remain in release notes: {leftover}")
+
+          Path("dist/release_notes.md").write_text(body, encoding="utf-8")
+          PY
+
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -178,14 +262,16 @@ jobs:
           TAG="${{ steps.version.outputs.tag }}"
 
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" dist/latest.json "dist/oh-myusage.dmg" dist/oh-myusage-macOS.zip --clobber
+            gh release upload "$TAG" dist/latest.json "dist/oh-myusage.dmg" dist/oh-myusage-macOS.zip dist/SHA256SUMS.txt --clobber
+            gh release edit "$TAG" --notes-file dist/release_notes.md
           else
             gh release create "$TAG" \
               dist/latest.json \
               "dist/oh-myusage.dmg" \
               dist/oh-myusage-macOS.zip \
+              dist/SHA256SUMS.txt \
               --title "$TAG" \
-              --generate-notes
+              --notes-file dist/release_notes.md
           fi
 
       - name: Validate published update endpoints

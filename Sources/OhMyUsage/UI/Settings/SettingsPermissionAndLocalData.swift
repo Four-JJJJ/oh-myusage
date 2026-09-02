@@ -31,7 +31,8 @@ extension SettingsView {
                     statusText: keychainPermissionStatusText,
                     statusColor: keychainPermissionStatusColor,
                     buttonTitle: keychainActionTitle,
-                    buttonMutedStyle: viewModel.secureStorageReady
+                    buttonMutedStyle: false,
+                    buttonDestructive: viewModel.secureStorageReady
                 ) {
                     handlePermissionAction(.keychain)
                 }
@@ -160,6 +161,7 @@ extension SettingsView {
         statusColor: Color,
         buttonTitle: String,
         buttonMutedStyle: Bool = false,
+        buttonDestructive: Bool = false,
         action: @escaping () -> Void
     ) -> some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -183,6 +185,7 @@ extension SettingsView {
                 Spacer(minLength: 8)
                 settingsGeneralOutlineButton(
                     buttonTitle,
+                    destructive: buttonDestructive,
                     textOpacity: buttonMutedStyle ? 0.55 : 0.80,
                     borderOpacity: buttonMutedStyle ? 0.55 : 0.80,
                     action: action
@@ -300,17 +303,17 @@ extension SettingsView {
     }
 
     var keychainActionTitle: String {
-        if viewModel.language == .zhHans {
-            return viewModel.secureStorageReady ? "取消授权" : "启用钥匙串"
-        }
-        return viewModel.text(.permissionKeychainAction)
+        // 已就绪时按钮语义是“删除本机凭证”（实删 vault 数据），不是取消授权；
+        // 未就绪时点击触发一次交互式准备。
+        viewModel.secureStorageReady
+            ? viewModel.text(.permissionKeychainDeleteAction)
+            : viewModel.text(.permissionKeychainPrepareAction)
     }
 
     var fullDiskActionTitle: String {
-        if viewModel.language == .zhHans {
-            return viewModel.fullDiskAccessGranted ? "取消授权" : "打开设置"
-        }
-        return viewModel.text(.permissionFullDiskAction)
+        // 按钮行为始终是打开系统全盘访问设置页（已授权与否都一样），
+        // 文案如实描述行为，避免“取消授权”造成的误解（doc 4.2/7.5）。
+        viewModel.text(.permissionFullDiskAction)
     }
 
     var notificationPermissionStatusText: String {
@@ -321,12 +324,15 @@ extension SettingsView {
         viewModel.hasNotificationPermission ? Color(hex: 0x69BD64) : Color(hex: 0xD05757)
     }
 
+    /// 钥匙串 tile 的固定状态文案（doc 7.5）：把凭证访问状态映射成
+    /// 未配置 / 已准备，可后台读取 / 需要重新登录 / 系统拒绝访问 /
+    /// 浏览器会话已过期 / 凭证刷新失败。
     var keychainPermissionStatusText: String {
-        viewModel.secureStorageReady ? statusAuthorizedText : statusUnauthorizedText
+        viewModel.text(viewModel.credentialAccessDisplayState.localizationKey)
     }
 
     var keychainPermissionStatusColor: Color {
-        viewModel.secureStorageReady ? Color(hex: 0x69BD64) : Color(hex: 0xD05757)
+        Color(hex: viewModel.credentialAccessDisplayState.statusColorHex)
     }
 
     var fullDiskPermissionStatusText: String {
@@ -349,6 +355,8 @@ extension SettingsView {
             return viewModel.text(.resetLocalDataTitle)
         case .autoDiscovery:
             return viewModel.text(.localDiscoveryTitle)
+        case .deleteLocalCredentials:
+            return viewModel.text(.permissionKeychainDeleteAction)
         case .none:
             return ""
         }
@@ -366,6 +374,8 @@ extension SettingsView {
             return viewModel.text(.localDiscoveryConfirm)
         case .resetLocalData:
             return viewModel.text(.resetLocalDataConfirm)
+        case .deleteLocalCredentials:
+            return viewModel.text(.permissionKeychainDeleteConfirm)
         case .none:
             return ""
         }
@@ -395,8 +405,8 @@ extension SettingsView {
                     : viewModel.text(.permissionKeychainFailed)
                 dialogState.permissionResultIsError[PermissionPrompt.keychain.id] = !ok
             } else {
-                dialogState.permissionResultMessage[PermissionPrompt.keychain.id] = viewModel.text(.permissionKeychainReady)
-                dialogState.permissionResultIsError[PermissionPrompt.keychain.id] = false
+                // 已就绪：按钮语义是“删除本机凭证”，确认后实删 vault 数据。
+                dialogState.permissionPrompt = .deleteLocalCredentials
             }
         case .fullDisk:
             viewModel.openFullDiskAccessSettings()
@@ -411,6 +421,12 @@ extension SettingsView {
             navigationState.selectedSettingsTab = .general
             dialogState.permissionResultMessage[PermissionPrompt.resetLocalData.id] = viewModel.text(.resetLocalDataDone)
             dialogState.permissionResultIsError[PermissionPrompt.resetLocalData.id] = false
+        case .deleteLocalCredentials:
+            let ok = viewModel.deleteLocalCredentials()
+            dialogState.permissionResultMessage[PermissionPrompt.deleteLocalCredentials.id] = ok
+                ? viewModel.text(.permissionKeychainDeleted)
+                : viewModel.text(.permissionKeychainDeleteFailed)
+            dialogState.permissionResultIsError[PermissionPrompt.deleteLocalCredentials.id] = !ok
         case .none:
             break
         }

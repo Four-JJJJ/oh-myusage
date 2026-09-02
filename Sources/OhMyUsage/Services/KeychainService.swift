@@ -342,6 +342,25 @@ final class KeychainService: @unchecked Sendable {
         return hasCachedCredentials || hasPreparedSecureStoreAccess
     }
 
+    /// Identifiers (`"<service>::<account>"`) of every credential entry this store
+    /// knows about: the in-memory cache, the persisted length metadata, and a
+    /// non-interactive enumeration of the app's own secure-store items.
+    /// Only identifiers are returned — never credential values.
+    func storedCredentialIdentifiers() -> [String] {
+        lock.lock()
+        var identifiers = Set(tokenCache.keys)
+        lock.unlock()
+        identifiers.formUnion(credentialLengthSnapshot().keys)
+
+        if !useFileStorage {
+            let items = readAllFromSecureStore(service: Self.defaultServiceName, interactive: false) ?? [:]
+            for account in items.keys where account != Self.vaultAccount && !account.isEmpty {
+                identifiers.insert(cacheKey(service: Self.defaultServiceName, account: account))
+            }
+        }
+        return identifiers.sorted()
+    }
+
     func resetAllStoredCredentials() {
         guard !useFileStorage else {
             lock.lock()

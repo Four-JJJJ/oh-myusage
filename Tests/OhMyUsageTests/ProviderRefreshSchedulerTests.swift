@@ -173,7 +173,9 @@ final class ProviderRefreshSchedulerTests: XCTestCase {
 
     func testBackgroundProviderUsesConfiguredBackgroundInterval() async throws {
         let foreground = makeProvider(id: "foreground", enabled: true, pollIntervalSec: 300)
-        let background = makeProvider(id: "background", enabled: true, pollIntervalSec: 300)
+        // Doc §9.3: the background interval combines the scheduler's background
+        // floor with the provider's own cadence (never polls faster than either).
+        let background = makeProvider(id: "background", enabled: true, pollIntervalSec: 60)
         var events: [String] = []
         let sleepGate = BlockingSleepGate()
         let scheduler = makeScheduler(
@@ -232,6 +234,291 @@ final class ProviderRefreshSchedulerTests: XCTestCase {
         await refreshGate.releaseAll()
     }
 
+    func testActiveProviderUsesConfiguredActivePollFloor() async throws {
+        let provider = makeProvider(id: "poll", enabled: true, pollIntervalSec: 60)
+        var events: [String] = []
+        let sleepRecorder = SleepRecorder()
+        let scheduler = makeScheduler(
+            providers: [provider],
+            startupJitterProvider: { 0 },
+            refreshAction: { providerID, forceRefresh in
+                events.append("\(providerID):\(forceRefresh)")
+            },
+            sleepAction: { seconds in
+                await sleepRecorder.record(seconds)
+                throw CancellationError()
+            }
+        )
+
+        scheduler.restart(providers: [provider])
+
+        try await waitUntil {
+            let sleeps = await sleepRecorder.snapshot()
+            return events == ["poll:false"]
+                && self.timeIntervals(sleeps, approximatelyEqualTo: [180])
+        }
+        scheduler.stop()
+    }
+
+    func testActiveProviderIntervalCombinesUserCadenceAndPlanActiveTTL() async throws {
+        // Doc §9.3: the active interval combines the user cadence with the
+        // fetch plan's activeTTL; the plan TTL wins when it is longer.
+        var provider = makeProvider(id: "plan-active", enabled: true, pollIntervalSec: 60)
+        provider.activeTTLSeconds = 300
+        var events: [String] = []
+        let sleepRecorder = SleepRecorder()
+        let scheduler = makeScheduler(
+            providers: [provider],
+            activeProviderIDs: ["plan-active"],
+            startupJitterProvider: { 0 },
+            refreshAction: { providerID, forceRefresh in
+                events.append("\(providerID):\(forceRefresh)")
+            },
+            sleepAction: { seconds in
+                await sleepRecorder.record(seconds)
+                throw CancellationError()
+            }
+        )
+
+        scheduler.restart(providers: [provider])
+
+        try await waitUntil {
+            let sleeps = await sleepRecorder.snapshot()
+            return events == ["plan-active:false"]
+                && self.timeIntervals(sleeps, approximatelyEqualTo: [300])
+        }
+        scheduler.stop()
+    }
+
+    func testBackgroundProviderIntervalRespectsPlanBackgroundTTLFloor() async throws {
+        // Doc §9.3: backgroundTTL is the minimum spacing between background
+        // scheduler refreshes, on top of the scheduler's own background floor.
+        var provider = makeProvider(id: "plan-bg", enabled: true, pollIntervalSec: 60)
+        provider.backgroundTTLSeconds = 1_800
+        var events: [String] = []
+        let sleepRecorder = SleepRecorder()
+        let scheduler = makeScheduler(
+            providers: [provider],
+            activeProviderIDs: ["other-visible-provider"],
+            startupJitterProvider: { 0 },
+            refreshAction: { providerID, forceRefresh in
+                events.append("\(providerID):\(forceRefresh)")
+            },
+            sleepAction: { seconds in
+                await sleepRecorder.record(seconds)
+                throw CancellationError()
+            }
+        )
+
+        scheduler.restart(providers: [provider])
+
+        try await waitUntil {
+            let sleeps = await sleepRecorder.snapshot()
+            return events == ["plan-bg:false"]
+                && self.timeIntervals(sleeps, approximatelyEqualTo: [1_800])
+        }
+        scheduler.stop()
+    }
+
+    func testPollLoopDefersDueProvidersBeyondConcurrencyCapWithoutDroppingThem() async throws {
+        let providers = [
+            makeProvider(id: "first", enabled: true, pollIntervalSec: 60),
+            makeProvider(id: "second", enabled: true, pollIntervalSec: 60),
+            makeProvider(id: "third", enabled: true, pollIntervalSec: 60)
+        ]
+        let refreshGate = BlockingRefreshGate()
+        let sleepGate = BlockingSleepGate()
+        let scheduler = makeScheduler(
+            providers: providers,
+            config: ProviderRefreshSchedulerConfig(
+                backgroundProviderPollIntervalSeconds: 180,
+                activeProviderPollIntervalSeconds: 0,
+                maxConcurrentRefreshes: 1,
+                localSessionSignalActiveSleepSeconds: 15,
+                localSessionSignalIdleSleepSeconds: 60,
+                inFlightProviderSleepSeconds: 3
+            ),
+            startupJitterProvider: { 0 },
+            refreshAction: { providerID, forceRefresh in
+                await refreshGate.refresh(providerID: providerID, forceRefresh: forceRefresh)
+            },
+            sleepAction: { seconds in
+                try await sleepGate.sleep(seconds)
+            }
+        )
+
+        scheduler.restart(providers: providers)
+
+        // Cap 1: only the first due provider starts, the others are deferred.
+        try await waitUntil {
+            let sleeps = await sleepGate.snapshot()
+            return await refreshGate.snapshot() == ["first:false"] && sleeps.contains(3)
+        }
+        let sleeps = await sleepGate.snapshot()
+        XCTAssertTrue(
+            sleeps.contains(3),
+            "Deferred due items must idle-sleep instead of hot-spinning"
+        )
+
+        // Deferred items are not dropped: they start as slots free up.
+        await refreshGate.releaseAll()
+        try await waitUntil {
+            await sleepGate.releaseAll()
+            return await refreshGate.snapshot() == ["first:false", "second:false"]
+        }
+        await refreshGate.releaseAll()
+        try await waitUntil {
+            await sleepGate.releaseAll()
+            return await refreshGate.snapshot() == ["first:false", "second:false", "third:false"]
+        }
+
+        scheduler.stop()
+        await refreshGate.releaseAll()
+        await sleepGate.releaseAll()
+    }
+
+    func testPollLoopKeepsConcurrentRefreshesWithinConfiguredCap() async throws {
+        let providers = (1...4).map { makeProvider(id: "provider\($0)", enabled: true, pollIntervalSec: 60) }
+        let refreshGate = ConcurrencyTrackingRefreshGate()
+        let sleepGate = BlockingSleepGate()
+        let scheduler = makeScheduler(
+            providers: providers,
+            config: ProviderRefreshSchedulerConfig(
+                backgroundProviderPollIntervalSeconds: 180,
+                activeProviderPollIntervalSeconds: 0,
+                maxConcurrentRefreshes: 2,
+                localSessionSignalActiveSleepSeconds: 15,
+                localSessionSignalIdleSleepSeconds: 60,
+                inFlightProviderSleepSeconds: 3
+            ),
+            startupJitterProvider: { 0 },
+            refreshAction: { providerID, _ in
+                await refreshGate.refresh(providerID: providerID)
+            },
+            sleepAction: { seconds in
+                try await sleepGate.sleep(seconds)
+            }
+        )
+
+        scheduler.restart(providers: providers)
+
+        try await waitUntil {
+            await refreshGate.snapshot().entered == ["provider1", "provider2"]
+        }
+        let firstPeak = await refreshGate.snapshot().peak
+        XCTAssertEqual(firstPeak, 2)
+
+        await refreshGate.releaseAll()
+        try await waitUntil {
+            await sleepGate.releaseAll()
+            return await refreshGate.snapshot().entered.count == 4
+        }
+        let finalPeak = await refreshGate.snapshot().peak
+        XCTAssertEqual(finalPeak, 2, "Concurrent refreshes must never exceed maxConcurrentRefreshes")
+
+        scheduler.stop()
+        await refreshGate.releaseAll()
+        await sleepGate.releaseAll()
+    }
+
+    func testOfflineSchedulerSkipsBackgroundRefreshesButManualRefreshStillFires() async throws {
+        let provider = makeProvider(id: "poll", enabled: true, pollIntervalSec: 60)
+        let onlineFlag = NetworkOnlineFlag(online: false)
+        let recorder = RefreshRecorder()
+        let sleepGate = BlockingSleepGate()
+        let scheduler = makeScheduler(
+            providers: [provider],
+            isNetworkOnlineProvider: { onlineFlag.isOnline },
+            refreshRecorder: recorder,
+            startupJitterProvider: { 0 },
+            sleepAction: { seconds in
+                try await sleepGate.sleep(seconds)
+            }
+        )
+
+        scheduler.restart(providers: [provider])
+
+        // Offline: the due background refresh is skipped (idle-sleep, retry later).
+        try await waitUntil {
+            await sleepGate.snapshot().contains(5)
+        }
+        let backgroundEvents = await recorder.snapshot()
+        XCTAssertTrue(backgroundEvents.isEmpty, "Offline background refreshes must be skipped")
+
+        // Manual refreshes are not gated by the offline seam.
+        scheduler.refreshNow(providers: [provider])
+        try await waitUntil {
+            await recorder.snapshot() == ["poll:true"]
+        }
+
+        // Back online: the still-due item is refreshed by the poll loop.
+        onlineFlag.isOnline = true
+        await sleepGate.releaseAll()
+        try await waitUntil {
+            await recorder.snapshot().contains("poll:false")
+        }
+
+        scheduler.stop()
+        await sleepGate.releaseAll()
+    }
+
+    func testRateLimitedFailureBacksOffLongerThanOrdinaryFailure() async throws {
+        let provider = makeProvider(id: "poll", enabled: true, pollIntervalSec: 60)
+        var events: [String] = []
+        let sleepRecorder = SleepRecorder()
+        let scheduler = makeScheduler(
+            providers: [provider],
+            failureCounts: ["poll": 1],
+            rateLimitedProviderIDs: ["poll"],
+            startupJitterProvider: { 0 },
+            refreshAction: { providerID, forceRefresh in
+                events.append("\(providerID):\(forceRefresh)")
+            },
+            sleepAction: { seconds in
+                await sleepRecorder.record(seconds)
+                throw CancellationError()
+            }
+        )
+
+        scheduler.restart(providers: [provider])
+
+        // Ordinary failure backoff is 120s (see testPollLoopUsesFailureBackoff);
+        // a 429 doubles it (doc §9.6).
+        try await waitUntil {
+            let sleeps = await sleepRecorder.snapshot()
+            return events == ["poll:false"] && self.timeIntervals(sleeps, approximatelyEqualTo: [240])
+        }
+        scheduler.stop()
+    }
+
+    func testRateLimitedWithoutFailureCountDoublesBaseInterval() async throws {
+        let provider = makeProvider(id: "poll", enabled: true, pollIntervalSec: 60)
+        var events: [String] = []
+        let sleepRecorder = SleepRecorder()
+        let scheduler = makeScheduler(
+            providers: [provider],
+            rateLimitedProviderIDs: ["poll"],
+            startupJitterProvider: { 0 },
+            refreshAction: { providerID, forceRefresh in
+                events.append("\(providerID):\(forceRefresh)")
+            },
+            sleepAction: { seconds in
+                await sleepRecorder.record(seconds)
+                throw CancellationError()
+            }
+        )
+
+        scheduler.restart(providers: [provider])
+
+        // The cached-snapshot 429 path keeps the failure counter at 0, so the
+        // base interval itself is doubled (180s active floor x 2).
+        try await waitUntil {
+            let sleeps = await sleepRecorder.snapshot()
+            return events == ["poll:false"] && self.timeIntervals(sleeps, approximatelyEqualTo: [360])
+        }
+        scheduler.stop()
+    }
+
     func testLongRunningInFlightRefreshUsesConfiguredSleepInsteadOfOneSecondPolling() async throws {
         let provider = makeProvider(id: "slow", enabled: true, pollIntervalSec: 2)
         let refreshGate = BlockingRefreshGate()
@@ -240,6 +527,7 @@ final class ProviderRefreshSchedulerTests: XCTestCase {
             providers: [provider],
             config: ProviderRefreshSchedulerConfig(
                 backgroundProviderPollIntervalSeconds: 180,
+                activeProviderPollIntervalSeconds: 0,
                 localSessionSignalActiveSleepSeconds: 15,
                 localSessionSignalIdleSleepSeconds: 60,
                 inFlightProviderSleepSeconds: 7
@@ -356,6 +644,8 @@ final class ProviderRefreshSchedulerTests: XCTestCase {
         activeProviderIDs: Set<String> = [],
         activeProviderIDsProvider customActiveProviderIDsProvider: ProviderRefreshScheduler.ActiveProviderIDsProvider? = nil,
         failureCounts: [String: Int] = [:],
+        rateLimitedProviderIDs: Set<String> = [],
+        isNetworkOnlineProvider: ProviderRefreshScheduler.IsNetworkOnlineProvider? = nil,
         refreshRecorder: RefreshRecorder = RefreshRecorder(),
         localSessionRefreshCoordinator: LocalSessionRefreshCoordinator = LocalSessionRefreshCoordinator(
             signalSource: FakeLocalSessionSignalSource()
@@ -383,6 +673,10 @@ final class ProviderRefreshSchedulerTests: XCTestCase {
             failureCountProvider: { providerID in
                 failureCounts[providerID, default: 0]
             },
+            isRateLimitedProvider: { providerID in
+                rateLimitedProviderIDs.contains(providerID)
+            },
+            isNetworkOnline: isNetworkOnlineProvider ?? { true },
             refreshAction: customRefreshAction ?? { providerID, forceRefresh in
                 await refreshRecorder.record(providerID: providerID, forceRefresh: forceRefresh)
             },
@@ -397,12 +691,16 @@ final class ProviderRefreshSchedulerTests: XCTestCase {
         id: String,
         enabled: Bool,
         pollIntervalSec: Int = 60,
+        activeTTLSeconds: TimeInterval? = nil,
+        backgroundTTLSeconds: TimeInterval? = nil,
         localSessionWatchKind: LocalSessionWatchKind? = nil
     ) -> ProviderRefreshScheduleDescriptor {
         ProviderRefreshScheduleDescriptor(
             id: id,
             isEnabled: enabled,
             pollIntervalSec: pollIntervalSec,
+            activeTTLSeconds: activeTTLSeconds,
+            backgroundTTLSeconds: backgroundTTLSeconds,
             localSessionWatchKind: localSessionWatchKind
         )
     }
@@ -501,6 +799,52 @@ private actor BlockingRefreshGate {
 
     func snapshot() -> [String] {
         events
+    }
+}
+
+private actor ConcurrencyTrackingRefreshGate {
+    struct Snapshot: Equatable {
+        let entered: [String]
+        let peak: Int
+    }
+
+    private var entered: [String] = []
+    private var runningCount = 0
+    private var peakCount = 0
+    private var continuations: [CheckedContinuation<Void, Never>] = []
+
+    func refresh(providerID: String) async {
+        entered.append(providerID)
+        runningCount += 1
+        peakCount = max(peakCount, runningCount)
+        await withCheckedContinuation { continuation in
+            continuations.append(continuation)
+        }
+        runningCount -= 1
+    }
+
+    func releaseAll() {
+        let pending = continuations
+        continuations.removeAll()
+        pending.forEach { $0.resume() }
+    }
+
+    func snapshot() -> Snapshot {
+        Snapshot(entered: entered, peak: peakCount)
+    }
+}
+
+private final class NetworkOnlineFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var isOnlineValue: Bool
+
+    init(online: Bool) {
+        isOnlineValue = online
+    }
+
+    var isOnline: Bool {
+        get { lock.withLock { isOnlineValue } }
+        set { lock.withLock { isOnlineValue = newValue } }
     }
 }
 

@@ -167,6 +167,55 @@ final class CopilotProviderTests: XCTestCase {
         }
     }
 
+    func testFetchMaps401ToUnauthorizedDetailWithoutRetrying() async throws {
+        var requestCount = 0
+        let provider = makeProvider(
+            environment: { ["COPILOT_GITHUB_TOKEN": "copilot-env-token"] },
+            requestHandler: { request in
+                requestCount += 1
+                XCTAssertEqual(request.url?.host, "api.github.com")
+                let response = HTTPURLResponse(url: try XCTUnwrap(request.url), statusCode: 401, httpVersion: nil, headerFields: nil)!
+                return (response, Data(#"{"message":"Bad credentials"}"#.utf8))
+            }
+        )
+
+        do {
+            _ = try await provider.fetch()
+            XCTFail("Expected unauthorizedDetail")
+        } catch let error as ProviderError {
+            guard case .unauthorizedDetail = error else {
+                return XCTFail("Expected unauthorizedDetail, got \(error)")
+            }
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+        XCTAssertEqual(requestCount, 1)
+    }
+
+    func testFetchMaps429ToRateLimitedWithoutRetrying() async throws {
+        var requestCount = 0
+        let provider = makeProvider(
+            environment: { ["COPILOT_GITHUB_TOKEN": "copilot-env-token"] },
+            requestHandler: { request in
+                requestCount += 1
+                let response = HTTPURLResponse(url: try XCTUnwrap(request.url), statusCode: 429, httpVersion: nil, headerFields: nil)!
+                return (response, Data(#"{"message":"Too many requests"}"#.utf8))
+            }
+        )
+
+        do {
+            _ = try await provider.fetch()
+            XCTFail("Expected rateLimited")
+        } catch let error as ProviderError {
+            guard case .rateLimited = error else {
+                return XCTFail("Expected rateLimited, got \(error)")
+            }
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+        XCTAssertEqual(requestCount, 1)
+    }
+
     private func makeProvider(
         environment: @escaping () -> [String: String] = { [:] },
         keychainReader: @escaping (String, String?) -> String? = { _, _ in nil },

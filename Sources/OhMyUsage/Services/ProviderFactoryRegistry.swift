@@ -53,8 +53,14 @@ struct ProviderFactoryRegistry {
                     shell: DefaultShellCommandRunner()
                 )
             },
-            .gemini: { descriptor, _ in
-                GeminiProvider(descriptor: descriptor, shell: DefaultShellCommandRunner())
+            .gemini: { descriptor, dependencies in
+                // doc 8.4：OAuth refresh 成功后的新 token 必须持久化到 vault，
+                // 否则每次轮询都会重复刷新并丢弃结果（请求放大）。
+                GeminiProvider(
+                    descriptor: descriptor,
+                    shell: DefaultShellCommandRunner(),
+                    keychain: dependencies.keychain
+                )
             },
             .copilot: { descriptor, _ in
                 CopilotProvider(descriptor: descriptor, shell: DefaultShellCommandRunner())

@@ -28,8 +28,9 @@ struct RelayTokenChannelExecutor {
     ) async throws -> TokenChannelResult {
         let host = baseURL.host?.lowercased() ?? ""
         let credentialMode = relayConfig.balanceCredentialMode ?? .manualPreferred
-        let primaryBrowserAccessIntent: BrowserCredentialAccessIntent =
-            credentialMode == .browserOnly ? .interactiveImport : browserAccessIntent
+        // The access intent is passed through unchanged: background polls must
+        // never trigger live browser storage reads, and interactive imports only
+        // happen on the user-initiated force-refresh path.
         let primaryCandidates: [RelayRawTokenCandidate]
         switch credentialMode {
         case .manualPreferred:
@@ -37,21 +38,24 @@ struct RelayTokenChannelExecutor {
                 host: host,
                 includeSavedCredentials: true,
                 includeBrowserCredentials: false,
-                browserAccessIntent: primaryBrowserAccessIntent
+                browserAccessIntent: browserAccessIntent
             )
         case .browserPreferred:
             primaryCandidates = credentialResolver.resolveTokenCandidates(
                 host: host,
                 includeSavedCredentials: !forceRefresh,
                 includeBrowserCredentials: forceRefresh,
-                browserAccessIntent: primaryBrowserAccessIntent
+                browserAccessIntent: browserAccessIntent
             )
         case .browserOnly:
+            // Browser Only still prefers the vault credential persisted by the
+            // last successful import during background polls; live browser
+            // lookups stay behind force refresh and the gated recovery path.
             primaryCandidates = credentialResolver.resolveTokenCandidates(
                 host: host,
-                includeSavedCredentials: false,
+                includeSavedCredentials: !forceRefresh,
                 includeBrowserCredentials: true,
-                browserAccessIntent: primaryBrowserAccessIntent
+                browserAccessIntent: browserAccessIntent
             )
         }
 

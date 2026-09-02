@@ -6,17 +6,29 @@ final class ClaudeProvider: UsageProvider, @unchecked Sendable {
     private static let cache = FetchedAtOfficialSnapshotCache()
     private static let gate = SerialOfficialFetchGate()
     private static let webReadBackoff = WebOverlayRetryBackoff()
+    private static let webSegments = OfficialWebSegmentCache()
 
     private let cacheTTL: TimeInterval = 15
     private let webRetryBackoffInterval: TimeInterval = 15 * 60
+    /// Doc §8.4: web segments use independent TTLs — usage data stays short-lived,
+    /// overage/account metadata and the organization id live much longer.
+    private let webUsageSegmentTTL: TimeInterval = 15
+    private let webOverageSegmentTTL: TimeInterval = 10 * 60
+    private let webAccountSegmentTTL: TimeInterval = 6 * 60 * 60
+    private let organizationIDTTL: TimeInterval = 24 * 60 * 60
     private let session: URLSession
     private let keychain: any TokenCredentialStoring
     private let browserCookieService: any BrowserCookieDetecting
     private let webReadBackoff: WebOverlayRetryBackoff
     private let cache: any OfficialSnapshotCaching
     private let gate: any OfficialFetchGating
+    private let webSegments: OfficialWebSegmentCache
     private let homeDirectory: () -> String
     private let shell: any ShellCommandRunning
+    private let oauthVault: OfficialOAuthVaultStore
+    /// External `Claude Code-credentials` Keychain reads are restricted to explicit
+    /// import / auth-recovery flows; ordinary polling keeps this disabled.
+    private let allowsExternalKeychainReads: Bool
 
     let descriptor: ProviderDescriptor
 
@@ -28,8 +40,11 @@ final class ClaudeProvider: UsageProvider, @unchecked Sendable {
         webReadBackoff: WebOverlayRetryBackoff = ClaudeProvider.webReadBackoff,
         cache: any OfficialSnapshotCaching = ClaudeProvider.cache,
         gate: any OfficialFetchGating = ClaudeProvider.gate,
+        webSegments: OfficialWebSegmentCache? = nil,
         homeDirectory: @escaping () -> String = { NSHomeDirectory() },
-        shell: any ShellCommandRunning = DefaultShellCommandRunner()
+        shell: any ShellCommandRunning = DefaultShellCommandRunner(),
+        allowsExternalKeychainReads: Bool = false,
+        oauthVault: OfficialOAuthVaultStore? = nil
     ) {
         self.descriptor = descriptor
         self.session = session
@@ -38,8 +53,11 @@ final class ClaudeProvider: UsageProvider, @unchecked Sendable {
         self.webReadBackoff = webReadBackoff
         self.cache = cache
         self.gate = gate
+        self.webSegments = webSegments ?? ClaudeProvider.webSegments
         self.homeDirectory = homeDirectory
         self.shell = shell
+        self.allowsExternalKeychainReads = allowsExternalKeychainReads
+        self.oauthVault = oauthVault ?? OfficialOAuthVaultStore(keychain: keychain)
     }
 
     func fetch() async throws -> UsageSnapshot {
@@ -85,11 +103,29 @@ final class ClaudeProvider: UsageProvider, @unchecked Sendable {
             throw ProviderError.unauthorizedDetail("inference-only token cannot read Claude quota")
         }
 
+        var didRefreshBeforeRequest = false
         if needsRefresh(expiresAtMs: credentials.expiresAtMs) {
             credentials = try await refresh(credentials: credentials)
+            didRefreshBeforeRequest = true
         }
 
-        let (data, usageResponse) = try await requestOAuthUsage(accessToken: credentials.accessToken)
+        let data: [String: Any]
+        let usageResponse: HTTPURLResponse
+        do {
+            (data, usageResponse) = try await requestOAuthUsage(accessToken: credentials.accessToken)
+        } catch let error as ProviderError {
+            // Doc §8.4: a 401/403 triggers at most one refresh + one retry.
+            // If the pre-emptive refresh already ran (or no refresh token
+            // exists), the error propagates without another refresh attempt.
+            guard case .unauthorized = error,
+                  !didRefreshBeforeRequest,
+                  credentials.refreshToken?.isEmpty == false else {
+                throw error
+            }
+            credentials = try await refresh(credentials: credentials)
+            (data, usageResponse) = try await requestOAuthUsage(accessToken: credentials.accessToken)
+        }
+
         var snapshot = try Self.parseClaudeSnapshot(
             root: data,
             response: usageResponse,
@@ -99,8 +135,13 @@ final class ClaudeProvider: UsageProvider, @unchecked Sendable {
             planHint: credentials.subscriptionType
         )
 
-        if includeWebOverlay, let webSnapshot = try? await loadWebSnapshot(forceRefresh: forceRefresh) {
-            snapshot = OfficialProviderWebOverlayRuntime.merge(
+        // Doc §8.4: OAuth usage is the primary data. Skip the Web overlay
+        // entirely when the OAuth response is complete; otherwise the overlay
+        // only fills the missing slots and can never overwrite OAuth quota.
+        if includeWebOverlay,
+           !OfficialSnapshotOverlayFiller.isQuotaComplete(snapshot),
+           let webSnapshot = try? await loadWebSnapshot(forceRefresh: forceRefresh) {
+            snapshot = OfficialSnapshotOverlayFiller.fill(
                 primary: snapshot,
                 overlay: webSnapshot,
                 sourceLabel: "API+Web"
@@ -112,8 +153,9 @@ final class ClaudeProvider: UsageProvider, @unchecked Sendable {
     private func loadFromCLI(forceRefresh: Bool) async throws -> UsageSnapshot {
         let snapshot = try runClaudeCLIUsage()
         if descriptor.officialConfig?.webMode != .disabled,
+           !OfficialSnapshotOverlayFiller.isQuotaComplete(snapshot),
            let webSnapshot = try? await loadWebSnapshot(forceRefresh: forceRefresh) {
-            return OfficialProviderWebOverlayRuntime.merge(
+            return OfficialSnapshotOverlayFiller.fill(
                 primary: snapshot,
                 overlay: webSnapshot,
                 sourceLabel: "CLI+Web"
@@ -127,19 +169,31 @@ final class ClaudeProvider: UsageProvider, @unchecked Sendable {
     }
 
     private func loadCredentials() throws -> ClaudeCredentials {
-        let home = homeDirectory()
-        let path = "\(home)/.claude/.credentials.json"
-        if FileManager.default.fileExists(atPath: path),
-           let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
+        // Fixed read priority (Phase 1 §7.6): app vault → local credential files
+        // → external Keychain. The external `Claude Code-credentials` item is only
+        // readable on explicit import / auth-recovery flows, never in polling.
+        if let raw = oauthVault.readOAuthJSON(provider: .claude),
+           let data = raw.data(using: .utf8),
            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-           let credentials = parseClaudeCredentials(json: json, source: .file(path)) {
+           let credentials = parseClaudeCredentials(json: json, source: .vault, rawJSON: raw) {
             return credentials
         }
 
-        if let raw = SecurityCredentialReader.readGenericPassword(service: "Claude Code-credentials"),
+        let home = homeDirectory()
+        let path = "\(home)/.claude/.credentials.json"
+        if FileManager.default.fileExists(atPath: path),
+           let raw = try? String(contentsOf: URL(fileURLWithPath: path), encoding: .utf8),
            let data = raw.data(using: .utf8),
            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-           let credentials = parseClaudeCredentials(json: json, source: .keychain) {
+           let credentials = parseClaudeCredentials(json: json, source: .file(path), rawJSON: raw) {
+            return credentials
+        }
+
+        if allowsExternalKeychainReads,
+           let raw = SecurityCredentialReader.readGenericPassword(service: OfficialOAuthVaultStore.claudeExternalKeychainService),
+           let data = raw.data(using: .utf8),
+           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let credentials = parseClaudeCredentials(json: json, source: .keychain, rawJSON: raw) {
             return credentials
         }
 
@@ -152,14 +206,19 @@ final class ClaudeProvider: UsageProvider, @unchecked Sendable {
                 subscriptionType: nil,
                 scopes: [],
                 source: .environment,
-                inferenceOnly: true
+                inferenceOnly: true,
+                rawJSON: nil
             )
         }
 
         throw ProviderError.missingCredential("~/.claude/.credentials.json")
     }
 
-    private func parseClaudeCredentials(json: [String: Any], source: ClaudeCredentialSource) -> ClaudeCredentials? {
+    private func parseClaudeCredentials(
+        json: [String: Any],
+        source: ClaudeCredentialSource,
+        rawJSON: String? = nil
+    ) -> ClaudeCredentials? {
         guard let oauth = json["claudeAiOauth"] as? [String: Any],
               let accessToken = OfficialValueParser.string(oauth["accessToken"]) else {
             return nil
@@ -176,7 +235,8 @@ final class ClaudeProvider: UsageProvider, @unchecked Sendable {
             subscriptionType: subscriptionType,
             scopes: scopes,
             source: source,
-            inferenceOnly: inferenceOnly
+            inferenceOnly: inferenceOnly,
+            rawJSON: rawJSON
         )
     }
 
@@ -219,7 +279,31 @@ final class ClaudeProvider: UsageProvider, @unchecked Sendable {
         if case let .file(path) = credentials.source {
             persist(credentials: updated, path: path)
         }
+        updateVaultAfterRefresh(credentials: updated)
         return updated
+    }
+
+    /// Persists the refreshed normalized OAuth JSON into the app vault (Phase 1 §7.6).
+    /// Best effort: verification and the write happen inside the vault store, and the
+    /// local file remains the non-interactive fallback when the vault write fails.
+    private func updateVaultAfterRefresh(credentials: ClaudeCredentials) {
+        guard let baseRawJSON = credentials.rawJSON else { return }
+        guard let normalized = try? OfficialProfileSnapshotRuntime.mutateJSONObjectString(
+            baseRawJSON,
+            invalidResponseMessage: "invalid claude oauth json",
+            writingOptions: [.prettyPrinted, .sortedKeys],
+            mutate: { json in
+                var oauth = (json["claudeAiOauth"] as? [String: Any]) ?? [:]
+                oauth["accessToken"] = credentials.accessToken
+                oauth["refreshToken"] = credentials.refreshToken
+                oauth["expiresAt"] = credentials.expiresAtMs
+                oauth["subscriptionType"] = credentials.subscriptionType
+                json["claudeAiOauth"] = oauth
+            }
+        ) else {
+            return
+        }
+        oauthVault.saveOAuthJSON(provider: .claude, rawJSON: normalized)
     }
 
     private func persist(credentials: ClaudeCredentials, path: String) {
@@ -264,16 +348,27 @@ final class ClaudeProvider: UsageProvider, @unchecked Sendable {
 
     private func loadWebSnapshot(forceRefresh: Bool) async throws -> UsageSnapshot {
         let cookie = try await resolveClaudeCookieHeader(forceRefresh: forceRefresh)
+        let segmentIdentity = OfficialWebSegmentCache.credentialIdentity(for: cookie.header)
 
         if let token = extractCookieValue(name: "sessionKey", from: cookie.header),
            let oauthSnapshot = try? await loadWebOAuthSnapshot(token: token, source: cookie.source) {
             return oauthSnapshot
         }
 
-        guard let orgId = try await fetchClaudeOrganizationID(cookieHeader: cookie.header) else {
+        guard let orgId = try await organizationID(cookieHeader: cookie.header, segmentIdentity: segmentIdentity) else {
             throw ProviderError.invalidResponse("missing Claude organization")
         }
-        let usageRoot = try await requestClaudeWebJSON(path: "/api/organizations/\(orgId)/usage", cookieHeader: cookie.header)
+
+        // Doc §8.4: usage, overage and account metadata are cached separately
+        // with distinct keys and TTLs. Only the usage segment honors
+        // forceRefresh; long-lived metadata keeps its own TTL.
+        let usageRoot = try await cachedWebSegment(
+            key: "usage|\(segmentIdentity)",
+            ttl: webUsageSegmentTTL,
+            path: "/api/organizations/\(orgId)/usage",
+            cookieHeader: cookie.header,
+            forceRefresh: forceRefresh
+        )
         var snapshot = try Self.parseClaudeSnapshot(
             root: usageRoot,
             descriptor: descriptor,
@@ -281,15 +376,80 @@ final class ClaudeProvider: UsageProvider, @unchecked Sendable {
             accountLabel: nil,
             planHint: nil
         )
-        if let overage = try? await requestClaudeWebJSON(path: "/api/organizations/\(orgId)/overage_spend_limit", cookieHeader: cookie.header) {
+        if let overage = try? await cachedWebSegment(
+            key: "overage|\(segmentIdentity)",
+            ttl: webOverageSegmentTTL,
+            path: "/api/organizations/\(orgId)/overage_spend_limit",
+            cookieHeader: cookie.header,
+            forceRefresh: false
+        ) {
             applyOverage(root: overage, to: &snapshot)
         }
-        if let account = try? await requestClaudeWebJSON(path: "/api/account", cookieHeader: cookie.header),
-           let email = OfficialValueParser.string(account["email"]) {
+        if let account = try? await cachedWebSegment(
+            key: "account|\(segmentIdentity)",
+            ttl: webAccountSegmentTTL,
+            path: "/api/account",
+            cookieHeader: cookie.header,
+            forceRefresh: false
+        ), let email = OfficialValueParser.string(account["email"]) {
             snapshot.accountLabel = email
         }
         snapshot.extras["webCookieSource"] = cookie.source
         return snapshot
+    }
+
+    private func organizationID(
+        cookieHeader: String,
+        segmentIdentity: String
+    ) async throws -> String? {
+        let key = "org|\(segmentIdentity)"
+        if let cached = await webSegments.string(for: key) {
+            return cached
+        }
+        let root = try await requestClaudeWebAny(path: "/api/organizations", cookieHeader: cookieHeader)
+        let resolved = Self.organizationID(from: root)
+        if let resolved {
+            await webSegments.storeString(resolved, for: key, ttl: organizationIDTTL)
+        }
+        return resolved
+    }
+
+    static func organizationID(from root: Any) -> String? {
+        if let array = root as? [[String: Any]] {
+            for item in array {
+                if let value = OfficialValueParser.string(item["uuid"] ?? item["id"] ?? item["organization_uuid"]) {
+                    return value
+                }
+            }
+        }
+        if let dict = root as? [String: Any],
+           let items = dict["organizations"] as? [[String: Any]] {
+            for item in items {
+                if let value = OfficialValueParser.string(item["uuid"] ?? item["id"] ?? item["organization_uuid"]) {
+                    return value
+                }
+            }
+        }
+        return nil
+    }
+
+    private func cachedWebSegment(
+        key: String,
+        ttl: TimeInterval,
+        path: String,
+        cookieHeader: String,
+        forceRefresh: Bool
+    ) async throws -> [String: Any] {
+        if !forceRefresh,
+           let cached = await webSegments.data(for: key),
+           let root = (try? JSONSerialization.jsonObject(with: cached)) as? [String: Any] {
+            return root
+        }
+        let root = try await requestClaudeWebJSON(path: path, cookieHeader: cookieHeader)
+        if let payload = try? JSONSerialization.data(withJSONObject: root) {
+            await webSegments.store(payload, for: key, ttl: ttl)
+        }
+        return root
     }
 
     private func loadWebOAuthSnapshot(token: String, source: String) async throws -> UsageSnapshot {
@@ -333,26 +493,6 @@ final class ClaudeProvider: UsageProvider, @unchecked Sendable {
                 }
             )
         )
-    }
-
-    private func fetchClaudeOrganizationID(cookieHeader: String) async throws -> String? {
-        let root = try await requestClaudeWebAny(path: "/api/organizations", cookieHeader: cookieHeader)
-        if let array = root as? [[String: Any]] {
-            for item in array {
-                if let value = OfficialValueParser.string(item["uuid"] ?? item["id"] ?? item["organization_uuid"]) {
-                    return value
-                }
-            }
-        }
-        if let dict = root as? [String: Any],
-           let items = dict["organizations"] as? [[String: Any]] {
-            for item in items {
-                if let value = OfficialValueParser.string(item["uuid"] ?? item["id"] ?? item["organization_uuid"]) {
-                    return value
-                }
-            }
-        }
-        return nil
     }
 
     private func requestClaudeWebJSON(path: String, cookieHeader: String) async throws -> [String: Any] {
@@ -828,6 +968,7 @@ private struct ClaudeCredentials {
     var scopes: [String]
     var source: ClaudeCredentialSource
     var inferenceOnly: Bool
+    var rawJSON: String?
 
     var accountLabel: String? {
         nil
@@ -838,4 +979,5 @@ private enum ClaudeCredentialSource {
     case file(String)
     case keychain
     case environment
+    case vault
 }

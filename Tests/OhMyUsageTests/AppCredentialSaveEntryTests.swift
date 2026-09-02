@@ -56,6 +56,54 @@ final class AppCredentialSaveEntryTests: XCTestCase {
         XCTAssertFalse(viewModel.hasToken(for: provider))
     }
 
+    func testSaveCredentialInvalidatesProviderSnapshotsAndPersistedCache() throws {
+        let provider = ProviderDescriptor.defaultOfficialZai()
+        let config = AppConfig(providers: [provider])
+        let cacheURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("OhMyUsageCredentialSnapshotTests", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+            .appendingPathComponent("provider_snapshots.json")
+        let cache = PersistedSnapshotCache(fileURL: cacheURL)
+        let viewModel = makeViewModel(config: config, persistedSnapshotCache: cache)
+        let snapshot = UsageSnapshot(
+            source: provider.id,
+            status: .ok,
+            remaining: 10,
+            used: 90,
+            limit: 100,
+            unit: "%",
+            updatedAt: Date(),
+            note: "old account",
+            sourceLabel: "Test"
+        )
+        viewModel.providerRefreshModel.mutateProviderState { state in
+            state.snapshots[provider.id] = snapshot
+            state.errors[provider.id] = "old error"
+            state.consecutiveFailures[provider.id] = 2
+        }
+        cache.save(providerID: provider.id, snapshot: snapshot)
+
+        XCTAssertTrue(viewModel.saveCredential("new-zai-key", field: .providerToken(provider)))
+
+        XCTAssertNil(viewModel.snapshots[provider.id])
+        XCTAssertNil(viewModel.errors[provider.id])
+        XCTAssertTrue(cache.loadAll().isEmpty)
+    }
+
+    func testProviderTokenAffectsEveryProviderSharingCredentialSlot() {
+        let provider = ProviderDescriptor.defaultOfficialZai()
+        var sharedProvider = ProviderDescriptor.defaultOfficialZai()
+        sharedProvider.id = "shared-zai"
+        var unrelatedProvider = ProviderDescriptor.defaultOfficialOpenRouterCredits()
+        unrelatedProvider.id = "unrelated"
+
+        let affectedProviderIDs = AppCredentialField.providerToken(provider).affectedProviderIDs(
+            in: [provider, sharedProvider, unrelatedProvider]
+        )
+
+        XCTAssertEqual(affectedProviderIDs, [provider.id, sharedProvider.id])
+    }
+
     // MARK: - restart 条件
 
     func testShouldRestartPollingOnlyWhenPersistedAndPolicyRequests() {
@@ -80,13 +128,17 @@ final class AppCredentialSaveEntryTests: XCTestCase {
 
     // MARK: - helpers
 
-    private func makeViewModel(config: AppConfig) -> AppViewModel {
+    private func makeViewModel(
+        config: AppConfig,
+        persistedSnapshotCache: PersistedSnapshotCache? = nil
+    ) -> AppViewModel {
         AppViewModel(
             testingConfig: config,
             configurationRepository: StubCredentialSaveConfigurationRepository(initialConfig: config),
             appUpdateService: NoopCredentialSaveUpdateService(),
             keychain: KeychainService(storageURL: makeCredentialURL()),
-            settingsPersistenceStatusClearDelaySeconds: 0.05
+            settingsPersistenceStatusClearDelaySeconds: 0.05,
+            persistedSnapshotCache: persistedSnapshotCache
         )
     }
 

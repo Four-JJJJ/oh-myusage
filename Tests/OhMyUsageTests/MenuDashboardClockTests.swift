@@ -132,7 +132,7 @@ final class MenuDashboardClockTests: XCTestCase {
                         ],
                         errorText: nil,
                         isDisconnected: false,
-                        showsErrorHighlight: false
+                        highlightTone: nil
                     )
                 )
             ],

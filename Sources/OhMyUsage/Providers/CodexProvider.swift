@@ -21,6 +21,10 @@ final class CodexProvider: UsageProvider, @unchecked Sendable {
     private let gate: any OfficialFetchGating
     private let homeDirectory: () -> String
     private let environment: () -> [String: String]
+    private let oauthVault: OfficialOAuthVaultStore
+    /// External `Codex Auth` Keychain reads are restricted to explicit
+    /// import / auth-recovery flows; ordinary polling keeps this disabled.
+    private let allowsExternalKeychainReads: Bool
 
     init(
         descriptor: ProviderDescriptor,
@@ -31,7 +35,9 @@ final class CodexProvider: UsageProvider, @unchecked Sendable {
         cache: any OfficialSnapshotCaching = CodexProvider.cache,
         gate: any OfficialFetchGating = CodexProvider.gate,
         homeDirectory: @escaping () -> String = { NSHomeDirectory() },
-        environment: @escaping () -> [String: String] = { ProcessInfo.processInfo.environment }
+        environment: @escaping () -> [String: String] = { ProcessInfo.processInfo.environment },
+        allowsExternalKeychainReads: Bool = false,
+        oauthVault: OfficialOAuthVaultStore? = nil
     ) {
         self.descriptor = descriptor
         self.session = session
@@ -42,6 +48,8 @@ final class CodexProvider: UsageProvider, @unchecked Sendable {
         self.gate = gate
         self.homeDirectory = homeDirectory
         self.environment = environment
+        self.allowsExternalKeychainReads = allowsExternalKeychainReads
+        self.oauthVault = oauthVault ?? OfficialOAuthVaultStore(keychain: keychain)
     }
 
     func fetch() async throws -> UsageSnapshot {
@@ -108,6 +116,9 @@ final class CodexProvider: UsageProvider, @unchecked Sendable {
                 accountId: credentials.accountId
             )
         } catch let error as ProviderError {
+            // Doc §8.4: a 401/403 triggers at most one refresh + one retry.
+            // If the pre-emptive refresh already ran (or the retry 401s again),
+            // the error propagates without another refresh attempt.
             guard case .unauthorized = error, !didRefreshBeforeRequest else {
                 throw error
             }
@@ -132,8 +143,12 @@ final class CodexProvider: UsageProvider, @unchecked Sendable {
             fingerprint: Self.credentialFingerprint(credentials.accessToken)
         )
 
-        if includeWebOverlay, let webSnapshot = try? await loadWebSnapshot(forceRefresh: forceRefresh) {
-            snapshot = OfficialProviderWebOverlayRuntime.merge(
+        // Doc §8.4: skip the Web overlay entirely when the OAuth usage response
+        // is complete; otherwise the overlay only fills the missing slots.
+        if includeWebOverlay,
+           !OfficialSnapshotOverlayFiller.isQuotaComplete(snapshot),
+           let webSnapshot = try? await loadWebSnapshot(forceRefresh: forceRefresh) {
+            snapshot = OfficialSnapshotOverlayFiller.fill(
                 primary: snapshot,
                 overlay: webSnapshot,
                 sourceLabel: "API+Web"
@@ -149,8 +164,9 @@ final class CodexProvider: UsageProvider, @unchecked Sendable {
         let official = descriptor.officialConfig ?? ProviderDescriptor.defaultOfficialConfig(type: .codex)
 
         if shouldIncludeWebOverlay(for: official),
+           !OfficialSnapshotOverlayFiller.isQuotaComplete(snapshot),
            let webSnapshot = try? await loadWebSnapshot(forceRefresh: forceRefresh) {
-            snapshot = OfficialProviderWebOverlayRuntime.merge(
+            snapshot = OfficialSnapshotOverlayFiller.fill(
                 primary: snapshot,
                 overlay: webSnapshot,
                 sourceLabel: "CLI-RPC+Web"
@@ -189,27 +205,43 @@ final class CodexProvider: UsageProvider, @unchecked Sendable {
     }
 
     private func loadCredentials() throws -> CodexCredentials {
+        // Fixed read priority (Phase 1 §7.6): app vault → local credential files
+        // → external Keychain. The external `Codex Auth` item is only readable on
+        // explicit import / auth-recovery flows, never in ordinary polling.
+        if let raw = oauthVault.readOAuthJSON(provider: .codex),
+           let data = raw.data(using: .utf8),
+           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let credentials = parseCredentials(json: json, source: .vault, rawJSON: raw) {
+            return credentials
+        }
+
         for path in resolveAuthPaths() {
             guard FileManager.default.fileExists(atPath: path) else { continue }
-            guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
+            guard let raw = try? String(contentsOf: URL(fileURLWithPath: path), encoding: .utf8),
+                  let data = raw.data(using: .utf8),
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let credentials = parseCredentials(json: json, source: .file(path)) else {
+                  let credentials = parseCredentials(json: json, source: .file(path), rawJSON: raw) else {
                 continue
             }
             return credentials
         }
 
-        if let raw = SecurityCredentialReader.readGenericPassword(service: "Codex Auth"),
+        if allowsExternalKeychainReads,
+           let raw = SecurityCredentialReader.readGenericPassword(service: OfficialOAuthVaultStore.codexExternalKeychainService),
            let data = raw.data(using: .utf8),
            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-           let credentials = parseCredentials(json: json, source: .keychain) {
+           let credentials = parseCredentials(json: json, source: .keychain, rawJSON: raw) {
             return credentials
         }
 
         throw ProviderError.missingCredential("~/.codex/auth.json")
     }
 
-    private func parseCredentials(json: [String: Any], source: CodexCredentialSource) -> CodexCredentials? {
+    private func parseCredentials(
+        json: [String: Any],
+        source: CodexCredentialSource,
+        rawJSON: String? = nil
+    ) -> CodexCredentials? {
         guard let tokens = json["tokens"] as? [String: Any] else { return nil }
         guard let accessToken = OfficialValueParser.string(tokens["access_token"] ?? tokens["accessToken"]),
               !accessToken.isEmpty else {
@@ -225,7 +257,8 @@ final class CodexProvider: UsageProvider, @unchecked Sendable {
             accountId: accountId,
             idToken: idToken,
             lastRefresh: lastRefresh,
-            source: source
+            source: source,
+            rawJSON: rawJSON
         )
     }
 
@@ -271,19 +304,35 @@ final class CodexProvider: UsageProvider, @unchecked Sendable {
         return components.joined(separator: "|")
     }
 
-    private func currentCredentialCacheIdentity() -> String? {
-        guard let credentials = try? loadCredentials() else { return nil }
+    /// Single canonical credential identity for cache keys (doc §8.4).
+    /// `account_id` and the id_token subject identify the same account, so they
+    /// are no longer both counted into the cache key: the account id wins and
+    /// the subject is only used as a fallback when no account id exists. The
+    /// access-token fingerprint stays as the credential-generation component.
+    static func credentialCacheIdentity(
+        accountId: String?,
+        accountSubject: String?,
+        accessTokenFingerprint: String?
+    ) -> String? {
         var components: [String] = []
-        if let accountID = CodexIdentity.trimmed(credentials.accountId) {
+        if let accountID = CodexIdentity.trimmed(accountId) {
             components.append("account=\(accountID)")
-        }
-        if let subject = CodexIdentity.trimmed(credentials.accountSubject) {
+        } else if let subject = CodexIdentity.trimmed(accountSubject) {
             components.append("subject=\(subject)")
         }
-        if let fingerprint = Self.credentialFingerprint(credentials.accessToken) {
+        if let fingerprint = CodexIdentity.trimmed(accessTokenFingerprint) {
             components.append("fingerprint=\(fingerprint)")
         }
         return components.isEmpty ? nil : components.joined(separator: ",")
+    }
+
+    private func currentCredentialCacheIdentity() -> String? {
+        guard let credentials = try? loadCredentials() else { return nil }
+        return Self.credentialCacheIdentity(
+            accountId: credentials.accountId,
+            accountSubject: credentials.accountSubject,
+            accessTokenFingerprint: Self.credentialFingerprint(credentials.accessToken)
+        )
     }
 
     private func currentManualCookieCacheIdentity(for official: OfficialProviderConfig) -> String? {
@@ -329,8 +378,33 @@ final class CodexProvider: UsageProvider, @unchecked Sendable {
         if case let .file(path) = credentials.source {
             persist(credentials: updated, toFile: path)
         }
+        updateVaultAfterRefresh(credentials: updated)
 
         return updated
+    }
+
+    /// Persists the refreshed normalized OAuth JSON into the app vault (Phase 1 §7.6).
+    /// Best effort: verification and the write happen inside the vault store, and the
+    /// local file remains the non-interactive fallback when the vault write fails.
+    private func updateVaultAfterRefresh(credentials: CodexCredentials) {
+        guard let baseRawJSON = credentials.rawJSON else { return }
+        guard let normalized = try? OfficialProfileSnapshotRuntime.mutateJSONObjectString(
+            baseRawJSON,
+            invalidResponseMessage: "invalid codex oauth json",
+            writingOptions: [.prettyPrinted, .sortedKeys],
+            mutate: { json in
+                var tokens = (json["tokens"] as? [String: Any]) ?? [:]
+                tokens["access_token"] = credentials.accessToken
+                tokens["refresh_token"] = credentials.refreshToken
+                tokens["account_id"] = credentials.accountId
+                tokens["id_token"] = credentials.idToken
+                json["tokens"] = tokens
+                json["last_refresh"] = ISO8601DateFormatter().string(from: credentials.lastRefresh ?? Date())
+            }
+        ) else {
+            return
+        }
+        oauthVault.saveOAuthJSON(provider: .codex, rawJSON: normalized)
     }
 
     private func persist(credentials: CodexCredentials, toFile path: String) {
@@ -796,6 +870,7 @@ private struct CodexCredentials {
     var idToken: String?
     var lastRefresh: Date?
     var source: CodexCredentialSource
+    var rawJSON: String?
 
     var accountLabel: String? {
         guard let idToken else { return nil }
@@ -811,6 +886,7 @@ private struct CodexCredentials {
 private enum CodexCredentialSource {
     case file(String)
     case keychain
+    case vault
 }
 
 private struct CodexAccountReadResult: Decodable {

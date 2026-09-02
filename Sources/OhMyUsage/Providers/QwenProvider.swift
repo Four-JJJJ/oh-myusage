@@ -28,6 +28,30 @@ final class QwenProvider: UsageProvider, @unchecked Sendable {
         let accountLabel: String?
     }
 
+    /// Resolution outcome for `GET /tool/user/info.json` (plan §8.4 Qwen):
+    /// `fromCache` distinguishes a reused session context from a live fetch so
+    /// the gateway retry logic only kicks in when a stale `sec_token` is the
+    /// likely culprit.
+    private struct SessionContextResolution {
+        let context: SessionContext
+        let fromCache: Bool
+    }
+
+    // Plan §8.4: `sec_token` and the account label are cached independently
+    // with different keys and TTLs. Both TTLs come from the Qwen fetch plan
+    // (`ProviderFetchPlanRegistry`): the short-lived `sec_token` follows
+    // `activeTTL` (300s, aligned with the web-only provider refresh cadence)
+    // and the slowly changing account label follows `metadataTTL` (24h).
+    // Entries are namespaced per descriptor and per *irreversible cookie
+    // fingerprint*, so the cookie header itself never enters the cache and
+    // different accounts never share entries.
+    private static let sessionSecTokenCache = ProviderValueCache<String>(
+        ttl: ProviderFetchPlanRegistry().plan(for: .qwen).activeTTL
+    )
+    private static let sessionAccountLabelCache = ProviderValueCache<String?>(
+        ttl: ProviderFetchPlanRegistry().plan(for: .qwen).metadataTTL
+    )
+
     private let session: URLSession
     private let keychain: any TokenCredentialStoring
     private let browserCookieService: any BrowserCookieDetecting
@@ -61,8 +85,33 @@ final class QwenProvider: UsageProvider, @unchecked Sendable {
         }
 
         let cookie = try await resolveCookieHeader(forceRefresh: forceRefresh)
-        let context = try await fetchSessionContext(cookieHeader: cookie.header)
+        return try await performSnapshotFetch(cookie: cookie)
+    }
 
+    /// Builds the snapshot for one resolved cookie, reusing the cached session
+    /// context while the cookie fingerprint is unchanged (plan §8.4).
+    private func performSnapshotFetch(cookie: BrowserCookieHeader) async throws -> UsageSnapshot {
+        let fingerprint = CredentialFingerprint.sha256Hex(cookie.header)
+        let resolution = try await resolveSessionContext(cookieHeader: cookie.header, fingerprint: fingerprint)
+
+        do {
+            return try await buildSnapshot(cookie: cookie, context: resolution.context)
+        } catch let error as ProviderError {
+            // The cookie did not change, so a cached `sec_token` that the
+            // server no longer accepts is the likely culprit. Drop the cached
+            // session context, fetch a fresh one and retry the gateway exactly
+            // once; a context that was just fetched live failing again is a
+            // real auth failure and must not loop.
+            guard resolution.fromCache, Self.isAuthClassError(error) else {
+                throw error
+            }
+            Self.invalidateSessionContext(descriptorID: descriptor.id, fingerprint: fingerprint)
+            let fresh = try await resolveSessionContext(cookieHeader: cookie.header, fingerprint: fingerprint)
+            return try await buildSnapshot(cookie: cookie, context: fresh.context)
+        }
+    }
+
+    private func buildSnapshot(cookie: BrowserCookieHeader, context: SessionContext) async throws -> UsageSnapshot {
         var snapshot: UsageSnapshot
         switch descriptor.type {
         case .qwenBalance:
@@ -72,6 +121,54 @@ final class QwenProvider: UsageProvider, @unchecked Sendable {
         }
         snapshot.extras["webCookieSource"] = cookie.source
         return snapshot
+    }
+
+    // MARK: - Session / sec_token caching
+
+    internal static func sessionCacheKey(kind: String, descriptorID: String, fingerprint: String) -> String {
+        "qwen|session|\(kind)|\(descriptorID)|\(fingerprint)"
+    }
+
+    static func invalidateSessionContext(descriptorID: String, fingerprint: String) {
+        sessionSecTokenCache.removeValue(
+            forKey: sessionCacheKey(kind: "secToken", descriptorID: descriptorID, fingerprint: fingerprint)
+        )
+        sessionAccountLabelCache.removeValue(
+            forKey: sessionCacheKey(kind: "accountLabel", descriptorID: descriptorID, fingerprint: fingerprint)
+        )
+    }
+
+    private static func isAuthClassError(_ error: ProviderError) -> Bool {
+        switch error {
+        case .unauthorized, .unauthorizedDetail:
+            return true
+        default:
+            return false
+        }
+    }
+
+    /// Serves `sec_token` and the account label from their independent caches
+    /// while the cookie fingerprint is unchanged; otherwise performs the single
+    /// `user/info.json` round-trip and repopulates both caches. The label cache
+    /// is long-lived but never outlives the `sec_token` entry it came with, so
+    /// a missing label entry also triggers one refresh per label TTL at most.
+    private func resolveSessionContext(cookieHeader: String, fingerprint: String) async throws -> SessionContextResolution {
+        let secTokenKey = Self.sessionCacheKey(kind: "secToken", descriptorID: descriptor.id, fingerprint: fingerprint)
+        let accountLabelKey = Self.sessionCacheKey(kind: "accountLabel", descriptorID: descriptor.id, fingerprint: fingerprint)
+
+        let cachedSecToken = Self.sessionSecTokenCache.value(for: secTokenKey)
+        let cachedAccountLabel = Self.sessionAccountLabelCache.value(for: accountLabelKey)
+        if let secToken = cachedSecToken, let cachedLabelEntry = cachedAccountLabel {
+            return SessionContextResolution(
+                context: SessionContext(secToken: secToken, accountLabel: cachedLabelEntry),
+                fromCache: true
+            )
+        }
+
+        let context = try await fetchSessionContext(cookieHeader: cookieHeader)
+        Self.sessionSecTokenCache.store(context.secToken, for: secTokenKey)
+        Self.sessionAccountLabelCache.store(context.accountLabel, for: accountLabelKey)
+        return SessionContextResolution(context: context, fromCache: false)
     }
 
     // MARK: - Cookie

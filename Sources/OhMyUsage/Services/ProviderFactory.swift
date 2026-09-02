@@ -13,6 +13,7 @@ extension ProviderFactorying {
 
 final class ProviderFactory: ProviderFactorying {
     private let keychain: KeychainService
+    private let credentialBroker: CredentialBroker
     private let kimiCookieService: KimiBrowserCookieService
     private let browserCookieService: BrowserCookieService
     private let browserCredentialService: BrowserCredentialService
@@ -20,12 +21,14 @@ final class ProviderFactory: ProviderFactorying {
 
     init(
         keychain: KeychainService,
+        credentialBroker: CredentialBroker? = nil,
         kimiCookieService: KimiBrowserCookieService = KimiBrowserCookieService(),
         browserCookieService: BrowserCookieService = BrowserCookieService(),
         browserCredentialService: BrowserCredentialService? = nil,
         registry: ProviderFactoryRegistry = ProviderFactoryRegistry()
     ) {
         self.keychain = keychain
+        self.credentialBroker = credentialBroker ?? CredentialBroker(keychain: keychain)
         self.kimiCookieService = kimiCookieService
         self.browserCookieService = browserCookieService
         self.browserCredentialService = browserCredentialService ?? BrowserCredentialService(
@@ -39,7 +42,7 @@ final class ProviderFactory: ProviderFactorying {
         registry.makeProvider(
             for: descriptor,
             dependencies: ProviderFactoryRegistry.Dependencies(
-                keychain: keychain,
+                keychain: credentialBroker,
                 kimiCookieService: kimiCookieService,
                 browserCookieService: browserCookieService,
                 browserCredentialService: browserCredentialService

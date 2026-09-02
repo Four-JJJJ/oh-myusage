@@ -107,6 +107,9 @@ final class WindsurfProvider: UsageProvider, @unchecked Sendable {
         if http.statusCode == 401 || http.statusCode == 403 {
             throw ProviderError.unauthorized
         }
+        if http.statusCode == 429 {
+            throw ProviderError.rateLimited
+        }
         guard (200...299).contains(http.statusCode) else {
             throw ProviderError.invalidResponse("Windsurf http \(http.statusCode)")
         }

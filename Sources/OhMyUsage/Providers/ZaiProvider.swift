@@ -1,3 +1,4 @@
+import CryptoKit
 import OhMyUsageDomain
 import Foundation
 import OhMyUsageProviders
@@ -6,50 +7,113 @@ final class ZaiProvider: UsageProvider, @unchecked Sendable {
     static let balanceKeychainAccount = "official/zhipu/api-key"
     static let codingPlanKeychainAccount = "official/zhipu/coding-api-key"
 
+    private static let snapshotCache = SnapshotTimestampOfficialSnapshotCache()
+    private static let gate = PassthroughOfficialFetchGate()
+    private static let subscriptionCache = ZaiSubscriptionMetadataCache()
+
+    /// Quota / balance snapshot TTL. The primary data is re-verified on every
+    /// refresh; subscription metadata below uses its own longer TTL.
+    private let quotaCacheTTL: TimeInterval
+    /// Subscription metadata TTL — deliberately longer than `quotaCacheTTL`
+    /// (§8.4): the slow-changing plan metadata is not refetched per refresh.
+    static let subscriptionMetadataTTL: TimeInterval = 30 * 60
+
     private let session: URLSession
     private let localJSONReader: any LocalJSONFileReading
     private let keychain: (any TokenCredentialStoring)?
+    private let cache: any OfficialSnapshotCaching
+    private let gate: any OfficialFetchGating
+    private let subscriptionCache: ZaiSubscriptionMetadataCache
+    private let environment: [String: String]
     let descriptor: ProviderDescriptor
 
     init(
         descriptor: ProviderDescriptor,
         session: URLSession = .shared,
         keychain: (any TokenCredentialStoring)? = nil,
-        localJSONReader: any LocalJSONFileReading = DefaultLocalJSONFileReader()
+        localJSONReader: any LocalJSONFileReading = DefaultLocalJSONFileReader(),
+        cache: any OfficialSnapshotCaching = ZaiProvider.snapshotCache,
+        gate: any OfficialFetchGating = ZaiProvider.gate,
+        subscriptionCache: ZaiSubscriptionMetadataCache = ZaiProvider.subscriptionCache,
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        quotaCacheTTL: TimeInterval = 15
     ) {
         self.descriptor = descriptor
         self.session = session
         self.keychain = keychain
         self.localJSONReader = localJSONReader
+        self.cache = cache
+        self.gate = gate
+        self.subscriptionCache = subscriptionCache
+        self.environment = environment
+        self.quotaCacheTTL = quotaCacheTTL
     }
 
     func fetch() async throws -> UsageSnapshot {
+        try await fetch(forceRefresh: false)
+    }
+
+    func fetch(forceRefresh: Bool) async throws -> UsageSnapshot {
         let official = descriptor.officialConfig ?? ProviderDescriptor.defaultOfficialConfig(type: descriptor.type)
         guard official.sourceMode == .auto || official.sourceMode == .api else {
             throw ProviderError.unavailable("Z.ai 官方来源当前仅支持 API 检测")
         }
 
+        let apiKey = try resolveAPIKey()
         switch descriptor.type {
         case .zaiBalance:
-            return try await fetchBalanceSnapshot()
+            // Coding Plan 与 API Balance 使用不同缓存键（§8.4）。
+            return try await OfficialProviderFetchRuntime.fetch(
+                forceRefresh: forceRefresh,
+                cacheLookupKey: Self.balanceSnapshotCacheKey(descriptor: descriptor, apiKey: apiKey),
+                ttl: quotaCacheTTL,
+                cache: cache,
+                gate: gate,
+                load: { [self] in try await fetchBalanceSnapshot(apiKey: apiKey) }
+            )
         default:
-            return try await fetchCodingPlanSnapshot()
+            return try await OfficialProviderFetchRuntime.fetch(
+                forceRefresh: forceRefresh,
+                cacheLookupKey: Self.codingPlanSnapshotCacheKey(descriptor: descriptor, apiKey: apiKey),
+                ttl: quotaCacheTTL,
+                cache: cache,
+                gate: gate,
+                load: { [self] in try await fetchCodingPlanSnapshot(apiKey: apiKey) }
+            )
         }
     }
 
     /// GLM Coding Plan 订阅额度：5h / Weekly 窗口。
-    private func fetchCodingPlanSnapshot() async throws -> UsageSnapshot {
-        let apiKey = try resolveAPIKey()
+    private func fetchCodingPlanSnapshot(apiKey: String) async throws -> UsageSnapshot {
         let quotaRoot = try await codingPlanRequest(path: "/api/monitor/usage/quota/limit", apiKey: apiKey)
-        // Plan metadata is optional. A temporary failure or upstream removal of
-        // this endpoint must not hide otherwise valid quota data.
-        let subscriptionRoot = (try? await codingPlanRequest(path: "/api/biz/subscription/list", apiKey: apiKey)) ?? [:]
-        return try Self.parseSnapshot(subscriptionRoot: subscriptionRoot, quotaRoot: quotaRoot, descriptor: descriptor)
+
+        // Subscription metadata is optional and cached under its own key/TTL.
+        // A temporary failure or upstream removal of this endpoint must not
+        // hide otherwise valid quota data: fall back to stale metadata and
+        // surface the partial failure via snapshot.diagnosticCode.
+        let subscriptionKey = Self.subscriptionCacheKey(descriptor: descriptor, apiKey: apiKey)
+        var metadata = await subscriptionCache.metadataIfFresh(forKey: subscriptionKey)
+        var diagnosticCode: String?
+        if metadata == nil {
+            do {
+                let subscriptionRoot = try await codingPlanRequest(path: "/api/biz/subscription/list", apiKey: apiKey)
+                let parsed = Self.subscriptionMetadata(from: subscriptionRoot)
+                await subscriptionCache.store(parsed, forKey: subscriptionKey)
+                metadata = parsed
+            } catch {
+                metadata = await subscriptionCache.metadataAny(forKey: subscriptionKey)
+                diagnosticCode = Self.partialFailureDiagnosticCode(for: error)
+            }
+        }
+
+        var snapshot = try Self.parseSnapshot(subscription: metadata, quotaRoot: quotaRoot, descriptor: descriptor)
+        snapshot.diagnosticCode = diagnosticCode
+        return snapshot
     }
 
     /// Coding Plan key 可能产自国内站（open.bigmodel.cn）或国际站（api.z.ai），
-    /// 两站镜像了同一组查询端点，只有站点自己认得自家的 key。按主站点优先、
-    /// 鉴权/路由类失败时切换镜像站重试一次。
+    /// 两站镜像了同一组查询端点，只有站点自己认得自家的 key。按主站点优先，
+    /// 普通失败最多切换镜像重试一次；429 直接停止，不切换镜像继续请求。
     private func codingPlanRequest(path: String, apiKey: String) async throws -> [String: Any] {
         var lastError: ProviderError = .invalidResponse("Z.ai request failed")
         for host in Self.codingPlanHosts(primary: descriptor.baseURL ?? defaultBaseURL) {
@@ -83,8 +147,7 @@ final class ZaiProvider: UsageProvider, @unchecked Sendable {
     }
 
     /// 智谱开放平台按量付费余额（bigmodel.cn 与 api.z.ai 同构）。
-    private func fetchBalanceSnapshot() async throws -> UsageSnapshot {
-        let apiKey = try resolveAPIKey()
+    private func fetchBalanceSnapshot(apiKey: String) async throws -> UsageSnapshot {
         // 原 `/api/paas/v4/user/balance` 已随控制台改版下线（两站均 404）。
         // 现网可用的是控制台账户报表接口，API Key 直接鉴权，字段见解析处注释。
         let root = try await codingPlanRequest(
@@ -96,7 +159,7 @@ final class ZaiProvider: UsageProvider, @unchecked Sendable {
 
     private func resolveAPIKey() throws -> String {
         if let discovered = Self.discoverLocalAPIKey(
-            environment: ProcessInfo.processInfo.environment,
+            environment: environment,
             localJSONReader: localJSONReader
         ) {
             return discovered
@@ -242,6 +305,42 @@ final class ZaiProvider: UsageProvider, @unchecked Sendable {
         apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    // MARK: - Cache keys (§8.4)
+
+    /// Stable, non-reversible account fingerprint. Cache keys are scoped per
+    /// account so cached data is never reused across API keys (§8.5).
+    internal static func accountFingerprint(_ apiKey: String) -> String {
+        let digest = SHA256.hash(data: Data(apiKey.utf8))
+        return digest.prefix(8).map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// GLM Coding Plan quota snapshot key. Distinct from the API Balance key
+    /// even when both descriptors share an id.
+    internal static func codingPlanSnapshotCacheKey(descriptor: ProviderDescriptor, apiKey: String) -> String {
+        "\(descriptor.id)|coding-plan|account=\(accountFingerprint(apiKey))"
+    }
+
+    /// 智谱按量付费余额快照键（与 Coding Plan 不同键）。
+    internal static func balanceSnapshotCacheKey(descriptor: ProviderDescriptor, apiKey: String) -> String {
+        "\(descriptor.id)|balance|account=\(accountFingerprint(apiKey))"
+    }
+
+    /// Subscription metadata key — separate from both snapshot keys with its
+    /// own (longer) TTL.
+    internal static func subscriptionCacheKey(descriptor: ProviderDescriptor, apiKey: String) -> String {
+        "\(descriptor.id)|subscription|account=\(accountFingerprint(apiKey))"
+    }
+
+    /// Maps a subscription metadata failure onto the app's existing fetch-health
+    /// diagnostic vocabulary (single classification model; see
+    /// `AppProviderRefreshCoordinator.classifyFetchHealth`). The code is stored
+    /// on the successful snapshot's `diagnosticCode` field.
+    private static func partialFailureDiagnosticCode(for error: Error) -> String {
+        AppProviderRefreshCoordinator.diagnosticCode(
+            for: AppProviderRefreshCoordinator.classifyFetchHealth(error)
+        )
+    }
+
     /// 智谱开放平台按量付费余额。
     ///
     /// 现网接口 `GET /api/biz/account/query-customer-account-report` 返回
@@ -338,13 +437,32 @@ final class ZaiProvider: UsageProvider, @unchecked Sendable {
         quotaRoot: [String: Any],
         descriptor: ProviderDescriptor
     ) throws -> UsageSnapshot {
-        let subscription = ((subscriptionRoot["data"] as? [Any]) ?? [])
-            .compactMap { $0 as? [String: Any] }
-            .first(where: { ($0["inCurrentPeriod"] as? Bool) == true })
-            ?? ((subscriptionRoot["data"] as? [Any]) ?? []).compactMap { $0 as? [String: Any] }.first
+        try parseSnapshot(
+            subscription: subscriptionMetadata(from: subscriptionRoot),
+            quotaRoot: quotaRoot,
+            descriptor: descriptor
+        )
+    }
 
-        let plan = OfficialValueParser.string(subscription?["productName"]) ?? "unknown"
-        let monthlyReset = parseDateOnly(OfficialValueParser.string(subscription?["nextRenewTime"]))
+    /// Extracts the optional plan metadata from a `/api/biz/subscription/list`
+    /// response. The result is a small Sendable value so it can live in the
+    /// subscription metadata cache.
+    internal static func subscriptionMetadata(from subscriptionRoot: [String: Any]) -> ZaiSubscriptionMetadata {
+        let entries = ((subscriptionRoot["data"] as? [Any]) ?? []).compactMap { $0 as? [String: Any] }
+        let subscription = entries.first(where: { ($0["inCurrentPeriod"] as? Bool) == true }) ?? entries.first
+        return ZaiSubscriptionMetadata(
+            planName: OfficialValueParser.string(subscription?["productName"]),
+            nextRenewTime: parseDateOnly(OfficialValueParser.string(subscription?["nextRenewTime"]))
+        )
+    }
+
+    internal static func parseSnapshot(
+        subscription: ZaiSubscriptionMetadata?,
+        quotaRoot: [String: Any],
+        descriptor: ProviderDescriptor
+    ) throws -> UsageSnapshot {
+        let plan = subscription?.planName ?? "unknown"
+        let monthlyReset = subscription?.nextRenewTime
         let limits = ((quotaRoot["data"] as? [String: Any])?["limits"] as? [Any])?.compactMap { $0 as? [String: Any] } ?? []
 
         var windows: [UsageQuotaWindow] = []
@@ -429,5 +547,54 @@ final class ZaiProvider: UsageProvider, @unchecked Sendable {
     private static func millisecondDate(_ value: Any?) -> Date? {
         guard let raw = OfficialValueParser.double(value) else { return nil }
         return Date(timeIntervalSince1970: raw / 1000)
+    }
+}
+
+/// Optional Z.ai subscription metadata (plan name, renewal date) extracted
+/// from `/api/biz/subscription/list`. Kept as a small Sendable value so it can
+/// be cached independently of the quota snapshot (§8.4).
+struct ZaiSubscriptionMetadata: Equatable, Sendable {
+    var planName: String?
+    var nextRenewTime: Date?
+}
+
+/// Process-wide cache for `ZaiSubscriptionMetadata`, keyed per data kind and
+/// account. Quota snapshots live in the snapshot cache under their own keys;
+/// subscription metadata uses this cache with a longer TTL so quota refreshes
+/// never re-issue the subscription request (§8.4).
+actor ZaiSubscriptionMetadataCache {
+    private struct Entry {
+        let metadata: ZaiSubscriptionMetadata
+        let fetchedAt: Date
+    }
+
+    private var entries: [String: Entry] = [:]
+    private let ttl: TimeInterval
+    private let now: @Sendable () -> Date
+
+    init(
+        ttl: TimeInterval = ZaiProvider.subscriptionMetadataTTL,
+        now: @escaping @Sendable () -> Date = { Date() }
+    ) {
+        self.ttl = max(0, ttl)
+        self.now = now
+    }
+
+    func metadataIfFresh(forKey key: String) -> ZaiSubscriptionMetadata? {
+        guard let entry = entries[key],
+              now().timeIntervalSince(entry.fetchedAt) <= ttl else {
+            return nil
+        }
+        return entry.metadata
+    }
+
+    /// Stale-allowed read, used when the subscription endpoint fails: cached
+    /// plan metadata must not be dropped just because a refresh failed.
+    func metadataAny(forKey key: String) -> ZaiSubscriptionMetadata? {
+        entries[key]?.metadata
+    }
+
+    func store(_ metadata: ZaiSubscriptionMetadata, forKey key: String) {
+        entries[key] = Entry(metadata: metadata, fetchedAt: now())
     }
 }

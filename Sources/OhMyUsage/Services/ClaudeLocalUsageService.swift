@@ -9,7 +9,10 @@ final class ClaudeLocalUsageService {
     private let onProjectFileParsed: ((String) -> Void)?
 
     private static let projectFileEnumerationCache = LocalUsageFileEnumerationCache()
-    private static let parsedProjectFileCache = LocalUsageParsedFileCache<LocalUsageEvent>(maxEntries: 2_048)
+    private static let parsedProjectFileCache = LocalUsageParsedFileCache<LocalUsageEvent>(
+        maxEntries: RuntimeDiagnosticsLimits.localUsageParsedFileCacheMaxEntries,
+        maxCachedValues: RuntimeDiagnosticsLimits.localUsageParsedFileCacheMaxCachedValues
+    )
 
     init(
         fileManager: FileManager = .default,

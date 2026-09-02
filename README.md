@@ -9,6 +9,18 @@ oh-myusage 把官方订阅额度、模型使用窗口、第三方中转余额、
 
 [下载最新版本](https://github.com/Four-JJJJ/oh-myusage/releases/latest) · [安装说明](docs/DOWNLOAD.md) · [支持的服务](docs/PROVIDERS.md) · [扩展指南](docs/EXTENDING.md) · [发布清单](docs/RELEASE_CHECKLIST.md) · [English](docs/README.en.md)
 
+## V2.5.0 更新
+
+V2.5.0 聚焦官方账号授权、低功耗刷新与菜单栏状态可信度，让常驻查询更少打扰、更容易判断。
+
+| 方向 | 改进 |
+| --- | --- |
+| 凭证与授权 | 统一 Keychain / OAuth 凭证路径，减少重复授权；官方账号凭证保存、导入和切换行为更一致 |
+| 刷新与缓存 | 支持缓存优先展示、持久快照、按可见性调度刷新和网络可达性判断，降低后台无效请求并保留可用的历史状态 |
+| 状态可信度 | 菜单卡片更明确地区分实时、缓存、估算与鉴权异常等状态，额度与账户信息更易判断 |
+| 菜单栏展示 | 恢复额度进度条绿 / 橙 / 红的健康语义；移除菜单卡片中冗余的「官方实时 / Live」文字，保留必要的状态提示 |
+| 发布与安装 | 强化无 Apple Developer ID 的 GitHub DMG / ZIP 发布校验、更新清单与未公证安装说明 |
+
 ## V2.4.6 更新
 
 V2.4.6 新增千问AI平台官方来源（Qwen Coding Plan 限额卡与 Qwen (API) 余额卡），并统一所有 API 余额卡的设置页展示。
@@ -148,6 +160,8 @@ oh-myusage 的目标是让这些信息变得可扫读、可诊断、可维护：
 5. 如果仍被拦截，到“系统设置 -> 隐私与安全性”里选择“仍要打开”
 
 更完整的安装和排障步骤见 [docs/DOWNLOAD.md](docs/DOWNLOAD.md)。
+
+GitHub 分发的构建未使用 Apple Developer ID 签名、未经公证（notarization），首次打开会被 Gatekeeper 拦截，升级后可能需要重新确认 Keychain 访问：详见[未签名构建安装说明](docs/INSTALL_UNSIGNED.md)。
 
 ### 系统要求
 

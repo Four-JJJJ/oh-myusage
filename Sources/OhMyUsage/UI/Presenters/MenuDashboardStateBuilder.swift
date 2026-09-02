@@ -226,6 +226,27 @@ enum MenuDashboardStateBuilder {
                 language: language,
                 now: now
             )
+            let baseSubtitle: String?
+            if provider.isRelay {
+                baseSubtitle = MenuSubtitlePresenter.relayQuotaSubtitle(
+                    snapshot: snapshot,
+                    language: language,
+                    showExpirationTime: provider.showsExpirationTimeInMenuBar
+                )
+            } else if provider.family == .official {
+                baseSubtitle = MenuSubtitlePresenter.officialAccountSubtitle(
+                    providerType: provider.type,
+                    snapshot: snapshot,
+                    showAccountEmail: showOfficialAccountEmail,
+                    codexTeamAliases: codexTeamAliases
+                )
+            } else {
+                baseSubtitle = MenuSubtitlePresenter.relayQuotaSubtitle(
+                    snapshot: snapshot,
+                    language: language,
+                    showExpirationTime: provider.showsExpirationTimeInMenuBar
+                )
+            }
 
             return .percentage(
                 MenuPercentageCardViewState(
@@ -234,29 +255,12 @@ enum MenuDashboardStateBuilder {
                     planType: MenuCardStatusPresenter.planType(for: provider, snapshot: snapshot),
                     iconName: iconName(for: provider),
                     iconFallback: fallbackIcon(for: provider),
-                    subtitle: provider.isRelay
-                        ? MenuSubtitlePresenter.relayQuotaSubtitle(
-                            snapshot: snapshot,
-                            language: language,
-                            showExpirationTime: provider.showsExpirationTimeInMenuBar
-                        )
-                        : provider.family == .official
-                        ? MenuSubtitlePresenter.officialAccountSubtitle(
-                            providerType: provider.type,
-                            snapshot: snapshot,
-                            showAccountEmail: showOfficialAccountEmail,
-                            codexTeamAliases: codexTeamAliases
-                        )
-                        : MenuSubtitlePresenter.relayQuotaSubtitle(
-                            snapshot: snapshot,
-                            language: language,
-                            showExpirationTime: provider.showsExpirationTimeInMenuBar
-                        ),
+                    subtitle: baseSubtitle,
                     status: visual.status,
                     metrics: metricDisplays,
                     errorText: visual.errorText,
                     isDisconnected: visual.isDisconnected,
-                    showsErrorHighlight: visual.showsErrorHighlight
+                    highlightTone: visual.highlightTone
                 )
             )
         }
@@ -291,7 +295,7 @@ enum MenuDashboardStateBuilder {
                 secondaryText: amountPresentation.secondaryText,
                 errorText: amountPresentation.visual.errorText,
                 isDisconnected: amountPresentation.visual.isDisconnected,
-                showsErrorHighlight: amountPresentation.visual.showsErrorHighlight,
+                highlightTone: amountPresentation.visual.highlightTone,
                 balanceLabel: amountPresentation.balanceLabel
             )
         )

@@ -408,6 +408,56 @@ final class LocalSessionCompletionSignalMonitorTests: XCTestCase {
         XCTAssertEqual(monitor.latestClaudeCompletionAt(), try fixedDate("2026-04-20T10:12:00Z"))
     }
 
+    func testClaudeSignalSkipsReparsingUnchangedFilesOnRepeatedScans() throws {
+        let projectsRoot = temporaryDirectory.appendingPathComponent("projects", isDirectory: true)
+        try FileManager.default.createDirectory(at: projectsRoot, withIntermediateDirectories: true)
+        let relativePath = "workspace-fingerprint/session-fingerprint.jsonl"
+        try writeJSONL(
+            root: projectsRoot,
+            relativePath: relativePath,
+            lines: [
+                jsonLine([
+                    "type": "assistant",
+                    "timestamp": "2026-04-20T10:00:00Z",
+                    "message": [
+                        "id": "m-fingerprint-1",
+                        "usage": [
+                            "input_tokens": 6,
+                            "output_tokens": 4
+                        ]
+                    ]
+                ])
+            ]
+        )
+        try setModificationDate(
+            try fixedDate("2026-04-20T10:01:00Z"),
+            forFile: projectsRoot.appendingPathComponent(relativePath).path
+        )
+
+        var now = try fixedDate("2026-04-20T10:05:00Z")
+        let monitor = LocalSessionCompletionSignalMonitor(
+            codexLogsPath: temporaryDirectory.appendingPathComponent("missing.sqlite").path,
+            claudeProjectsRoot: projectsRoot.path,
+            claudeRecentFileWindow: 30 * 24 * 60 * 60,
+            claudeEnumerationInterval: 5,
+            nowProvider: { now }
+        )
+
+        XCTAssertEqual(monitor.latestClaudeCompletionAt(), try fixedDate("2026-04-20T10:00:00Z"))
+        XCTAssertEqual(monitor.diagnostics.lastClaudeTrackedFileCount, 1)
+        XCTAssertEqual(monitor.diagnostics.lastClaudeParsedFileCount, 1)
+        XCTAssertEqual(monitor.diagnostics.lastClaudeCachedFileSkipCount, 0)
+
+        // Re-scan after the enumeration interval: per-file fingerprint
+        // (modification time + size) is unchanged, so the file must not be re-parsed.
+        now = try fixedDate("2026-04-20T10:05:06Z")
+        XCTAssertEqual(monitor.latestClaudeCompletionAt(), try fixedDate("2026-04-20T10:00:00Z"))
+        XCTAssertEqual(monitor.diagnostics.claudeEnumerationCount, 2)
+        XCTAssertEqual(monitor.diagnostics.lastClaudeTrackedFileCount, 1)
+        XCTAssertEqual(monitor.diagnostics.lastClaudeParsedFileCount, 0)
+        XCTAssertEqual(monitor.diagnostics.lastClaudeCachedFileSkipCount, 1)
+    }
+
     func testClaudeSignalRefreshesWhenFileSizeChangesWithSameModificationTime() throws {
         let projectsRoot = temporaryDirectory.appendingPathComponent("projects", isDirectory: true)
         try FileManager.default.createDirectory(at: projectsRoot, withIntermediateDirectories: true)

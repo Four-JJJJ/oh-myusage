@@ -11,23 +11,95 @@ final class AppProviderRefreshCoordinator {
     typealias SnapshotTransformAction = @MainActor (_ descriptor: ProviderDescriptor, _ fetched: UsageSnapshot) -> UsageSnapshot
     typealias PostOfficialRefreshAction = @MainActor (_ descriptor: ProviderDescriptor, _ forceRefresh: Bool) async -> Void
     typealias PersistBaselineEntriesAction = @MainActor (_ entries: [String: ThirdPartyBalanceBaselineTracker.Entry]) -> Void
+    /// Persists the latest main snapshot for a provider after a successful refresh
+    /// (doc §8.2). Implementations must not block the refresh path.
+    typealias PersistSnapshotAction = @MainActor (_ descriptor: ProviderDescriptor, _ snapshot: UsageSnapshot) -> Void
     typealias AfterRefreshAction = @MainActor () -> Void
     typealias StatusBarNotifyAction = @MainActor () -> Void
     typealias TextProvider = @MainActor (_ key: L10nKey) -> String
     typealias LocalizedTextProvider = @MainActor (_ zhHans: String, _ en: String) -> String
     typealias LanguageProvider = @MainActor () -> AppLanguage
     typealias SnapshotBounder = @MainActor (_ snapshot: UsageSnapshot) -> UsageSnapshot
+    /// Injectable network seam (doc §9.5). Defaults to always-online; the real
+    /// `NWPathMonitor` wiring is owned by the composition layer.
+    typealias IsNetworkOnlineProvider = @Sendable () -> Bool
 
     private let providerFactory: any ProviderFactorying
     private let notifications: NotificationService
     private var inFlightRefreshTasks: [String: Task<Void, Never>] = [:]
+    private let isNetworkOnline: IsNetworkOnlineProvider
+    private let fetchPlanRegistry = ProviderFetchPlanRegistry()
+    /// Upper bound on concurrently executing provider refreshes (doc §9.3).
+    private var maxConcurrentRefreshes: Int
+    private var activeRefreshSlotCount = 0
+    private struct RefreshSlotWaiter {
+        let id: UUID
+        let continuation: CheckedContinuation<Bool, Never>
+    }
+    private var waitingRefreshSlotContinuations: [RefreshSlotWaiter] = []
 
     init(
         providerFactory: any ProviderFactorying,
-        notifications: NotificationService
+        notifications: NotificationService,
+        isNetworkOnline: @escaping IsNetworkOnlineProvider = { true },
+        maxConcurrentRefreshes: Int = 2
     ) {
         self.providerFactory = providerFactory
         self.notifications = notifications
+        self.isNetworkOnline = isNetworkOnline
+        self.maxConcurrentRefreshes = max(1, maxConcurrentRefreshes)
+    }
+
+    /// Refreshes the configured concurrency cap (follows the active resource
+    /// mode's `maxConcurrentRefreshes`).
+    func updateMaxConcurrentRefreshes(_ value: Int) {
+        maxConcurrentRefreshes = max(1, value)
+    }
+
+    /// Global concurrency gate (doc §9.3). All provider refresh paths funnel
+    /// through `runExclusiveRefresh`, so acquiring a slot here caps every
+    /// caller (poll, manual, displayed, scope fan-out). Nothing in a refresh
+    /// action re-enters `runExclusiveRefresh`, so a waiting-based gate cannot
+    /// deadlock.
+    private func acquireRefreshSlot() async -> Bool {
+        guard !Task.isCancelled else { return false }
+        if activeRefreshSlotCount < maxConcurrentRefreshes {
+            activeRefreshSlotCount += 1
+            return true
+        }
+        let waiterID = UUID()
+        // 槽位由释放方直接移交（release 不递减），被取消的等待者返回 false。
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                guard !Task.isCancelled else {
+                    continuation.resume(returning: false)
+                    return
+                }
+                waitingRefreshSlotContinuations.append(
+                    RefreshSlotWaiter(id: waiterID, continuation: continuation)
+                )
+            }
+        } onCancel: {
+            Task { @MainActor [weak self] in
+                self?.cancelRefreshSlotWaiter(id: waiterID)
+            }
+        }
+    }
+
+    private func cancelRefreshSlotWaiter(id: UUID) {
+        guard let index = waitingRefreshSlotContinuations.firstIndex(where: { $0.id == id }) else {
+            return
+        }
+        waitingRefreshSlotContinuations.remove(at: index).continuation.resume(returning: false)
+    }
+
+    private func releaseRefreshSlot() {
+        if !waitingRefreshSlotContinuations.isEmpty {
+            // 直接把槽位移交给队首等待者，保持计数不变。
+            waitingRefreshSlotContinuations.removeFirst().continuation.resume(returning: true)
+            return
+        }
+        activeRefreshSlotCount = max(0, activeRefreshSlotCount - 1)
     }
 
     /// Per-provider in-flight gate shared by poll / refreshNow / displayed / local-session paths
@@ -35,7 +107,8 @@ final class AppProviderRefreshCoordinator {
     ///
     /// Strategy: if a refresh for `providerID` is already running, await that task and return
     /// without starting another fetch — including when the new caller requested `forceRefresh`.
-    /// No cancel+rerun; joiners reuse the in-flight result.
+    /// No cancel+rerun; joiners reuse the in-flight result. The global concurrency cap is
+    /// enforced around the action body; joiners waiting on `existing.value` hold no slot.
     func runExclusiveRefresh(
         providerID: String,
         action: @escaping @MainActor () async -> Void
@@ -46,10 +119,17 @@ final class AppProviderRefreshCoordinator {
         }
 
         let task = Task { @MainActor in
+            guard await self.acquireRefreshSlot() else { return }
+            defer { self.releaseRefreshSlot() }
+            guard !Task.isCancelled else { return }
             await action()
         }
         inFlightRefreshTasks[providerID] = task
-        await task.value
+        await withTaskCancellationHandler {
+            await task.value
+        } onCancel: {
+            task.cancel()
+        }
         if inFlightRefreshTasks[providerID] == task {
             inFlightRefreshTasks.removeValue(forKey: providerID)
         }
@@ -74,12 +154,53 @@ final class AppProviderRefreshCoordinator {
             localSessionWatchKind = nil
         }
 
+        // Fetch-plan TTLs (doc §8.3/§9.3) ride on the descriptor so the
+        // scheduler can combine user cadence, plan floors, and visibility.
+        let plan = fetchPlanRegistry.plan(for: provider.type)
         return ProviderRefreshScheduleDescriptor(
             id: provider.id,
             isEnabled: provider.enabled,
             pollIntervalSec: provider.pollIntervalSec,
+            activeTTLSeconds: TimeInterval(plan.activeTTL),
+            backgroundTTLSeconds: TimeInterval(plan.backgroundTTL),
             localSessionWatchKind: localSessionWatchKind
         )
+    }
+
+    /// Resolves a `RefreshScope` (doc §9.4) to enabled provider IDs.
+    ///
+    /// `.visible` follows the current menu bar panel population,
+    /// `.selected(providerID)` covers a single settings-page provider, and
+    /// `.all` covers every enabled provider. IDs are deduplicated and keep
+    /// config order.
+    nonisolated static func enabledProviderIDs(
+        for scope: RefreshScope,
+        providers: [ProviderDescriptor],
+        visibleProviderIDs: Set<String>
+    ) -> [String] {
+        var seenIDs: Set<String> = []
+        var resolvedIDs: [String] = []
+
+        func appendIfEnabled(_ descriptor: ProviderDescriptor) {
+            guard descriptor.enabled, seenIDs.insert(descriptor.id).inserted else { return }
+            resolvedIDs.append(descriptor.id)
+        }
+
+        switch scope {
+        case .visible:
+            for descriptor in providers where visibleProviderIDs.contains(descriptor.id) {
+                appendIfEnabled(descriptor)
+            }
+        case .selected(let providerID):
+            for descriptor in providers where descriptor.id == providerID {
+                appendIfEnabled(descriptor)
+            }
+        case .all:
+            for descriptor in providers {
+                appendIfEnabled(descriptor)
+            }
+        }
+        return resolvedIDs
     }
 
     func refreshDisplayedStatusBarProviders(
@@ -119,6 +240,7 @@ final class AppProviderRefreshCoordinator {
         transformFetchedSnapshot: @escaping SnapshotTransformAction,
         postOfficialRefresh: @escaping PostOfficialRefreshAction,
         persistBaselineEntries: @escaping PersistBaselineEntriesAction,
+        persistSnapshot: @escaping PersistSnapshotAction = { _, _ in },
         afterRefresh: @escaping AfterRefreshAction,
         notifyStatusBarDisplayConfigChanged: @escaping StatusBarNotifyAction,
         text: @escaping TextProvider,
@@ -136,6 +258,7 @@ final class AppProviderRefreshCoordinator {
                 transformFetchedSnapshot: transformFetchedSnapshot,
                 postOfficialRefresh: postOfficialRefresh,
                 persistBaselineEntries: persistBaselineEntries,
+                persistSnapshot: persistSnapshot,
                 afterRefresh: afterRefresh,
                 notifyStatusBarDisplayConfigChanged: notifyStatusBarDisplayConfigChanged,
                 text: text,
@@ -155,6 +278,7 @@ final class AppProviderRefreshCoordinator {
         transformFetchedSnapshot: @escaping SnapshotTransformAction,
         postOfficialRefresh: @escaping PostOfficialRefreshAction,
         persistBaselineEntries: @escaping PersistBaselineEntriesAction,
+        persistSnapshot: @escaping PersistSnapshotAction,
         afterRefresh: @escaping AfterRefreshAction,
         notifyStatusBarDisplayConfigChanged: @escaping StatusBarNotifyAction,
         text: @escaping TextProvider,
@@ -169,9 +293,10 @@ final class AppProviderRefreshCoordinator {
         do {
             let fetched = try await fetchProviderSnapshot(using: provider, forceRefresh: forceRefresh)
             let snapshot = transformFetchedSnapshot(descriptor, fetched)
+            let bounded = boundedSnapshot(snapshot)
 
             mutateState(getState, setState) { state in
-                state.snapshots[descriptor.id] = boundedSnapshot(snapshot)
+                state.snapshots[descriptor.id] = bounded
                 if descriptor.family == .thirdParty {
                     _ = state.thirdPartyBalanceBaselineTracker.record(
                         remaining: Self.resolvedThirdPartyRemainingForBaseline(
@@ -192,6 +317,7 @@ final class AppProviderRefreshCoordinator {
             if descriptor.family == .thirdParty {
                 persistBaselineEntries(getState().thirdPartyBalanceBaselineTracker.snapshotEntries())
             }
+            persistSnapshot(descriptor, bounded)
             notifyStatusBarDisplayConfigChanged()
             if descriptor.family == .official {
                 await postOfficialRefresh(descriptor, forceRefresh)
@@ -446,6 +572,48 @@ final class AppProviderRefreshCoordinator {
 }
 
 extension AppProviderRefreshCoordinator {
+    /// Snapshot age beyond which a startup refresh is allowed, even if the
+    /// provider's own poll interval is very short (doc §8.2: startup only
+    /// refreshes displayed providers whose data is already stale).
+    nonisolated static let startupRefreshStalenessFloorSeconds: TimeInterval = 60
+
+    /// Startup / menu-open refresh scope: only displayed providers whose
+    /// snapshot is missing, empty, or older than their staleness window.
+    /// `extraStalenessSecondsByID` lets callers widen the staleness window per
+    /// provider (e.g. the fetch plan's `activeTTL` for menu-open refreshes).
+    func displayedProvidersForStartupRefresh(
+        providers: [ProviderDescriptor],
+        snapshots: [String: UsageSnapshot],
+        now: Date = Date(),
+        extraStalenessSecondsByID: [String: TimeInterval] = [:]
+    ) -> [ProviderDescriptor] {
+        providers.filter { descriptor in
+            Self.needsStartupRefresh(
+                descriptor: descriptor,
+                snapshot: snapshots[descriptor.id],
+                now: now,
+                extraStalenessSeconds: extraStalenessSecondsByID[descriptor.id] ?? 0
+            )
+        }
+    }
+
+    nonisolated static func needsStartupRefresh(
+        descriptor: ProviderDescriptor,
+        snapshot: UsageSnapshot?,
+        now: Date,
+        extraStalenessSeconds: TimeInterval = 0
+    ) -> Bool {
+        guard descriptor.enabled else { return false }
+        guard let snapshot else { return true }
+        if snapshot.valueFreshness == .empty { return true }
+        let stalenessSeconds = max(
+            TimeInterval(max(descriptor.pollIntervalSec, 1)),
+            startupRefreshStalenessFloorSeconds,
+            max(0, extraStalenessSeconds)
+        )
+        return now.timeIntervalSince(snapshot.updatedAt) >= stalenessSeconds
+    }
+
     nonisolated static func isCancellationError(_ error: Error) -> Bool {
         if error is CancellationError {
             return true
@@ -461,9 +629,12 @@ extension AppProviderRefreshCoordinator {
             return true
         }
 
-        let nsError = error as NSError
-        let description = nsError.localizedDescription.lowercased()
-        return description.contains("rate limited") || description.contains("429")
+        return isRateLimitedDiagnosticMessage(error.localizedDescription)
+    }
+
+    nonisolated static func isRateLimitedDiagnosticMessage(_ message: String) -> Bool {
+        let lowered = message.lowercased()
+        return lowered.contains("rate limited") || lowered.contains("429")
     }
 
     nonisolated static func classifyFetchHealth(_ error: Error) -> FetchHealth {

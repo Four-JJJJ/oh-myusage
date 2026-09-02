@@ -538,6 +538,47 @@ final class LocalUsageHistoryRepositoryTests: XCTestCase {
         XCTAssertEqual(thirdParseCount, 1)
     }
 
+    func testParsedFileCachePrunesByCachedValueCount() {
+        let cache = LocalUsageParsedFileCache<Int>(maxEntries: 3, maxCachedValues: 3)
+        let first = LocalUsageFileSnapshot(path: "/tmp/value-count-first.jsonl", fileSize: 1, modifiedAtRef: 1)
+        let second = LocalUsageFileSnapshot(path: "/tmp/value-count-second.jsonl", fileSize: 1, modifiedAtRef: 1)
+        var firstParseCount = 0
+        var secondParseCount = 0
+
+        XCTAssertEqual(cache.values(for: first) {
+            firstParseCount += 1
+            return [1, 2]
+        }, [1, 2])
+        XCTAssertEqual(cache.values(for: second) {
+            secondParseCount += 1
+            return [3, 4]
+        }, [3, 4])
+
+        // The oldest entry is evicted because the aggregate value count is 4.
+        XCTAssertEqual(cache.values(for: first) {
+            firstParseCount += 1
+            return [10, 20]
+        }, [10, 20])
+        XCTAssertEqual(firstParseCount, 2)
+        XCTAssertEqual(secondParseCount, 1)
+    }
+
+    func testParsedFileCacheDoesNotRetainSingleOversizedEntry() {
+        let cache = LocalUsageParsedFileCache<Int>(maxEntries: 3, maxCachedValues: 2)
+        let snapshot = LocalUsageFileSnapshot(path: "/tmp/oversized.jsonl", fileSize: 1, modifiedAtRef: 1)
+        var parseCount = 0
+
+        XCTAssertEqual(cache.values(for: snapshot) {
+            parseCount += 1
+            return [1, 2, 3]
+        }, [1, 2, 3])
+        XCTAssertEqual(cache.values(for: snapshot) {
+            parseCount += 1
+            return [4, 5, 6]
+        }, [4, 5, 6])
+        XCTAssertEqual(parseCount, 2)
+    }
+
     private func makeTemporaryRoot() throws -> URL {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("OhMyUsageTests-\(UUID().uuidString)", isDirectory: true)

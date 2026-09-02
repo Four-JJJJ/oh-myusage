@@ -34,7 +34,7 @@ final class MenuCardStatePresenterTests: XCTestCase {
         XCTAssertFalse(presentation.isDisconnected)
     }
 
-    func testPercentageVisualPresentationTreatsCachedFallbackAsHighlightedButNotDisconnected() {
+    func testPercentageVisualPresentationTreatsCachedFallbackAsChipCarriedNotDisconnected() {
         let snapshot = UsageSnapshot(
             source: "relay",
             status: .ok,
@@ -61,12 +61,44 @@ final class MenuCardStatePresenterTests: XCTestCase {
         )
 
         XCTAssertFalse(presentation.isDisconnected)
-        XCTAssertTrue(presentation.showsErrorHighlight)
+        XCTAssertEqual(presentation.highlightTone, .error)
         XCTAssertEqual(presentation.errorText, "cached error")
-        XCTAssertEqual(presentation.status.text, "故障")
+        XCTAssertEqual(presentation.status.text, "认证失败")
     }
 
-    func testAmountPresentationSuppressesValueAndSecondaryTextForCachedFallback() {
+    func testPercentageVisualPresentationKeepsHealthyCacheBorderFree() {
+        let snapshot = UsageSnapshot(
+            source: "relay",
+            status: .ok,
+            fetchHealth: .ok,
+            valueFreshness: .cachedFallback,
+            remaining: 80,
+            used: 20,
+            limit: 100,
+            unit: "%",
+            updatedAt: Date(),
+            note: "ok",
+            sourceLabel: "Relay"
+        )
+
+        let presentation = MenuCardStatePresenter.percentageVisualPresentation(
+            snapshot: snapshot,
+            errorText: "cached error",
+            healthPercents: [80],
+            language: .zhHans,
+            tightText: "紧张",
+            sufficientText: "充足",
+            exhaustedText: "耗尽",
+            disconnectedText: "失联"
+        )
+
+        XCTAssertFalse(presentation.isDisconnected)
+        XCTAssertNil(presentation.highlightTone)
+        XCTAssertEqual(presentation.status.text, "本地缓存")
+        XCTAssertEqual(presentation.status.tone, .warning)
+    }
+
+    func testAmountPresentationShowsCachedValuesForHealthyCacheFallback() {
         var provider = ProviderDescriptor.defaultOpenAilinyu()
         provider.relayConfig?.quotaDisplayMode = .used
         let snapshot = UsageSnapshot(
@@ -97,10 +129,13 @@ final class MenuCardStatePresenterTests: XCTestCase {
             disconnectedText: "Disconnected"
         )
 
-        XCTAssertTrue(presentation.visual.isDisconnected)
-        XCTAssertFalse(presentation.visual.showsErrorHighlight)
-        XCTAssertEqual(presentation.amountText, "-")
-        XCTAssertNil(presentation.secondaryText)
+        // Doc §10.2: cached fallback keeps showing the cached balance.
+        XCTAssertFalse(presentation.visual.isDisconnected)
+        XCTAssertNil(presentation.visual.highlightTone)
+        XCTAssertEqual(presentation.visual.status.text, "Cached")
+        XCTAssertEqual(presentation.visual.status.tone, .warning)
+        XCTAssertEqual(presentation.amountText, "20.00")
+        XCTAssertEqual(presentation.secondaryText, "Requests 42")
         XCTAssertEqual(presentation.balanceLabel, "Used")
     }
 
@@ -135,10 +170,10 @@ final class MenuCardStatePresenterTests: XCTestCase {
         )
 
         XCTAssertTrue(presentation.visual.isDisconnected)
-        XCTAssertTrue(presentation.visual.showsErrorHighlight)
+        XCTAssertEqual(presentation.visual.highlightTone, .error)
         XCTAssertEqual(presentation.amountText, "-")
         XCTAssertNil(presentation.secondaryText)
-        XCTAssertEqual(presentation.visual.status.text, "Failure")
+        XCTAssertEqual(presentation.visual.status.text, "Refresh failed")
     }
 
     func testSlotActionPresentationOnlyShowsSwitchWhenInactiveAndSwitchable() {

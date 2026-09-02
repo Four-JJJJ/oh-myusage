@@ -349,6 +349,13 @@ final class LocalUsageParsedFileCache<Value>: @unchecked Sendable {
         let parsed = parse()
 
         lock.lock()
+        // Another caller may have populated the same key while parsing happened
+        // outside the lock. Replace that entry without leaking its count.
+        removeEntryLocked(for: key)
+        guard parsed.count <= maxCachedValues else {
+            lock.unlock()
+            return parsed
+        }
         entries[key] = Entry(snapshot: snapshot, values: parsed)
         cachedValueCount += parsed.count
         markAccessedLocked(key)

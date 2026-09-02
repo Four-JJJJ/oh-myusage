@@ -3,9 +3,16 @@ import Foundation
 import OhMyUsageProviders
 
 final class TraeProvider: UsageProvider, @unchecked Sendable {
+    private static let browserRecoveryBackoff = WebOverlayRetryBackoff()
+    /// Browser recovery that fails must not be retried on the immediately
+    /// following poll (doc §8.4 single-endpoint providers). Relay uses the
+    /// same 10 minute recovery backoff interval.
+    private static let browserRecoveryBackoffInterval: TimeInterval = 10 * 60
+
     private let session: URLSession
     private let keychain: any TokenCredentialStoring
     let browserCredentialService: any BrowserCredentialProviding
+    private let browserRecoveryBackoff: WebOverlayRetryBackoff
 
     let descriptor: ProviderDescriptor
 
@@ -13,12 +20,14 @@ final class TraeProvider: UsageProvider, @unchecked Sendable {
         descriptor: ProviderDescriptor,
         session: URLSession = .shared,
         keychain: any TokenCredentialStoring,
-        browserCredentialService: any BrowserCredentialProviding = BrowserCredentialService()
+        browserCredentialService: any BrowserCredentialProviding = BrowserCredentialService(),
+        browserRecoveryBackoff: WebOverlayRetryBackoff = TraeProvider.browserRecoveryBackoff
     ) {
         self.descriptor = descriptor
         self.session = session
         self.keychain = keychain
         self.browserCredentialService = browserCredentialService
+        self.browserRecoveryBackoff = browserRecoveryBackoff
     }
 
     func fetch() async throws -> UsageSnapshot {
@@ -42,22 +51,53 @@ final class TraeProvider: UsageProvider, @unchecked Sendable {
             guard allowsBrowserFallback, Self.isCredentialRefreshable(error) else {
                 throw error
             }
+            return try await fetchViaBrowserRecovery(
+                excluding: attempted,
+                forceRefresh: forceRefresh,
+                primaryError: error
+            )
+        }
+    }
+
+    /// Browser recovery for a rejected or missing saved JWT. Gated by the
+    /// shared recovery backoff so a failed scan is not repeated on every
+    /// background poll (doc §8.4; same convention as Relay's recovery path).
+    private func fetchViaBrowserRecovery(
+        excluding attempted: Set<String>,
+        forceRefresh: Bool,
+        primaryError: ProviderError
+    ) async throws -> UsageSnapshot {
+        guard await browserRecoveryBackoff.shouldAttempt(
+            for: Self.browserRecoveryKey(descriptor: descriptor),
+            forceRefresh: forceRefresh
+        ) else {
+            throw primaryError
         }
 
         for candidate in browserJWTCandidates(excluding: attempted) {
-            attempted.insert(candidate.jwt)
             do {
                 var snapshot = try await requestSnapshot(jwt: candidate.jwt)
                 snapshot.authSourceLabel = candidate.source
                 persistJWT(candidate.jwt)
+                await browserRecoveryBackoff.clearFailure(
+                    for: Self.browserRecoveryKey(descriptor: descriptor)
+                )
                 return snapshot
             } catch let error as ProviderError {
                 guard Self.isCredentialRefreshable(error) else {
+                    await browserRecoveryBackoff.markFailure(
+                        for: Self.browserRecoveryKey(descriptor: descriptor),
+                        interval: Self.browserRecoveryBackoffInterval
+                    )
                     throw error
                 }
             }
         }
 
+        await browserRecoveryBackoff.markFailure(
+            for: Self.browserRecoveryKey(descriptor: descriptor),
+            interval: Self.browserRecoveryBackoffInterval
+        )
         throw ProviderError.unauthorizedDetail(
             "Trae SOLO Authorization 已失效，且未在浏览器中找到可用登录态。请登录 trae.ai 后重试，或重新粘贴最新 Cloud-IDE-JWT。"
         )
@@ -272,6 +312,10 @@ final class TraeProvider: UsageProvider, @unchecked Sendable {
         case .rateLimited, .invalidResponse, .commandFailed, .timeout, .unavailable:
             return false
         }
+    }
+
+    private static func browserRecoveryKey(descriptor: ProviderDescriptor) -> String {
+        "\(descriptor.id)|\(descriptor.auth.keychainAccount ?? "-")"
     }
 
     private static func usageWindow(used: Double, limit: Double) -> (remainingPercent: Double, usedPercent: Double) {

@@ -10,6 +10,7 @@ import UserNotifications
 final class AppViewModel {
     let keychain: KeychainService
     let configurationRepository: any AppConfigurationRepositorying
+    @ObservationIgnored let credentialBroker: CredentialBroker
     @ObservationIgnored let credentialAccessService: CredentialAccessService
     let thirdPartyBalanceBaselineStore = ThirdPartyBalanceBaselineStore()
     let codexSlotStore: CodexAccountSlotStore
@@ -17,11 +18,11 @@ final class AppViewModel {
     let codexProfileSnapshotService: CodexProfileSnapshotService
     let codexDesktopAuthService: CodexDesktopAuthService
     let codexDesktopAppService: CodexDesktopAppService
-    let oauthImportOrchestrator = OAuthImportOrchestrator()
+    let oauthImportOrchestrator: OAuthImportOrchestrator
     let claudeSlotStore = ClaudeAccountSlotStore()
     let claudeProfileStore = ClaudeAccountProfileStore()
     let claudeProfileSnapshotService = ClaudeProfileSnapshotService()
-    let claudeDesktopAuthService = ClaudeDesktopAuthService()
+    let claudeDesktopAuthService: ClaudeDesktopAuthService
     let launchAtLoginService = LaunchAtLoginService()
     let notifications: NotificationService
     @ObservationIgnored private let localSessionSignalMonitor = LocalSessionCompletionSignalMonitor()
@@ -31,6 +32,7 @@ final class AppViewModel {
     @ObservationIgnored private let detectsInstalledAppVersionForUpdates: Bool
     @ObservationIgnored let usageAnalyticsModel: AppUsageAnalyticsModel
     @ObservationIgnored let providerRefreshModel: AppProviderRefreshModel
+    @ObservationIgnored private let networkReachabilityMonitor: NetworkReachabilityMonitor
     @ObservationIgnored let officialProfilesModel = AppOfficialProfilesModel()
     @ObservationIgnored let configurationModel: AppConfigurationModel
     @ObservationIgnored let resetCoordinator = AppResetCoordinator()
@@ -40,6 +42,9 @@ final class AppViewModel {
     @ObservationIgnored let claudeOfficialProfileRefreshRuntime = ClaudeOfficialProfileRefreshRuntime()
     @ObservationIgnored let permissionModel: AppPermissionModel
     @ObservationIgnored let updateModel: AppUpdateModel
+    /// Durable snapshot cache (doc §8.1/8.2). `nil` in test bootstraps so tests
+    /// never touch the real Application Support directory.
+    @ObservationIgnored let persistedSnapshotCache: PersistedSnapshotCache?
     private var sessionStore = AppSessionStore()
 
     var officialProviderSettingsCoordinator: AppOfficialProviderSettingsCoordinator {
@@ -159,6 +164,10 @@ final class AppViewModel {
     var secureStorageReady: Bool {
         get { sessionStore.permissionState.secureStorageReady }
         set { sessionStore.permissionState.secureStorageReady = newValue }
+    }
+    var credentialAccessState: CredentialAccessState {
+        get { sessionStore.permissionState.credentialAccessState }
+        set { sessionStore.permissionState.credentialAccessState = newValue }
     }
     var fullDiskAccessGranted: Bool {
         get { sessionStore.permissionState.fullDiskAccessGranted }
@@ -315,7 +324,8 @@ final class AppViewModel {
             config: configBootstrap.config,
             currentAppVersion: AppVersionResolver.detectCurrentAppVersion(),
             shouldPersistConfigDuringBootstrap: configBootstrap.shouldPersistDuringBootstrap,
-            performsProductionBootstrapSideEffects: true
+            performsProductionBootstrapSideEffects: true,
+            persistedSnapshotCache: PersistedSnapshotCache()
         )
     }
 
@@ -338,7 +348,8 @@ final class AppViewModel {
         usageAnalyticsRefreshCoordinator: UsageAnalyticsRefreshCoordinator = UsageAnalyticsRefreshCoordinator(),
         updateInstallBufferDelaySeconds: TimeInterval = 2,
         updateCheckStatusClearDelaySeconds: TimeInterval = 10,
-        settingsPersistenceStatusClearDelaySeconds: TimeInterval = 4
+        settingsPersistenceStatusClearDelaySeconds: TimeInterval = 4,
+        persistedSnapshotCache: PersistedSnapshotCache? = nil
     ) {
         let dependencyGraph = AppCompositionFactory.makeDependencyGraph(
             configurationRepository: configurationRepository,
@@ -363,7 +374,8 @@ final class AppViewModel {
             config: testingConfig.migratedWithSiteDefaults(),
             currentAppVersion: testingCurrentAppVersion,
             shouldPersistConfigDuringBootstrap: false,
-            performsProductionBootstrapSideEffects: false
+            performsProductionBootstrapSideEffects: false,
+            persistedSnapshotCache: persistedSnapshotCache
         )
     }
 
@@ -380,20 +392,28 @@ final class AppViewModel {
         config: AppConfig,
         currentAppVersion: String,
         shouldPersistConfigDuringBootstrap: Bool,
-        performsProductionBootstrapSideEffects: Bool
+        performsProductionBootstrapSideEffects: Bool,
+        persistedSnapshotCache: PersistedSnapshotCache? = nil
     ) {
         self.keychain = dependencyGraph.keychain
+        self.credentialBroker = dependencyGraph.credentialBroker
         self.configurationRepository = dependencyGraph.configurationRepository
         self.credentialAccessService = dependencyGraph.credentialAccessService
         self.codexSlotStore = dependencyGraph.codexSlotStore
         self.codexProfileStore = dependencyGraph.codexProfileStore
         self.codexDesktopAuthService = dependencyGraph.codexDesktopAuthService
         self.codexDesktopAppService = dependencyGraph.codexDesktopAppService
+        // Phase 1 §7.6: OAuth imports persist their normalized JSON into the app
+        // vault through the shared broker-backed vault store.
+        self.oauthImportOrchestrator = OAuthImportOrchestrator(oauthVault: dependencyGraph.oauthVaultStore)
+        self.claudeDesktopAuthService = dependencyGraph.claudeDesktopAuthService
         self.codexProfileSnapshotService = dependencyGraph.codexProfileSnapshotService
         self.notifications = dependencyGraph.notifications
         self.providerRefreshModel = dependencyGraph.providerRefreshModel
+        self.networkReachabilityMonitor = dependencyGraph.networkReachabilityMonitor
         self.permissionModel = dependencyGraph.permissionModel
         self.updateModel = dependencyGraph.updateModel
+        self.persistedSnapshotCache = persistedSnapshotCache
         self.configurationModel = dependencyGraph.configurationModel
         self.config = config
         self.providerFactory = dependencyGraph.providerFactory
@@ -437,12 +457,35 @@ final class AppViewModel {
         syncCodexProfilesCurrentState()
         bootstrapClaudeProfileState()
         restorePersistedOfficialProvidersIfNeeded()
+        restorePersistedSnapshotsFromCacheIfNeeded()
         bindPermissionModel()
         bindUpdateModel()
         bindUsageAnalyticsModel()
         if performsProductionBootstrapSideEffects {
             refreshPermissionStatuses(force: true)
         }
+    }
+
+    /// Restores cached snapshots into provider state on cold start (doc §8.2).
+    /// Restored values are marked `.cachedFallback` and never overwrite data
+    /// that is already present. Providers that no longer exist in the config
+    /// are skipped so removed providers leave no ghost state.
+    func restorePersistedSnapshotsFromCache(_ cache: PersistedSnapshotCache) {
+        let configuredProviderIDs = Set(config.providers.map(\.id))
+        guard !configuredProviderIDs.isEmpty else { return }
+        let latestEntries = cache.loadLatestSnapshots()
+        guard !latestEntries.isEmpty else { return }
+        providerRefreshModel.mutateProviderState { state in
+            for (providerID, entry) in latestEntries
+            where configuredProviderIDs.contains(providerID) && state.snapshots[providerID] == nil {
+                state.snapshots[providerID] = entry.restoredSnapshot
+            }
+        }
+    }
+
+    private func restorePersistedSnapshotsFromCacheIfNeeded() {
+        guard let cache = persistedSnapshotCache else { return }
+        restorePersistedSnapshotsFromCache(cache)
     }
 
     private func bindConfigurationModel() {
@@ -492,7 +535,7 @@ final class AppViewModel {
                 self?.invalidateCredentialLookupCache()
             },
             prepareSecureStoreAccess: { [weak self] in
-                self?.keychain.prepareSecureStoreAccess() ?? false
+                self?.credentialBroker.prepareSecureStoreAccess().succeeded ?? false
             },
             presentSecureStorageAccessUI: { [weak self] in
                 guard let self else { return }
@@ -553,12 +596,27 @@ final class AppViewModel {
         hasStarted = true
         refreshPermissionStatuses(force: true)
         restartPolling()
-        refreshDisplayedStatusBarProviders()
+        // Doc §8.2: startup refreshes only displayed providers whose snapshot is
+        // missing or stale; fresh restored-cache snapshots are kept as-is.
+        providerRefreshModel.refreshDisplayedStatusBarProvidersForStartup()
+        networkReachabilityMonitor.onPathChange = { [weak self] isOnline in
+            guard isOnline else { return }
+            // Doc §9.5: recovery refreshes only expired visible providers;
+            // never a full-provider refresh storm.
+            Task { @MainActor [weak self] in
+                self?.providerRefreshModel.refreshVisibleProvidersForMenuOpen()
+            }
+        }
     }
 
     func setMenuPanelVisible(_ visible: Bool) {
         guard menuPanelVisible != visible else { return }
         menuPanelVisible = visible
+        if visible {
+            // Doc §9.4: opening the menu bar panel refreshes only the visible
+            // providers, and only those whose snapshot is already stale.
+            providerRefreshModel.refreshVisibleProvidersForMenuOpen()
+        }
     }
 
     func setSettingsWindowVisible(_ visible: Bool) {
@@ -835,11 +893,20 @@ final class AppViewModel {
 }
 
 extension ResourceMode {
+    /// Scheduler policy per resource mode (doc §9.3). Existing mode semantics
+    /// are preserved and layered with the new fields: `active` is the visible-
+    /// provider poll floor (180s default, 300s in low-power mode) and
+    /// `maxConcurrentRefreshes` caps refresh execution. The low-power mode
+    /// raises its background floor to 1800s per doc §9.3; per-provider fetch
+    /// plan `backgroundTTL` (900s / 1800s) is combined in the scheduler and is
+    /// the minimum background spacing.
     var refreshSchedulerConfig: ProviderRefreshSchedulerConfig {
         switch self {
         case .background3Minutes:
             return ProviderRefreshSchedulerConfig(
                 backgroundProviderPollIntervalSeconds: intervalSeconds,
+                activeProviderPollIntervalSeconds: 180,
+                maxConcurrentRefreshes: 2,
                 localSessionSignalActiveSleepSeconds: 10,
                 localSessionSignalIdleSleepSeconds: 30,
                 inFlightProviderSleepSeconds: 5
@@ -847,6 +914,8 @@ extension ResourceMode {
         case .background5Minutes:
             return ProviderRefreshSchedulerConfig(
                 backgroundProviderPollIntervalSeconds: intervalSeconds,
+                activeProviderPollIntervalSeconds: 180,
+                maxConcurrentRefreshes: 2,
                 localSessionSignalActiveSleepSeconds: RuntimeDiagnosticsLimits.localSessionSignalActiveSleepSeconds,
                 localSessionSignalIdleSleepSeconds: RuntimeDiagnosticsLimits.localSessionSignalIdleSleepSeconds,
                 inFlightProviderSleepSeconds: 5
@@ -854,13 +923,17 @@ extension ResourceMode {
         case .background10Minutes:
             return ProviderRefreshSchedulerConfig(
                 backgroundProviderPollIntervalSeconds: intervalSeconds,
+                activeProviderPollIntervalSeconds: 180,
+                maxConcurrentRefreshes: 2,
                 localSessionSignalActiveSleepSeconds: 20,
                 localSessionSignalIdleSleepSeconds: 90,
                 inFlightProviderSleepSeconds: 10
             )
         case .background15Minutes:
             return ProviderRefreshSchedulerConfig(
-                backgroundProviderPollIntervalSeconds: intervalSeconds,
+                backgroundProviderPollIntervalSeconds: 1_800,
+                activeProviderPollIntervalSeconds: 300,
+                maxConcurrentRefreshes: 2,
                 localSessionSignalActiveSleepSeconds: 30,
                 localSessionSignalIdleSleepSeconds: 120,
                 inFlightProviderSleepSeconds: 15

@@ -387,6 +387,924 @@ final class OfficialProviderTests: XCTestCase {
         XCTAssertTrue(persisted.contains("fresh-refresh-token"))
     }
 
+    func testCodexLoadCredentialsPrefersVaultOverLocalFilesAndSkipsExternalKeychain() async throws {
+        let homeDirectory = try makeTemporaryHomeDirectory(prefix: "codex-vault-priority")
+        let authDirectory = homeDirectory.appendingPathComponent(".config/codex", isDirectory: true)
+        try writeText(
+            codexAuthJSON(accessToken: "file-codex-access"),
+            to: authDirectory.appendingPathComponent("auth.json")
+        )
+        let (defaults, suiteName) = makeTestDefaults()
+        defer { removeTestDefaults(named: suiteName) }
+        let keychain = makeTestKeychain()
+        let vault = OfficialOAuthVaultStore(keychain: keychain, defaults: defaults)
+        XCTAssertTrue(
+            vault.saveOAuthJSON(provider: .codex, rawJSON: codexAuthJSON(accessToken: "vault-codex-access"))
+        )
+
+        var authorizationHeaders: [String] = []
+        OfficialMockURLProtocol.requestHandler = { request in
+            let url = try XCTUnwrap(request.url)
+            XCTAssertEqual(url.absoluteString, "https://chatgpt.com/backend-api/wham/usage")
+            authorizationHeaders.append(request.value(forHTTPHeaderField: "Authorization") ?? "")
+            let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            let body = """
+            {
+              "plan_type": "plus",
+              "rate_limit": {
+                "primary_window": { "used_percent": 25, "reset_at": 1760000000 },
+                "secondary_window": { "used_percent": 60, "reset_at": 1760500000 }
+              }
+            }
+            """
+            return (response, Data(body.utf8))
+        }
+        defer { OfficialMockURLProtocol.requestHandler = nil }
+
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [OfficialMockURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+
+        var descriptor = ProviderDescriptor.defaultOfficialCodex()
+        descriptor.id = "codex-vault-priority-\(UUID().uuidString)"
+        descriptor.officialConfig?.sourceMode = .api
+        descriptor.officialConfig?.webMode = .disabled
+
+        let provider = CodexProvider(
+            descriptor: descriptor,
+            session: session,
+            keychain: keychain,
+            browserCookieService: BrowserCookieService(),
+            cache: FetchedAtOfficialSnapshotCache(),
+            gate: PassthroughOfficialFetchGate(),
+            homeDirectory: { homeDirectory.path },
+            environment: { [:] }
+        )
+
+        _ = try await provider.fetch(forceRefresh: true)
+
+        XCTAssertEqual(authorizationHeaders, ["Bearer vault-codex-access"])
+    }
+
+    func testCodexRefreshUpdatesVaultWhenCredentialComesFromVault() async throws {
+        let homeDirectory = try makeTemporaryHomeDirectory(prefix: "codex-vault-refresh")
+        let (defaults, suiteName) = makeTestDefaults()
+        defer { removeTestDefaults(named: suiteName) }
+        let keychain = makeTestKeychain()
+        let vault = OfficialOAuthVaultStore(keychain: keychain, defaults: defaults)
+        let idToken = makeJWT(email: "vault-refresh@example.com")
+        XCTAssertTrue(
+            vault.saveOAuthJSON(
+                provider: .codex,
+                rawJSON: #"""
+                {
+                  "last_refresh": "2020-01-01T00:00:00Z",
+                  "tokens": {
+                    "access_token": "stale-vault-codex-access",
+                    "refresh_token": "vault-codex-refresh-token",
+                    "account_id": "vault-codex-account",
+                    "id_token": "\#(idToken)"
+                  }
+                }
+                """#
+            )
+        )
+
+        OfficialMockURLProtocol.requestHandler = { request in
+            let url = try XCTUnwrap(request.url)
+            if url.absoluteString == "https://auth.openai.com/oauth/token" {
+                let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
+                let bodyJSON = #"""
+                {
+                  "access_token": "fresh-vault-codex-access",
+                  "refresh_token": "fresh-vault-codex-refresh",
+                  "id_token": "\#(idToken)"
+                }
+                """#
+                return (response, Data(bodyJSON.utf8))
+            }
+
+            XCTAssertEqual(url.absoluteString, "https://chatgpt.com/backend-api/wham/usage")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer fresh-vault-codex-access")
+            let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            let body = """
+            {
+              "plan_type": "plus",
+              "rate_limit": {
+                "primary_window": { "used_percent": 10, "reset_at": 1760000000 },
+                "secondary_window": { "used_percent": 20, "reset_at": 1760500000 }
+              }
+            }
+            """
+            return (response, Data(body.utf8))
+        }
+        defer { OfficialMockURLProtocol.requestHandler = nil }
+
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [OfficialMockURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+
+        var descriptor = ProviderDescriptor.defaultOfficialCodex()
+        descriptor.id = "codex-vault-refresh-\(UUID().uuidString)"
+        descriptor.officialConfig?.sourceMode = .api
+        descriptor.officialConfig?.webMode = .disabled
+
+        let provider = CodexProvider(
+            descriptor: descriptor,
+            session: session,
+            keychain: keychain,
+            browserCookieService: BrowserCookieService(),
+            cache: FetchedAtOfficialSnapshotCache(),
+            gate: PassthroughOfficialFetchGate(),
+            homeDirectory: { homeDirectory.path },
+            environment: { [:] }
+        )
+
+        let snapshot = try await provider.fetch(forceRefresh: false)
+
+        XCTAssertEqual(snapshot.remaining ?? -1, 80, accuracy: 0.001)
+        let vaultJSON = try XCTUnwrap(vault.readOAuthJSON(provider: .codex))
+        XCTAssertTrue(vaultJSON.contains("fresh-vault-codex-access"))
+        XCTAssertTrue(vaultJSON.contains("fresh-vault-codex-refresh"))
+        XCTAssertFalse(vaultJSON.contains("stale-vault-codex-access"))
+    }
+
+    func testCodexMissingCredentialWhenVaultAndFilesAbsent() async throws {
+        let homeDirectory = try makeTemporaryHomeDirectory(prefix: "codex-vault-missing")
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [OfficialMockURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+
+        var descriptor = ProviderDescriptor.defaultOfficialCodex()
+        descriptor.id = "codex-vault-missing-\(UUID().uuidString)"
+        descriptor.officialConfig?.sourceMode = .api
+        descriptor.officialConfig?.webMode = .disabled
+
+        let provider = CodexProvider(
+            descriptor: descriptor,
+            session: session,
+            keychain: makeTestKeychain(),
+            browserCookieService: BrowserCookieService(),
+            cache: FetchedAtOfficialSnapshotCache(),
+            gate: PassthroughOfficialFetchGate(),
+            homeDirectory: { homeDirectory.path },
+            environment: { [:] }
+        )
+
+        do {
+            _ = try await provider.fetch(forceRefresh: false)
+            XCTFail("expected missing credential failure")
+        } catch let error as ProviderError {
+            guard case .missingCredential = error else {
+                return XCTFail("unexpected provider error: \(error)")
+            }
+        } catch {
+            XCTFail("unexpected error: \(error)")
+        }
+    }
+
+    func testClaudeLoadCredentialsPrefersVaultOverLocalFiles() async throws {
+        let homeDirectory = try makeTemporaryHomeDirectory(prefix: "claude-vault-priority")
+        try writeText(
+            claudeCredentialsJSON(accessToken: "file-claude-access"),
+            to: homeDirectory.appendingPathComponent(".claude/.credentials.json")
+        )
+        let (defaults, suiteName) = makeTestDefaults()
+        defer { removeTestDefaults(named: suiteName) }
+        let keychain = makeTestKeychain()
+        let vault = OfficialOAuthVaultStore(keychain: keychain, defaults: defaults)
+        XCTAssertTrue(
+            vault.saveOAuthJSON(provider: .claude, rawJSON: claudeCredentialsJSON(accessToken: "vault-claude-access"))
+        )
+
+        var authorizationHeaders: [String] = []
+        OfficialMockURLProtocol.requestHandler = { request in
+            let url = try XCTUnwrap(request.url)
+            XCTAssertEqual(url.absoluteString, "https://api.anthropic.com/api/oauth/usage")
+            authorizationHeaders.append(request.value(forHTTPHeaderField: "Authorization") ?? "")
+            let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            let body = """
+            {
+              "five_hour": { "utilization": 30, "resets_at": "2026-04-11T10:00:00Z" },
+              "seven_day": { "utilization": 55, "resets_at": "2026-04-17T00:00:00Z" }
+            }
+            """
+            return (response, Data(body.utf8))
+        }
+        defer { OfficialMockURLProtocol.requestHandler = nil }
+
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [OfficialMockURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+
+        var descriptor = ProviderDescriptor.defaultOfficialClaude()
+        descriptor.id = "claude-vault-priority-\(UUID().uuidString)"
+        descriptor.officialConfig?.sourceMode = .api
+        descriptor.officialConfig?.webMode = .disabled
+
+        let provider = ClaudeProvider(
+            descriptor: descriptor,
+            session: session,
+            keychain: keychain,
+            browserCookieService: BrowserCookieService(),
+            cache: FetchedAtOfficialSnapshotCache(),
+            gate: PassthroughOfficialFetchGate(),
+            homeDirectory: { homeDirectory.path }
+        )
+
+        _ = try await provider.fetch(forceRefresh: true)
+
+        XCTAssertEqual(authorizationHeaders, ["Bearer vault-claude-access"])
+    }
+
+    func testClaudeRefreshUpdatesVaultWhenCredentialComesFromVault() async throws {
+        let homeDirectory = try makeTemporaryHomeDirectory(prefix: "claude-vault-refresh")
+        let (defaults, suiteName) = makeTestDefaults()
+        defer { removeTestDefaults(named: suiteName) }
+        let keychain = makeTestKeychain()
+        let vault = OfficialOAuthVaultStore(keychain: keychain, defaults: defaults)
+        let soonExpiryMs = Date().timeIntervalSince1970 * 1000 + 1_000
+        XCTAssertTrue(
+            vault.saveOAuthJSON(
+                provider: .claude,
+                rawJSON: #"""
+                {
+                  "claudeAiOauth": {
+                    "accessToken": "stale-vault-claude-access",
+                    "refreshToken": "vault-claude-refresh-token",
+                    "expiresAt": \#(soonExpiryMs),
+                    "subscriptionType": "pro",
+                    "scopes": ["user:profile"]
+                  }
+                }
+                """#
+            )
+        )
+
+        OfficialMockURLProtocol.requestHandler = { request in
+            let url = try XCTUnwrap(request.url)
+            if url.absoluteString == "https://platform.claude.com/v1/oauth/token" {
+                let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
+                let bodyJSON = """
+                {
+                  "access_token": "fresh-vault-claude-access",
+                  "refresh_token": "fresh-vault-claude-refresh",
+                  "expires_in": 3600
+                }
+                """
+                return (response, Data(bodyJSON.utf8))
+            }
+
+            XCTAssertEqual(url.absoluteString, "https://api.anthropic.com/api/oauth/usage")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer fresh-vault-claude-access")
+            let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            let body = """
+            {
+              "five_hour": { "utilization": 20, "resets_at": "2026-04-11T10:00:00Z" },
+              "seven_day": { "utilization": 40, "resets_at": "2026-04-17T00:00:00Z" }
+            }
+            """
+            return (response, Data(body.utf8))
+        }
+        defer { OfficialMockURLProtocol.requestHandler = nil }
+
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [OfficialMockURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+
+        var descriptor = ProviderDescriptor.defaultOfficialClaude()
+        descriptor.id = "claude-vault-refresh-\(UUID().uuidString)"
+        descriptor.officialConfig?.sourceMode = .api
+        descriptor.officialConfig?.webMode = .disabled
+
+        let provider = ClaudeProvider(
+            descriptor: descriptor,
+            session: session,
+            keychain: keychain,
+            browserCookieService: BrowserCookieService(),
+            cache: FetchedAtOfficialSnapshotCache(),
+            gate: PassthroughOfficialFetchGate(),
+            homeDirectory: { homeDirectory.path }
+        )
+
+        _ = try await provider.fetch(forceRefresh: false)
+
+        let vaultJSON = try XCTUnwrap(vault.readOAuthJSON(provider: .claude))
+        XCTAssertTrue(vaultJSON.contains("fresh-vault-claude-access"))
+        XCTAssertTrue(vaultJSON.contains("fresh-vault-claude-refresh"))
+        XCTAssertFalse(vaultJSON.contains("stale-vault-claude-access"))
+    }
+
+    // MARK: - Doc §8.4 provider request optimization (Codex)
+
+    func testCodexAPISkipsWebOverlayWhenUsageIsComplete() async throws {
+        let homeDirectory = try makeTemporaryHomeDirectory(prefix: "codex-overlay-skip")
+        try writeText(
+            codexAuthJSON(accessToken: "codex-complete-access"),
+            to: homeDirectory.appendingPathComponent(".config/codex/auth.json")
+        )
+        let keychain = makeTestKeychain()
+        let cookieAccount = "official/codex/cookie-header-\(UUID().uuidString)"
+        XCTAssertTrue(keychain.saveToken("manual-cookie=ok", service: KeychainService.defaultServiceName, account: cookieAccount))
+
+        var apiRequestCount = 0
+        var webRequestCount = 0
+        OfficialMockURLProtocol.requestHandler = { request in
+            let url = try XCTUnwrap(request.url)
+            XCTAssertEqual(url.absoluteString, "https://chatgpt.com/backend-api/wham/usage")
+            if request.value(forHTTPHeaderField: "Cookie") != nil {
+                webRequestCount += 1
+            } else {
+                apiRequestCount += 1
+            }
+            let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            let body = """
+            {
+              "plan_type": "plus",
+              "rate_limit": {
+                "primary_window": { "used_percent": 25, "reset_at": 1760000000 },
+                "secondary_window": { "used_percent": 60, "reset_at": 1760500000 }
+              }
+            }
+            """
+            return (response, Data(body.utf8))
+        }
+        defer { OfficialMockURLProtocol.requestHandler = nil }
+
+        var descriptor = ProviderDescriptor.defaultOfficialCodex()
+        descriptor.id = "codex-overlay-skip-\(UUID().uuidString)"
+        descriptor.officialConfig?.sourceMode = .api
+        descriptor.officialConfig?.webMode = .autoImport
+        descriptor.officialConfig?.manualCookieAccount = cookieAccount
+
+        let provider = CodexProvider(
+            descriptor: descriptor,
+            session: makeMockURLSession(),
+            keychain: keychain,
+            browserCookieService: BrowserCookieService(),
+            webReadBackoff: WebOverlayRetryBackoff(),
+            cache: FetchedAtOfficialSnapshotCache(),
+            gate: PassthroughOfficialFetchGate(),
+            homeDirectory: { homeDirectory.path },
+            environment: { [:] }
+        )
+
+        let snapshot = try await provider.fetch(forceRefresh: true)
+
+        XCTAssertEqual(snapshot.sourceLabel, "API")
+        XCTAssertEqual(snapshot.quotaWindows.count, 2)
+        XCTAssertEqual(apiRequestCount, 1, "complete API response should be fetched exactly once")
+        XCTAssertEqual(webRequestCount, 0, "complete API response must not trigger the Web overlay")
+    }
+
+    func testCodexWebOverlayFillsOnlyMissingSlotsWithoutRepeatRequests() async throws {
+        let homeDirectory = try makeTemporaryHomeDirectory(prefix: "codex-overlay-fill")
+        try writeText(
+            codexAuthJSON(accessToken: "codex-overlay-fill-access"),
+            to: homeDirectory.appendingPathComponent(".config/codex/auth.json")
+        )
+        let keychain = makeTestKeychain()
+        let cookieAccount = "official/codex/cookie-header-\(UUID().uuidString)"
+        XCTAssertTrue(keychain.saveToken("manual-cookie=ok", service: KeychainService.defaultServiceName, account: cookieAccount))
+
+        var apiRequestCount = 0
+        var webRequestCount = 0
+        OfficialMockURLProtocol.requestHandler = { request in
+            let url = try XCTUnwrap(request.url)
+            XCTAssertEqual(url.absoluteString, "https://chatgpt.com/backend-api/wham/usage")
+            if request.value(forHTTPHeaderField: "Cookie") != nil {
+                webRequestCount += 1
+                let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
+                let body = """
+                {
+                  "plan_type": "pro",
+                  "rate_limit": {
+                    "primary_window": { "used_percent": 20, "reset_at": 1760000000 },
+                    "secondary_window": { "used_percent": 40, "reset_at": 1760500000 }
+                  },
+                  "credits": { "balance": 7 }
+                }
+                """
+                return (response, Data(body.utf8))
+            }
+
+            apiRequestCount += 1
+            let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            let body = """
+            {
+              "plan_type": "plus",
+              "rate_limit": {
+                "primary_window": { "used_percent": 25 }
+              }
+            }
+            """
+            return (response, Data(body.utf8))
+        }
+        defer { OfficialMockURLProtocol.requestHandler = nil }
+
+        var descriptor = ProviderDescriptor.defaultOfficialCodex()
+        descriptor.id = "codex-overlay-fill-\(UUID().uuidString)"
+        descriptor.officialConfig?.sourceMode = .api
+        descriptor.officialConfig?.webMode = .autoImport
+        descriptor.officialConfig?.manualCookieAccount = cookieAccount
+
+        let provider = CodexProvider(
+            descriptor: descriptor,
+            session: makeMockURLSession(),
+            keychain: keychain,
+            browserCookieService: BrowserCookieService(),
+            webReadBackoff: WebOverlayRetryBackoff(),
+            cache: FetchedAtOfficialSnapshotCache(),
+            gate: PassthroughOfficialFetchGate(),
+            homeDirectory: { homeDirectory.path },
+            environment: { [:] }
+        )
+
+        let snapshot = try await provider.fetch(forceRefresh: true)
+
+        XCTAssertEqual(snapshot.sourceLabel, "API+Web")
+        let sessionWindow = try XCTUnwrap(snapshot.quotaWindows.first(where: { $0.kind == .session }))
+        XCTAssertEqual(sessionWindow.usedPercent, 25, accuracy: 0.001, "overlay must not overwrite the primary session usage")
+        XCTAssertEqual(sessionWindow.remainingPercent, 75, accuracy: 0.001)
+        XCTAssertEqual(sessionWindow.resetAt, Date(timeIntervalSince1970: 1_760_000_000), "missing primary reset time is filled from the overlay")
+        let weeklyWindow = try XCTUnwrap(snapshot.quotaWindows.first(where: { $0.kind == .weekly }))
+        XCTAssertEqual(weeklyWindow.usedPercent, 40, accuracy: 0.001, "missing weekly window is appended from the overlay")
+        XCTAssertEqual(snapshot.remaining ?? -1, 75, accuracy: 0.001, "primary top-level remaining wins")
+        XCTAssertEqual(snapshot.extras["planType"], "plus", "primary extras win")
+        XCTAssertEqual(snapshot.extras["creditsBalance"], "7.00", "missing extras are filled from the overlay")
+        XCTAssertEqual(apiRequestCount, 1)
+        XCTAssertEqual(webRequestCount, 1, "one overlay request fills every missing slot")
+
+        _ = try await provider.fetch(forceRefresh: false)
+        XCTAssertEqual(apiRequestCount, 1, "non-forced refetch within TTL must not repeat requests")
+        XCTAssertEqual(webRequestCount, 1, "non-forced refetch within TTL must not repeat requests")
+    }
+
+    func testCodex401RefreshesAndRetriesAtMostOnce() async throws {
+        let homeDirectory = try makeTemporaryHomeDirectory(prefix: "codex-401-once")
+        try writeText(
+            codexAuthJSON(accessToken: "codex-401-stale-access"),
+            to: homeDirectory.appendingPathComponent(".config/codex/auth.json")
+        )
+
+        var usageRequestCount = 0
+        var refreshRequestCount = 0
+        OfficialMockURLProtocol.requestHandler = { request in
+            let url = try XCTUnwrap(request.url)
+            if url.absoluteString == "https://auth.openai.com/oauth/token" {
+                refreshRequestCount += 1
+                let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
+                let body = #"{"access_token":"codex-401-fresh-access","refresh_token":"codex-401-fresh-refresh"}"#
+                return (response, Data(body.utf8))
+            }
+
+            XCTAssertEqual(url.absoluteString, "https://chatgpt.com/backend-api/wham/usage")
+            usageRequestCount += 1
+            let response = HTTPURLResponse(url: url, statusCode: 401, httpVersion: nil, headerFields: nil)!
+            return (response, Data())
+        }
+        defer { OfficialMockURLProtocol.requestHandler = nil }
+
+        var descriptor = ProviderDescriptor.defaultOfficialCodex()
+        descriptor.id = "codex-401-once-\(UUID().uuidString)"
+        descriptor.officialConfig?.sourceMode = .api
+        descriptor.officialConfig?.webMode = .disabled
+
+        let provider = CodexProvider(
+            descriptor: descriptor,
+            session: makeMockURLSession(),
+            keychain: makeTestKeychain(),
+            browserCookieService: BrowserCookieService(),
+            cache: FetchedAtOfficialSnapshotCache(),
+            gate: PassthroughOfficialFetchGate(),
+            homeDirectory: { homeDirectory.path },
+            environment: { [:] }
+        )
+
+        do {
+            _ = try await provider.fetch(forceRefresh: true)
+            XCTFail("expected unauthorized failure after one refresh/retry")
+        } catch let error as ProviderError {
+            guard case .unauthorized = error else {
+                return XCTFail("unexpected provider error: \(error)")
+            }
+        } catch {
+            XCTFail("unexpected error: \(error)")
+        }
+
+        XCTAssertEqual(usageRequestCount, 2, "exactly one usage request plus one retry")
+        XCTAssertEqual(refreshRequestCount, 1, "a second 401 must not trigger another refresh")
+    }
+
+    func testCodexCredentialCacheIdentityDeduplicatesAccountComponents() {
+        let identity = CodexProvider.credentialCacheIdentity(
+            accountId: "codex-account",
+            accountSubject: "subject-1",
+            accessTokenFingerprint: "abcd1234"
+        )
+        XCTAssertEqual(identity, "account=codex-account,fingerprint=abcd1234")
+        XCTAssertEqual(identity?.contains("subject="), false, "subject duplicates the account component and must not be counted twice")
+
+        let subjectFallback = CodexProvider.credentialCacheIdentity(
+            accountId: nil,
+            accountSubject: "subject-1",
+            accessTokenFingerprint: "abcd1234"
+        )
+        XCTAssertEqual(subjectFallback, "subject=subject-1,fingerprint=abcd1234")
+
+        XCTAssertNil(
+            CodexProvider.credentialCacheIdentity(accountId: " ", accountSubject: nil, accessTokenFingerprint: "")
+        )
+    }
+
+    func testCodexForceRefreshWaitsForInFlightFetchInsteadOfBypassingGate() async throws {
+        let homeDirectory = try makeTemporaryHomeDirectory(prefix: "codex-force-gate")
+        try writeText(
+            codexAuthJSON(accessToken: "codex-force-gate-access"),
+            to: homeDirectory.appendingPathComponent(".config/codex/auth.json")
+        )
+
+        let usageCounter = RequestCounter()
+        let inFlightBlock = DispatchSemaphore(value: 0)
+        OfficialMockURLProtocol.requestHandler = { request in
+            let url = try XCTUnwrap(request.url)
+            XCTAssertEqual(url.absoluteString, "https://chatgpt.com/backend-api/wham/usage")
+            if usageCounter.increment() == 1 {
+                _ = inFlightBlock.wait(timeout: .now() + 5)
+            }
+            let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            let body = """
+            {
+              "plan_type": "plus",
+              "rate_limit": {
+                "primary_window": { "used_percent": 25, "reset_at": 1760000000 },
+                "secondary_window": { "used_percent": 60, "reset_at": 1760500000 }
+              }
+            }
+            """
+            return (response, Data(body.utf8))
+        }
+        defer { OfficialMockURLProtocol.requestHandler = nil }
+
+        var descriptor = ProviderDescriptor.defaultOfficialCodex()
+        descriptor.id = "codex-force-gate-\(UUID().uuidString)"
+        descriptor.officialConfig?.sourceMode = .api
+        descriptor.officialConfig?.webMode = .disabled
+
+        let provider = CodexProvider(
+            descriptor: descriptor,
+            session: makeMockURLSession(),
+            keychain: makeTestKeychain(),
+            browserCookieService: BrowserCookieService(),
+            cache: FetchedAtOfficialSnapshotCache(),
+            gate: SerialOfficialFetchGate(),
+            homeDirectory: { homeDirectory.path },
+            environment: { [:] }
+        )
+
+        let firstTask = Task { try await provider.fetch(forceRefresh: false) }
+        try waitUntil(timeout: 2) { usageCounter.value == 1 }
+
+        let secondTask = Task { try await provider.fetch(forceRefresh: true) }
+        try await Task.sleep(nanoseconds: 200_000_000)
+        XCTAssertEqual(usageCounter.value, 1, "force refresh must not bypass the in-flight gate and start a second network load")
+
+        inFlightBlock.signal()
+        let firstSnapshot = try await firstTask.value
+        let secondSnapshot = try await secondTask.value
+        XCTAssertEqual(firstSnapshot.remaining ?? -1, 40, accuracy: 0.001)
+        XCTAssertEqual(secondSnapshot.remaining ?? -1, 40, accuracy: 0.001)
+        XCTAssertEqual(usageCounter.value, 2, "the force refresh runs its own load only after the in-flight fetch finishes")
+    }
+
+    // MARK: - Doc §8.4 provider request optimization (Claude)
+
+    func testClaudeAPISkipsWebOverlayWhenOAuthUsageIsComplete() async throws {
+        let homeDirectory = try makeTemporaryHomeDirectory(prefix: "claude-overlay-skip")
+        try writeText(
+            claudeCredentialsJSON(accessToken: "claude-complete-access"),
+            to: homeDirectory.appendingPathComponent(".claude/.credentials.json")
+        )
+        let keychain = makeTestKeychain()
+        let cookieAccount = "official/claude/cookie-header-\(UUID().uuidString)"
+        XCTAssertTrue(keychain.saveToken("sessionKey=web-session-token", service: KeychainService.defaultServiceName, account: cookieAccount))
+
+        var oauthUsageRequestCount = 0
+        var webRequestCount = 0
+        OfficialMockURLProtocol.requestHandler = { request in
+            let url = try XCTUnwrap(request.url)
+            if url.absoluteString == "https://api.anthropic.com/api/oauth/usage" {
+                oauthUsageRequestCount += 1
+                let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
+                let body = """
+                {
+                  "five_hour": { "utilization": 30, "resets_at": "2026-04-11T10:00:00Z" },
+                  "seven_day": { "utilization": 55, "resets_at": "2026-04-17T00:00:00Z" }
+                }
+                """
+                return (response, Data(body.utf8))
+            }
+            webRequestCount += 1
+            let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            return (response, Data(#"{}"#.utf8))
+        }
+        defer { OfficialMockURLProtocol.requestHandler = nil }
+
+        var descriptor = ProviderDescriptor.defaultOfficialClaude()
+        descriptor.id = "claude-overlay-skip-\(UUID().uuidString)"
+        descriptor.officialConfig?.sourceMode = .api
+        descriptor.officialConfig?.webMode = .autoImport
+        descriptor.officialConfig?.manualCookieAccount = cookieAccount
+
+        let provider = ClaudeProvider(
+            descriptor: descriptor,
+            session: makeMockURLSession(),
+            keychain: keychain,
+            browserCookieService: BrowserCookieService(),
+            webReadBackoff: WebOverlayRetryBackoff(),
+            cache: FetchedAtOfficialSnapshotCache(),
+            gate: PassthroughOfficialFetchGate(),
+            webSegments: OfficialWebSegmentCache(),
+            homeDirectory: { homeDirectory.path }
+        )
+
+        let snapshot = try await provider.fetch(forceRefresh: true)
+
+        XCTAssertEqual(snapshot.sourceLabel, "API")
+        XCTAssertEqual(snapshot.quotaWindows.count, 2)
+        XCTAssertEqual(oauthUsageRequestCount, 1, "complete OAuth usage should be fetched exactly once")
+        XCTAssertEqual(webRequestCount, 0, "complete OAuth usage must not trigger the Web overlay")
+    }
+
+    func testClaude401RefreshesAndRetriesAtMostOnce() async throws {
+        let homeDirectory = try makeTemporaryHomeDirectory(prefix: "claude-401-once")
+        try writeText(
+            claudeCredentialsJSON(accessToken: "claude-401-stale-access"),
+            to: homeDirectory.appendingPathComponent(".claude/.credentials.json")
+        )
+
+        var usageRequestCount = 0
+        var refreshRequestCount = 0
+        OfficialMockURLProtocol.requestHandler = { request in
+            let url = try XCTUnwrap(request.url)
+            if url.absoluteString == "https://platform.claude.com/v1/oauth/token" {
+                refreshRequestCount += 1
+                let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
+                let body = """
+                {
+                  "access_token": "claude-401-fresh-access",
+                  "refresh_token": "claude-401-fresh-refresh",
+                  "expires_in": 3600
+                }
+                """
+                return (response, Data(body.utf8))
+            }
+
+            XCTAssertEqual(url.absoluteString, "https://api.anthropic.com/api/oauth/usage")
+            usageRequestCount += 1
+            let response = HTTPURLResponse(url: url, statusCode: 401, httpVersion: nil, headerFields: nil)!
+            return (response, Data())
+        }
+        defer { OfficialMockURLProtocol.requestHandler = nil }
+
+        var descriptor = ProviderDescriptor.defaultOfficialClaude()
+        descriptor.id = "claude-401-once-\(UUID().uuidString)"
+        descriptor.officialConfig?.sourceMode = .api
+        descriptor.officialConfig?.webMode = .disabled
+
+        let provider = ClaudeProvider(
+            descriptor: descriptor,
+            session: makeMockURLSession(),
+            keychain: makeTestKeychain(),
+            browserCookieService: BrowserCookieService(),
+            cache: FetchedAtOfficialSnapshotCache(),
+            gate: PassthroughOfficialFetchGate(),
+            homeDirectory: { homeDirectory.path }
+        )
+
+        do {
+            _ = try await provider.fetch(forceRefresh: true)
+            XCTFail("expected unauthorized failure after one refresh/retry")
+        } catch let error as ProviderError {
+            guard case .unauthorized = error else {
+                return XCTFail("unexpected provider error: \(error)")
+            }
+        } catch {
+            XCTFail("unexpected error: \(error)")
+        }
+
+        XCTAssertEqual(usageRequestCount, 2, "exactly one usage request plus one retry")
+        XCTAssertEqual(refreshRequestCount, 1, "a second 401 must not trigger another refresh")
+    }
+
+    func testClaudeWebFailureDoesNotOverwriteOAuthQuota() async throws {
+        let homeDirectory = try makeTemporaryHomeDirectory(prefix: "claude-web-failure")
+        try writeText(
+            claudeCredentialsJSON(accessToken: "claude-web-failure-access"),
+            to: homeDirectory.appendingPathComponent(".claude/.credentials.json")
+        )
+        let keychain = makeTestKeychain()
+        let cookieAccount = "official/claude/cookie-header-\(UUID().uuidString)"
+        XCTAssertTrue(keychain.saveToken("other-cookie=1", service: KeychainService.defaultServiceName, account: cookieAccount))
+
+        var oauthUsageRequestCount = 0
+        var webRequestCount = 0
+        OfficialMockURLProtocol.requestHandler = { request in
+            let url = try XCTUnwrap(request.url)
+            if url.absoluteString == "https://api.anthropic.com/api/oauth/usage" {
+                oauthUsageRequestCount += 1
+                let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
+                let body = """
+                {
+                  "five_hour": { "utilization": 30, "resets_at": "2026-04-11T10:00:00Z" }
+                }
+                """
+                return (response, Data(body.utf8))
+            }
+            webRequestCount += 1
+            let response = HTTPURLResponse(url: url, statusCode: 500, httpVersion: nil, headerFields: nil)!
+            return (response, Data())
+        }
+        defer { OfficialMockURLProtocol.requestHandler = nil }
+
+        var descriptor = ProviderDescriptor.defaultOfficialClaude()
+        descriptor.id = "claude-web-failure-\(UUID().uuidString)"
+        descriptor.officialConfig?.sourceMode = .api
+        descriptor.officialConfig?.webMode = .autoImport
+        descriptor.officialConfig?.manualCookieAccount = cookieAccount
+
+        let provider = ClaudeProvider(
+            descriptor: descriptor,
+            session: makeMockURLSession(),
+            keychain: keychain,
+            browserCookieService: BrowserCookieService(),
+            webReadBackoff: WebOverlayRetryBackoff(),
+            cache: FetchedAtOfficialSnapshotCache(),
+            gate: PassthroughOfficialFetchGate(),
+            webSegments: OfficialWebSegmentCache(),
+            homeDirectory: { homeDirectory.path }
+        )
+
+        let snapshot = try await provider.fetch(forceRefresh: true)
+
+        XCTAssertEqual(oauthUsageRequestCount, 1)
+        XCTAssertGreaterThanOrEqual(webRequestCount, 1, "incomplete primary data attempts the Web overlay")
+        XCTAssertEqual(snapshot.sourceLabel, "API", "failed Web overlay must not relabel the snapshot")
+        XCTAssertEqual(snapshot.quotaWindows.count, 1, "failed Web overlay must not add windows")
+        let sessionWindow = try XCTUnwrap(snapshot.quotaWindows.first(where: { $0.kind == .session }))
+        XCTAssertEqual(sessionWindow.usedPercent, 30, accuracy: 0.001, "successful OAuth quota survives the Web failure")
+        XCTAssertEqual(snapshot.remaining ?? -1, 70, accuracy: 0.001)
+    }
+
+    func testClaudeWebOverlayFillsMissingFieldsAndReusesCachedSegments() async throws {
+        let homeDirectory = try makeTemporaryHomeDirectory(prefix: "claude-overlay-segments")
+        try writeText(
+            claudeCredentialsJSON(accessToken: "claude-overlay-segments-access"),
+            to: homeDirectory.appendingPathComponent(".claude/.credentials.json")
+        )
+        let keychain = makeTestKeychain()
+        let cookieAccount = "official/claude/cookie-header-\(UUID().uuidString)"
+        XCTAssertTrue(keychain.saveToken("other-cookie=1", service: KeychainService.defaultServiceName, account: cookieAccount))
+
+        var oauthUsageRequestCount = 0
+        var organizationsRequestCount = 0
+        var webUsageRequestCount = 0
+        var overageRequestCount = 0
+        var accountRequestCount = 0
+        OfficialMockURLProtocol.requestHandler = { request in
+            let url = try XCTUnwrap(request.url)
+            let okResponse = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            switch url.absoluteString {
+            case "https://api.anthropic.com/api/oauth/usage":
+                oauthUsageRequestCount += 1
+                let body = """
+                {
+                  "five_hour": { "utilization": 30, "resets_at": "2026-04-11T10:00:00Z" }
+                }
+                """
+                return (okResponse, Data(body.utf8))
+            case "https://claude.ai/api/organizations":
+                organizationsRequestCount += 1
+                return (okResponse, Data(#"[{"uuid":"org-1"}]"#.utf8))
+            case "https://claude.ai/api/organizations/org-1/usage":
+                webUsageRequestCount += 1
+                let body = """
+                {
+                  "five_hour": { "utilization": 10, "resets_at": "2026-04-11T10:00:00Z" },
+                  "seven_day": { "utilization": 55, "resets_at": "2026-04-17T00:00:00Z" }
+                }
+                """
+                return (okResponse, Data(body.utf8))
+            case "https://claude.ai/api/organizations/org-1/overage_spend_limit":
+                overageRequestCount += 1
+                return (okResponse, Data(#"{"used_credits": 5, "monthly_limit": 100}"#.utf8))
+            case "https://claude.ai/api/account":
+                accountRequestCount += 1
+                return (okResponse, Data(#"{"email":"web@example.com"}"#.utf8))
+            default:
+                XCTFail("unexpected request to \(url.absoluteString)")
+                let response = HTTPURLResponse(url: url, statusCode: 404, httpVersion: nil, headerFields: nil)!
+                return (response, Data())
+            }
+        }
+        defer { OfficialMockURLProtocol.requestHandler = nil }
+
+        var descriptor = ProviderDescriptor.defaultOfficialClaude()
+        descriptor.id = "claude-overlay-segments-\(UUID().uuidString)"
+        descriptor.officialConfig?.sourceMode = .api
+        descriptor.officialConfig?.webMode = .autoImport
+        descriptor.officialConfig?.manualCookieAccount = cookieAccount
+
+        let provider = ClaudeProvider(
+            descriptor: descriptor,
+            session: makeMockURLSession(),
+            keychain: keychain,
+            browserCookieService: BrowserCookieService(),
+            webReadBackoff: WebOverlayRetryBackoff(),
+            cache: FetchedAtOfficialSnapshotCache(),
+            gate: PassthroughOfficialFetchGate(),
+            webSegments: OfficialWebSegmentCache(),
+            homeDirectory: { homeDirectory.path }
+        )
+
+        let snapshot = try await provider.fetch(forceRefresh: true)
+
+        XCTAssertEqual(snapshot.sourceLabel, "API+Web")
+        let sessionWindow = try XCTUnwrap(snapshot.quotaWindows.first(where: { $0.kind == .session }))
+        XCTAssertEqual(sessionWindow.usedPercent, 30, accuracy: 0.001, "overlay must not overwrite the OAuth session usage")
+        XCTAssertEqual(sessionWindow.remainingPercent, 70, accuracy: 0.001)
+        let weeklyWindow = try XCTUnwrap(snapshot.quotaWindows.first(where: { $0.kind == .weekly }))
+        XCTAssertEqual(weeklyWindow.usedPercent, 55, accuracy: 0.001, "missing weekly window is appended from the overlay")
+        XCTAssertEqual(snapshot.extras["extraUsageCost"], "5.00")
+        XCTAssertEqual(snapshot.extras["extraUsageLimit"], "100.00")
+        XCTAssertEqual(snapshot.accountLabel, "web@example.com")
+        XCTAssertEqual(oauthUsageRequestCount, 1)
+        XCTAssertEqual(organizationsRequestCount, 1)
+        XCTAssertEqual(webUsageRequestCount, 1)
+        XCTAssertEqual(overageRequestCount, 1)
+        XCTAssertEqual(accountRequestCount, 1)
+
+        _ = try await provider.fetch(forceRefresh: true)
+
+        XCTAssertEqual(oauthUsageRequestCount, 2, "forced refresh re-requests the OAuth usage")
+        XCTAssertEqual(webUsageRequestCount, 2, "forced refresh bypasses the usage segment cache")
+        XCTAssertEqual(organizationsRequestCount, 1, "organization id uses a long TTL and is not re-requested")
+        XCTAssertEqual(overageRequestCount, 1, "overage metadata uses its own TTL and is not re-requested")
+        XCTAssertEqual(accountRequestCount, 1, "account metadata uses its own TTL and is not re-requested")
+    }
+
+    private func makeMockURLSession() -> URLSession {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [OfficialMockURLProtocol.self]
+        return URLSession(configuration: configuration)
+    }
+
+    private func waitUntil(
+        timeout: TimeInterval,
+        _ condition: () throws -> Bool
+    ) throws {
+        let deadline = Date().addingTimeInterval(timeout)
+        while true {
+            if try condition() {
+                return
+            }
+            if Date() > deadline {
+                XCTFail("condition not met before \(timeout)s timeout")
+                return
+            }
+            Thread.sleep(forTimeInterval: 0.02)
+        }
+    }
+
+    private func codexAuthJSON(accessToken: String) -> String {
+        let idToken = makeJWT(email: "vault-priority@example.com")
+        return #"""
+        {
+          "last_refresh": "\#(ISO8601DateFormatter().string(from: Date()))",
+          "tokens": {
+            "access_token": "\#(accessToken)",
+            "refresh_token": "vault-codex-refresh",
+            "account_id": "vault-codex-account",
+            "id_token": "\#(idToken)"
+          }
+        }
+        """#
+    }
+
+    private func claudeCredentialsJSON(accessToken: String) -> String {
+        #"""
+        {
+          "claudeAiOauth": {
+            "accessToken": "\#(accessToken)",
+            "refreshToken": "vault-claude-refresh",
+            "expiresAt": 4102444800000,
+            "subscriptionType": "pro",
+            "scopes": ["user:profile"]
+          }
+        }
+        """#
+    }
+
     func testClaudeForceRefreshDoesNotReturnStaleCachedSnapshot() async throws {
         let homeDirectory = try makeTemporaryHomeDirectory(prefix: "claude-provider-tests")
         let credentialsPath = homeDirectory.appendingPathComponent(".claude/.credentials.json")
@@ -855,6 +1773,49 @@ final class OfficialProviderTests: XCTestCase {
         )
         XCTAssertEqual(refreshed.header, "session=forced")
         XCTAssertEqual(spy.detectCookieHeaderCallCount, 2)
+    }
+
+    func testWebOverlayBackgroundRefreshUsesBackgroundIntentAndNeverAuthRecovery() async throws {
+        let providerKey = "test-overlay-intent-\(UUID().uuidString)"
+        let host = "\(providerKey).example.com"
+        let spy = SpyBrowserCookieDetector()
+        let strategy = OfficialBrowserCookieImportStrategy(
+            providerKey: providerKey,
+            hostContains: host,
+            namedCookie: nil,
+            autoImportMissingCredential: "missing auto cookie",
+            manualCredentialFallback: "manual cookie",
+            normalizeManualHeader: { $0 },
+            normalizeDetectedHeader: { $0 }
+        )
+
+        // Background refresh resolves with the .background intent only; the
+        // browser service itself refuses live lookups for that intent.
+        await XCTAssertThrowsProviderError {
+            _ = try await OfficialProviderWebOverlayRuntime.resolveCookieHeader(
+                official: OfficialProviderConfig(sourceMode: .web, webMode: .autoImport),
+                descriptorID: "\(providerKey)-descriptor",
+                keychain: makeTestKeychain(),
+                browserCookieService: spy,
+                forceRefresh: false,
+                strategy: strategy
+            )
+        }
+        XCTAssertEqual(spy.recordedIntents, [.background])
+
+        // The user-initiated force refresh is the interactive import path.
+        spy.cookieHeaderResult = BrowserCookieHeader(header: "session=forced", source: "Auto:Test")
+        let refreshed = try await OfficialProviderWebOverlayRuntime.resolveCookieHeader(
+            official: OfficialProviderConfig(sourceMode: .web, webMode: .autoImport),
+            descriptorID: "\(providerKey)-descriptor",
+            keychain: makeTestKeychain(),
+            browserCookieService: spy,
+            forceRefresh: true,
+            strategy: strategy
+        )
+        XCTAssertEqual(refreshed.header, "session=forced")
+        XCTAssertEqual(spy.recordedIntents, [.background, .interactiveImport])
+        XCTAssertFalse(spy.recordedIntents.contains(.authRecovery), "Web overlay never triggers browser recovery on its own")
     }
 
     func testClaudeWebBackoffSkipsRepeatedBrowserRead() async throws {
@@ -2156,6 +3117,27 @@ private final class OfficialMockURLProtocol: URLProtocol {
     override func stopLoading() {}
 }
 
+/// Thread-safe request counter shared between URLProtocol handler threads and
+/// async test code (NSLock is unavailable directly in async contexts).
+private final class RequestCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+
+    @discardableResult
+    func increment() -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        count += 1
+        return count
+    }
+
+    var value: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return count
+    }
+}
+
 private func XCTAssertThrowsProviderError(
     _ operation: () async throws -> Void,
     file: StaticString = #filePath,
@@ -2176,6 +3158,7 @@ private final class SpyBrowserCookieDetector: BrowserCookieDetecting {
     var detectNamedCookieCallCount = 0
     var cookieHeaderResult: BrowserCookieHeader?
     var namedCookieResult: BrowserCookieHeader?
+    private(set) var recordedIntents: [BrowserCredentialAccessIntent] = []
 
     func detectCookieHeader(
         hostContains: String,
@@ -2183,6 +3166,7 @@ private final class SpyBrowserCookieDetector: BrowserCookieDetecting {
         accessIntent: BrowserCredentialAccessIntent
     ) -> BrowserCookieHeader? {
         detectCookieHeaderCallCount += 1
+        recordedIntents.append(accessIntent)
         return cookieHeaderResult
     }
 
@@ -2193,6 +3177,7 @@ private final class SpyBrowserCookieDetector: BrowserCookieDetecting {
         accessIntent: BrowserCredentialAccessIntent
     ) -> BrowserCookieHeader? {
         detectNamedCookieCallCount += 1
+        recordedIntents.append(accessIntent)
         return namedCookieResult
     }
 }

@@ -236,11 +236,14 @@ extension SettingsView {
 
     func relayProviderDetailPage(_ provider: ProviderDescriptor) -> some View {
         let snapshot = viewModel.snapshots[provider.id]
+        // doc 10.3 信息顺序：状态 → 当前账号（站点）→ 额度/余额 → 更新时间/来源/可信度 → 配置。
         return VStack(alignment: .leading, spacing: 24) {
             relayProviderHeader(provider)
-            relayUsagePanel(provider, snapshot: snapshot)
-            relayConfigPanel(provider)
+            providerDetailStatusSection(provider, snapshot: snapshot, error: viewModel.errors[provider.id])
             relaySitePanel(provider, snapshot: snapshot)
+            relayUsagePanel(provider, snapshot: snapshot)
+            providerDetailProvenanceSection(provider, snapshot: snapshot)
+            relayConfigPanel(provider)
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
     }
@@ -430,11 +433,13 @@ extension SettingsView {
     func relayHeaderTrailingControls(_ provider: ProviderDescriptor) -> some View {
         HStack(spacing: 16) {
             Button {
-                viewModel.refreshNow()
+                Task { await viewModel.refreshSelectedProvider(provider.id) }
             } label: {
                 settingsCompactToolbarIcon(named: "refresh_icon", fallback: "arrow.clockwise")
             }
             .buttonStyle(.plain)
+            .help(viewModel.localizedText("刷新此来源", "Refresh this provider"))
+            .accessibilityLabel(viewModel.localizedText("刷新此来源", "Refresh this provider"))
 
             SettingsToggleSwitch(
                 isOn: Binding(
@@ -765,10 +770,13 @@ extension SettingsView {
         let snapshot = viewModel.snapshots[provider.id]
         let error = viewModel.errors[provider.id]
 
+        // doc 10.3 信息顺序：状态 → 当前账号 → 额度/余额和重置时间 → 更新时间/来源/可信度 → 配置（授权/套餐/凭证）。
         return VStack(alignment: .leading, spacing: 24) {
             officialSubscriptionHeader(provider)
-            officialSubscriptionUsageSection(provider: provider, snapshot: snapshot)
+            providerDetailStatusSection(provider, snapshot: snapshot, error: error)
             officialSubscriptionAccountsSection(provider: provider, snapshot: snapshot, error: error)
+            officialSubscriptionUsageSection(provider: provider, snapshot: snapshot)
+            providerDetailProvenanceSection(provider, snapshot: snapshot)
             officialSubscriptionConfigSection(provider)
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -791,11 +799,13 @@ extension SettingsView {
 
             HStack(spacing: 16) {
                 Button {
-                    viewModel.refreshNow()
+                    Task { await viewModel.refreshSelectedProvider(provider.id) }
                 } label: {
                     settingsCompactToolbarIcon(named: "refresh_icon", fallback: "arrow.clockwise")
                 }
                 .buttonStyle(.plain)
+                .help(viewModel.localizedText("刷新此来源", "Refresh this provider"))
+                .accessibilityLabel(viewModel.localizedText("刷新此来源", "Refresh this provider"))
 
                 SettingsToggleSwitch(
                     isOn: Binding(
