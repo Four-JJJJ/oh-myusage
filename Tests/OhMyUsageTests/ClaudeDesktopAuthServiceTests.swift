@@ -153,6 +153,97 @@ final class ClaudeDesktopAuthServiceTests: XCTestCase {
         XCTAssertEqual(service.currentCredentialsJSONForAuthRecovery(), externalJSON)
     }
 
+    // MARK: - Auth-recovery migration fast path (Phase 1 §7.6)
+
+    func testRecoveryMigrationImportsExternalKeychainWhenVaultIsEmpty() {
+        let home = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent("claude-auth-home-\(UUID().uuidString)", isDirectory: true)
+        let externalJSON = sampleCredentialsJSON(accessToken: "external-access", refreshToken: "external-refresh")
+        let (defaults, suiteName) = makeTestDefaults()
+        defer { removeTestDefaults(named: suiteName) }
+        let externalReads = SendableCounter()
+        let vault = OfficialOAuthVaultStore(
+            keychain: makeTestKeychain(),
+            defaults: defaults,
+            externalKeychainReader: { _ in
+                externalReads.increment()
+                return externalJSON
+            }
+        )
+        let service = ClaudeDesktopAuthService(
+            homeDirectory: { home.path },
+            environment: { [:] },
+            keychainReader: { nil },
+            keychainWriter: { _ in true },
+            oauthVault: vault
+        )
+
+        let migrated = service.migrateExternalKeychainCredentialForRecoveryIfNeeded()
+
+        XCTAssertEqual(migrated, externalJSON)
+        XCTAssertEqual(vault.readOAuthJSON(provider: .claude), externalJSON)
+        XCTAssertEqual(externalReads.value, 1)
+        // 迁移成功后普通轮询即可从 vault 读到，无需再碰外部 Keychain。
+        XCTAssertEqual(service.currentCredentialsJSON(), externalJSON)
+        XCTAssertEqual(externalReads.value, 1)
+    }
+
+    func testRecoveryMigrationSkipsExternalKeychainWhenVaultAlreadyValid() {
+        let home = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent("claude-auth-home-\(UUID().uuidString)", isDirectory: true)
+        let (defaults, suiteName) = makeTestDefaults()
+        defer { removeTestDefaults(named: suiteName) }
+        let externalReads = SendableCounter()
+        let externalJSON = sampleCredentialsJSON(accessToken: "external-access", refreshToken: "external-refresh")
+        let vault = OfficialOAuthVaultStore(
+            keychain: makeTestKeychain(),
+            defaults: defaults,
+            externalKeychainReader: { _ in
+                externalReads.increment()
+                return externalJSON
+            }
+        )
+        XCTAssertTrue(
+            vault.saveOAuthJSON(
+                provider: .claude,
+                rawJSON: sampleCredentialsJSON(accessToken: "vault-access", refreshToken: "vault-refresh")
+            )
+        )
+        let service = ClaudeDesktopAuthService(
+            homeDirectory: { home.path },
+            environment: { [:] },
+            keychainReader: { nil },
+            keychainWriter: { _ in true },
+            oauthVault: vault
+        )
+
+        // vault 已有可用凭证时不迁移，避免把可能已被上游吊销的旧授权反复复活。
+        XCTAssertNil(service.migrateExternalKeychainCredentialForRecoveryIfNeeded())
+        XCTAssertEqual(externalReads.value, 0)
+    }
+
+    func testRecoveryMigrationReturnsNilWhenExternalKeychainIsEmpty() {
+        let home = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent("claude-auth-home-\(UUID().uuidString)", isDirectory: true)
+        let (defaults, suiteName) = makeTestDefaults()
+        defer { removeTestDefaults(named: suiteName) }
+        let vault = OfficialOAuthVaultStore(
+            keychain: makeTestKeychain(),
+            defaults: defaults,
+            externalKeychainReader: { _ in nil }
+        )
+        let service = ClaudeDesktopAuthService(
+            homeDirectory: { home.path },
+            environment: { [:] },
+            keychainReader: { nil },
+            keychainWriter: { _ in true },
+            oauthVault: vault
+        )
+
+        XCTAssertNil(service.migrateExternalKeychainCredentialForRecoveryIfNeeded())
+        XCTAssertNil(vault.readOAuthJSON(provider: .claude))
+    }
+
     func testApplyCredentialsRejectsInvalidJSON() {
         let service = ClaudeDesktopAuthService(
             homeDirectory: { NSHomeDirectory() },

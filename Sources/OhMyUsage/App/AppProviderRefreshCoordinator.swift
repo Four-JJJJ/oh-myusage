@@ -65,14 +65,17 @@ final class AppProviderRefreshCoordinator {
         await withCheckedContinuation { continuation in
             waitingRefreshSlotContinuations.append(continuation)
         }
-        activeRefreshSlotCount += 1
+        // 槽位由释放方直接移交（release 不递减），这里无需再自增，
+        // 否则唤醒与新增 acquire 之间会把计数短暂推过上限。
     }
 
     private func releaseRefreshSlot() {
-        activeRefreshSlotCount = max(0, activeRefreshSlotCount - 1)
         if !waitingRefreshSlotContinuations.isEmpty {
+            // 直接把槽位移交给队首等待者，保持计数不变。
             waitingRefreshSlotContinuations.removeFirst().resume()
+            return
         }
+        activeRefreshSlotCount = max(0, activeRefreshSlotCount - 1)
     }
 
     /// Per-provider in-flight gate shared by poll / refreshNow / displayed / local-session paths

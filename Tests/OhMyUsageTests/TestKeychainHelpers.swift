@@ -46,3 +46,22 @@ func removeTestDefaults(named suiteName: String) {
     guard !suiteName.isEmpty else { return }
     UserDefaults.standard.removePersistentDomain(forName: suiteName)
 }
+
+/// Lock-protected counter safe to capture in @Sendable closures (e.g. the
+/// vault store's externalKeychainReader) when tests need call counts.
+final class SendableCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+
+    var value: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return count
+    }
+
+    func increment() {
+        lock.lock()
+        count += 1
+        lock.unlock()
+    }
+}

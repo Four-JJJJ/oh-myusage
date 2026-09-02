@@ -27,7 +27,9 @@ final class GeminiProvider: UsageProvider, @unchecked Sendable {
     private let cache: any OfficialSnapshotCaching
     private let gate: any OfficialFetchGating
     private let contextCache: GeminiCodeAssistContextCache
-    private let keychain: (any TokenCredentialStoring)?
+    /// internal 以便测试确认 ProviderFactoryRegistry 已注入共享凭证存储
+    /// （防止 8.4 要求的 refresh 持久化在生产接线中被漏接）。
+    let keychain: (any TokenCredentialStoring)?
     private let homeDirectory: () -> String
     private let shell: any ShellCommandRunning
 

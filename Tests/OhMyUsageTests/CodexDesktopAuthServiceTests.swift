@@ -156,6 +156,94 @@ final class CodexDesktopAuthServiceTests: XCTestCase {
         XCTAssertEqual(service.currentAuthJSONForAuthRecovery(), externalJSON)
     }
 
+    // MARK: - Auth-recovery migration fast path (Phase 1 §7.6)
+
+    func testRecoveryMigrationImportsExternalKeychainWhenVaultIsEmpty() {
+        let directory = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("codex-auth-tests-\(UUID().uuidString)", isDirectory: true)
+        let externalJSON = sampleAuthJSON(accountID: "acc-external", email: "external@example.com")
+        let (defaults, suiteName) = makeTestDefaults()
+        defer { removeTestDefaults(named: suiteName) }
+        let externalReads = SendableCounter()
+        let vault = OfficialOAuthVaultStore(
+            keychain: makeTestKeychain(),
+            defaults: defaults,
+            externalKeychainReader: { _ in
+                externalReads.increment()
+                return externalJSON
+            }
+        )
+        let service = CodexDesktopAuthService(
+            homeDirectory: { directory.path },
+            environment: { [:] },
+            keychainReader: { nil },
+            keychainWriter: { _ in true },
+            oauthVault: vault
+        )
+
+        let migrated = service.migrateExternalKeychainCredentialForRecoveryIfNeeded()
+
+        XCTAssertEqual(migrated, externalJSON)
+        XCTAssertEqual(vault.readOAuthJSON(provider: .codex), externalJSON)
+        XCTAssertEqual(externalReads.value, 1)
+        // 迁移成功后普通轮询即可从 vault 读到，无需再碰外部 Keychain。
+        XCTAssertEqual(service.currentAuthJSON(), externalJSON)
+        XCTAssertEqual(externalReads.value, 1)
+    }
+
+    func testRecoveryMigrationSkipsExternalKeychainWhenVaultAlreadyValid() {
+        let directory = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("codex-auth-tests-\(UUID().uuidString)", isDirectory: true)
+        let (defaults, suiteName) = makeTestDefaults()
+        defer { removeTestDefaults(named: suiteName) }
+        let externalReads = SendableCounter()
+        let externalJSON = sampleAuthJSON(accountID: "acc-external", email: "external@example.com")
+        let vault = OfficialOAuthVaultStore(
+            keychain: makeTestKeychain(),
+            defaults: defaults,
+            externalKeychainReader: { _ in
+                externalReads.increment()
+                return externalJSON
+            }
+        )
+        XCTAssertTrue(
+            vault.saveOAuthJSON(provider: .codex, rawJSON: sampleAuthJSON(accountID: "acc-vault", email: "vault@example.com"))
+        )
+        let service = CodexDesktopAuthService(
+            homeDirectory: { directory.path },
+            environment: { [:] },
+            keychainReader: { nil },
+            keychainWriter: { _ in true },
+            oauthVault: vault
+        )
+
+        // vault 已有可用凭证时不迁移，避免把可能已被上游吊销的旧授权反复复活。
+        XCTAssertNil(service.migrateExternalKeychainCredentialForRecoveryIfNeeded())
+        XCTAssertEqual(externalReads.value, 0)
+    }
+
+    func testRecoveryMigrationReturnsNilWhenExternalKeychainIsEmpty() {
+        let directory = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("codex-auth-tests-\(UUID().uuidString)", isDirectory: true)
+        let (defaults, suiteName) = makeTestDefaults()
+        defer { removeTestDefaults(named: suiteName) }
+        let vault = OfficialOAuthVaultStore(
+            keychain: makeTestKeychain(),
+            defaults: defaults,
+            externalKeychainReader: { _ in nil }
+        )
+        let service = CodexDesktopAuthService(
+            homeDirectory: { directory.path },
+            environment: { [:] },
+            keychainReader: { nil },
+            keychainWriter: { _ in true },
+            oauthVault: vault
+        )
+
+        XCTAssertNil(service.migrateExternalKeychainCredentialForRecoveryIfNeeded())
+        XCTAssertNil(vault.readOAuthJSON(provider: .codex))
+    }
+
     private func sampleAuthJSON(accountID: String, email: String) -> String {
         let payload = Data(#"{"email":"\#(email)"}"#.utf8).base64EncodedString()
             .replacingOccurrences(of: "+", with: "-")

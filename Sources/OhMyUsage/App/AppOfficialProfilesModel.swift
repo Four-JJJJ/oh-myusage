@@ -33,8 +33,24 @@ final class AppOfficialProfilesModel {
                 slotID: slotID,
                 currentTask: host.codexOAuthImportTask,
                 currentState: { host.codexOAuthImportState },
-                importAccount: { [oauthImportOrchestrator = host.oauthImportOrchestrator] provider, slotID, stateHandler in
-                    await oauthImportOrchestrator.importAccount(
+                importAccount: { [
+                    oauthImportOrchestrator = host.oauthImportOrchestrator,
+                    codexDesktopAuthService = host.codexDesktopAuthService
+                ] provider, slotID, stateHandler in
+                    // Phase 1 §7.6 认证恢复快路径：用户已明确点击导入/恢复，
+                    // 若外部 Keychain 里还有效且 vault 缺失，静默迁移进 vault，
+                    // 跳过完整交互式重新登录。
+                    if let migratedJSON = codexDesktopAuthService.migrateExternalKeychainCredentialForRecoveryIfNeeded() {
+                        let email = (try? CodexAccountProfileStore.parseAuthJSON(migratedJSON))?.accountEmail
+                        return .success(OAuthImportResult(
+                            provider: provider,
+                            slotID: slotID,
+                            mode: .browserCallback,
+                            rawCredentialJSON: migratedJSON,
+                            accountEmail: email
+                        ))
+                    }
+                    return await oauthImportOrchestrator.importAccount(
                         provider: provider,
                         slotID: slotID,
                         stateHandler: stateHandler
@@ -64,8 +80,22 @@ final class AppOfficialProfilesModel {
                 slotID: slotID,
                 currentTask: host.claudeOAuthImportTask,
                 currentState: { host.claudeOAuthImportState },
-                importAccount: { [oauthImportOrchestrator = host.oauthImportOrchestrator] provider, slotID, stateHandler in
-                    await oauthImportOrchestrator.importAccount(
+                importAccount: { [
+                    oauthImportOrchestrator = host.oauthImportOrchestrator,
+                    claudeDesktopAuthService = host.claudeDesktopAuthService
+                ] provider, slotID, stateHandler in
+                    // Phase 1 §7.6 认证恢复快路径：同 Codex，优先静默迁移。
+                    if let migratedJSON = claudeDesktopAuthService.migrateExternalKeychainCredentialForRecoveryIfNeeded() {
+                        let email = (try? ClaudeAccountProfileStore.parseCredentialsJSON(migratedJSON))?.accountEmail
+                        return .success(OAuthImportResult(
+                            provider: provider,
+                            slotID: slotID,
+                            mode: .browserCallback,
+                            rawCredentialJSON: migratedJSON,
+                            accountEmail: email
+                        ))
+                    }
+                    return await oauthImportOrchestrator.importAccount(
                         provider: provider,
                         slotID: slotID,
                         stateHandler: stateHandler

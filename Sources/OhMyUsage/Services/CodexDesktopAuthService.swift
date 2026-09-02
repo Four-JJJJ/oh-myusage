@@ -112,6 +112,23 @@ final class CodexDesktopAuthService {
         oauthVault.migrateFromExternalKeychainIfNeeded(provider: .codex)
     }
 
+    /// 认证恢复快路径（Phase 1 §7.6）：仅由用户主动导入/恢复流程调用。
+    /// vault 已有可解析的 OAuth JSON 时不迁移——避免把已被上游吊销的旧授权
+    /// 反复“复活”成死循环；vault 缺失时尝试把外部 `Codex Auth` Keychain 条目
+    /// 静默迁入 vault。成功返回迁移后的 vault JSON；无法迁移返回 nil，调用方
+    /// 继续走交互式导入流程。
+    func migrateExternalKeychainCredentialForRecoveryIfNeeded() -> String? {
+        if let existing = oauthVault.readOAuthJSON(provider: .codex),
+           (try? CodexAccountProfileStore.parseAuthJSON(existing)) != nil {
+            return nil
+        }
+        guard oauthVault.migrateFromExternalKeychainIfNeeded(provider: .codex),
+              let migrated = oauthVault.readOAuthJSON(provider: .codex) else {
+            return nil
+        }
+        return migrated
+    }
+
     func currentCredentialFingerprint() -> String? {
         guard let raw = currentAuthJSON(),
               let payload = try? CodexAccountProfileStore.parseAuthJSON(raw) else {

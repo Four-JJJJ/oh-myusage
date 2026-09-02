@@ -210,7 +210,11 @@ final class CredentialBroker: @unchecked Sendable {
     // MARK: - Access state
 
     func accessState(service: String, account: String) -> CredentialAccessState {
-        let key = cacheKey(service: service, account: account)
+        // 与读写路径一致先做规范化，旧 service 名才能命中同一份缓存。
+        let key = cacheKey(
+            service: normalizedServiceName(service),
+            account: normalizedAccountName(account)
+        )
         let timestamp = now()
 
         lock.lock()

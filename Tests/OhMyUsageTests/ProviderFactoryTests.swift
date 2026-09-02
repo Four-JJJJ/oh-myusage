@@ -43,6 +43,18 @@ final class ProviderFactoryTests: XCTestCase {
         }
     }
 
+    func testGeminiProviderUsesSharedCredentialBroker() throws {
+        // doc 8.4：Gemini OAuth refresh 成功后的新 token 必须持久化到 vault——
+        // 若注册表漏接 keychain，刷新结果会被丢弃并放大 refresh 请求量。
+        let keychain = makeTestKeychain()
+        let broker = CredentialBroker(keychain: keychain)
+        let factory = ProviderFactory(keychain: keychain, credentialBroker: broker)
+
+        let provider = try XCTUnwrap(factory.makeProvider(for: .defaultOfficialGemini()) as? GeminiProvider)
+        let injected = try XCTUnwrap(provider.keychain)
+        XCTAssertTrue((injected as AnyObject) === broker)
+    }
+
     func testTraeProviderUsesInjectedBrowserCredentialService() throws {
         let browserCredentialService = BrowserCredentialService(
             bearerCandidatesOverride: { _ in [] },
