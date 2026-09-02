@@ -83,21 +83,4 @@ enum MenuDataCredibilityPresenter {
         }
     }
 
-    /// Appends the live-source label ("官方实时" / "Live") to the card
-    /// subtitle so the first screen always names the data source (doc
-    /// §10.1). Degraded credibility is carried by the status chip instead,
-    /// so the subtitle is left untouched there.
-    static func liveSourceSubtitle(
-        _ base: String?,
-        snapshot: UsageSnapshot?,
-        language: AppLanguage
-    ) -> String? {
-        guard credibility(snapshot: snapshot) == .officialLive else { return base }
-
-        let liveLabel = Localizer.text(.menuDataCredibilityLive, language: language)
-        guard let base, !base.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            return liveLabel
-        }
-        return "\(base) · \(liveLabel)"
-    }
 }

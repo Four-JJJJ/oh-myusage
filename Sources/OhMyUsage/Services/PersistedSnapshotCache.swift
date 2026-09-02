@@ -161,6 +161,11 @@ private struct PersistedSnapshotCacheEnvelope: Codable, Sendable {
 /// - Cache key is `providerID + irreversible account fingerprint`, so accounts
 ///   never overwrite each other's snapshots.
 final class PersistedSnapshotCache: @unchecked Sendable {
+    struct WriteGeneration: Equatable, Sendable {
+        var reset: UInt64
+        var provider: UInt64
+    }
+
     static let currentSchemaVersion = 1
     static let maxEntryCount = 64
     static let maxEncodedFileBytes = 512 * 1024
@@ -168,6 +173,8 @@ final class PersistedSnapshotCache: @unchecked Sendable {
     private let fileURL: URL
     private let fileManager: FileManager
     private let lock = NSLock()
+    private var resetGeneration: UInt64 = 0
+    private var providerGenerations: [String: UInt64] = [:]
 
     init(fileManager: FileManager = .default, fileURL: URL? = nil) {
         self.fileManager = fileManager
@@ -190,19 +197,19 @@ final class PersistedSnapshotCache: @unchecked Sendable {
         readEntries()
     }
 
-    /// Latest entry (by `savedAt`) per provider ID. Restored sessions should
-    /// use this so a provider with multiple historical account entries resumes
-    /// with the account that was active most recently.
+    /// Latest entry (by `savedAt`) per provider ID when the provider has only
+    /// one known account fingerprint. Multiple fingerprints are ambiguous on
+    /// cold start because the current credential is intentionally not read
+    /// here; skip them instead of displaying another account's quota.
     func loadLatestSnapshots() -> [String: PersistedSnapshotCacheEntry] {
+        let grouped = Dictionary(grouping: readEntries(), by: \.providerID)
         var latest: [String: PersistedSnapshotCacheEntry] = [:]
-        for entry in readEntries() {
-            guard let current = latest[entry.providerID] else {
-                latest[entry.providerID] = entry
+        for (providerID, entries) in grouped {
+            guard Set(entries.map(\.accountFingerprint)).count == 1,
+                  let newest = entries.max(by: { $0.savedAt < $1.savedAt }) else {
                 continue
             }
-            if entry.savedAt > current.savedAt {
-                latest[entry.providerID] = entry
-            }
+            latest[providerID] = newest
         }
         return latest
     }
@@ -211,17 +218,57 @@ final class PersistedSnapshotCache: @unchecked Sendable {
 
     /// Upserts the main snapshot for `providerID` under the snapshot's account
     /// fingerprint. Serialized; safe to call from any queue/thread.
-    func save(providerID: String, snapshot: UsageSnapshot, savedAt: Date = Date()) {
+    func save(
+        providerID: String,
+        snapshot: UsageSnapshot,
+        savedAt: Date = Date(),
+        expectedGeneration: WriteGeneration? = nil
+    ) {
         guard !providerID.isEmpty else { return }
         lock.lock()
         defer { lock.unlock() }
+        let currentGeneration = WriteGeneration(
+            reset: resetGeneration,
+            provider: providerGenerations[providerID, default: 0]
+        )
+        if let expectedGeneration, expectedGeneration != currentGeneration {
+            return
+        }
         writeEntries(upserting: PersistedSnapshotCacheEntry(providerID: providerID, snapshot: snapshot, savedAt: savedAt))
+    }
+
+    /// Generation captured before dispatching an asynchronous write. Any
+    /// credential/reset invalidation advances it so stale queued writes become
+    /// no-ops instead of resurrecting an old account snapshot.
+    func currentGeneration(for providerID: String) -> WriteGeneration {
+        lock.lock()
+        defer { lock.unlock() }
+        return WriteGeneration(
+            reset: resetGeneration,
+            provider: providerGenerations[providerID, default: 0]
+        )
+    }
+
+    /// Removes every account snapshot for one provider.
+    func remove(providerID: String) {
+        guard !providerID.isEmpty else { return }
+        lock.lock()
+        defer { lock.unlock() }
+        providerGenerations[providerID, default: 0] &+= 1
+        let retained = readEntriesLocked().filter { $0.providerID != providerID }
+        if retained.isEmpty {
+            try? fileManager.removeItem(at: fileURL)
+        } else {
+            persistLocked(retained)
+        }
     }
 
     /// Removes every cached entry (used by reset flows).
     func removeAll() {
         lock.lock()
         defer { lock.unlock() }
+        resetGeneration &+= 1
+        providerGenerations.removeAll()
         try? fileManager.removeItem(at: fileURL)
     }
 

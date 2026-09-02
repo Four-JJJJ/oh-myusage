@@ -247,8 +247,13 @@ final class AppProviderRefreshModel {
     private func persistSnapshotToCache(descriptor: ProviderDescriptor, snapshot: UsageSnapshot) {
         guard let cache = host?.persistedSnapshotCache else { return }
         let providerID = descriptor.id
+        let generation = cache.currentGeneration(for: providerID)
         Task.detached(priority: .utility) {
-            cache.save(providerID: providerID, snapshot: snapshot)
+            cache.save(
+                providerID: providerID,
+                snapshot: snapshot,
+                expectedGeneration: generation
+            )
         }
     }
 

@@ -85,7 +85,10 @@ final class UsageAnalyticsRepository: @unchecked Sendable {
         var records: [UsageAnalyticsRecord] = []
 
         let ccSwitchResult = ccSwitchReader.readUsageLogs(since: interval.start, until: interval.end)
-        records.append(contentsOf: ccSwitchResult.records.map(\.analyticsRecord))
+        records.reserveCapacity(ccSwitchResult.records.count)
+        for record in ccSwitchResult.records {
+            records.append(record.analyticsRecord)
+        }
         let ccSwitchMissing = ccSwitchResult.diagnostics.contains { $0.contains("未安装 cc-switch") }
         if ccSwitchMissing {
             diagnostics.append("未安装 cc-switch，已仅使用各官方应用的本地用量日志")
@@ -153,14 +156,13 @@ final class UsageAnalyticsRepository: @unchecked Sendable {
         do {
             let codexEvents = try CodexLocalUsageService(calendar: calendar, nowProvider: nowProvider)
                 .fetchEvents(scope: .allAccounts, since: since)
-            records.append(contentsOf: codexEvents.map {
-                analyticsRecord(
-                    event: $0,
-                    appType: "codex",
-                    providerID: "ohmyusage-codex-local",
-                    providerName: "Codex"
-                )
-            })
+            appendAnalyticsRecords(
+                codexEvents,
+                to: &records,
+                appType: "codex",
+                providerID: "ohmyusage-codex-local",
+                providerName: "Codex"
+            )
         } catch {
             diagnostics.append("Codex 本地日志读取失败：\(error.localizedDescription)")
         }
@@ -168,14 +170,13 @@ final class UsageAnalyticsRepository: @unchecked Sendable {
         do {
             let claudeEvents = try ClaudeLocalUsageService(calendar: calendar, nowProvider: nowProvider)
                 .fetchEvents(scope: .allAccounts, allConfigDirs: claudeAllConfigDirs, since: since)
-            records.append(contentsOf: claudeEvents.map {
-                analyticsRecord(
-                    event: $0,
-                    appType: "claude",
-                    providerID: "ohmyusage-claude-local",
-                    providerName: "Claude"
-                )
-            })
+            appendAnalyticsRecords(
+                claudeEvents,
+                to: &records,
+                appType: "claude",
+                providerID: "ohmyusage-claude-local",
+                providerName: "Claude"
+            )
         } catch {
             diagnostics.append("Claude 本地日志读取失败：\(error.localizedDescription)")
         }
@@ -183,14 +184,13 @@ final class UsageAnalyticsRepository: @unchecked Sendable {
         do {
             let kimiEvents = try KimiLocalUsageService(calendar: calendar, nowProvider: nowProvider)
                 .fetchEvents(scope: .allAccounts, since: since)
-            records.append(contentsOf: kimiEvents.map {
-                analyticsRecord(
-                    event: $0,
-                    appType: "kimi",
-                    providerID: "ohmyusage-kimi-local",
-                    providerName: "Kimi"
-                )
-            })
+            appendAnalyticsRecords(
+                kimiEvents,
+                to: &records,
+                appType: "kimi",
+                providerID: "ohmyusage-kimi-local",
+                providerName: "Kimi"
+            )
         } catch {
             diagnostics.append("Kimi 本地日志读取失败：\(error.localizedDescription)")
         }
@@ -201,14 +201,13 @@ final class UsageAnalyticsRepository: @unchecked Sendable {
                 nowProvider: nowProvider,
                 dashboardFetcher: CursorDashboardUsageClient()
             ).fetchEvents(since: since)
-            records.append(contentsOf: cursorEvents.map {
-                analyticsRecord(
-                    event: $0,
-                    appType: "cursor",
-                    providerID: "ohmyusage-cursor-local",
-                    providerName: "Cursor"
-                )
-            })
+            appendAnalyticsRecords(
+                cursorEvents,
+                to: &records,
+                appType: "cursor",
+                providerID: "ohmyusage-cursor-local",
+                providerName: "Cursor"
+            )
         } catch {
             diagnostics.append("Cursor 用量读取失败：\(error.localizedDescription)")
         }
@@ -216,14 +215,13 @@ final class UsageAnalyticsRepository: @unchecked Sendable {
         do {
             let grokEvents = try GrokLocalUsageService(calendar: calendar, nowProvider: nowProvider)
                 .fetchEvents(since: since)
-            records.append(contentsOf: grokEvents.map {
-                analyticsRecord(
-                    event: $0,
-                    appType: "grok",
-                    providerID: "ohmyusage-grok-local",
-                    providerName: "Grok"
-                )
-            })
+            appendAnalyticsRecords(
+                grokEvents,
+                to: &records,
+                appType: "grok",
+                providerID: "ohmyusage-grok-local",
+                providerName: "Grok"
+            )
         } catch {
             diagnostics.append("Grok 本地日志读取失败：\(error.localizedDescription)")
         }
@@ -231,19 +229,38 @@ final class UsageAnalyticsRepository: @unchecked Sendable {
         do {
             let geminiEvents = try GeminiLocalUsageService(calendar: calendar, nowProvider: nowProvider)
                 .fetchEvents(since: since)
-            records.append(contentsOf: geminiEvents.map {
-                analyticsRecord(
-                    event: $0,
-                    appType: "gemini",
-                    providerID: "ohmyusage-gemini-local",
-                    providerName: "Gemini"
-                )
-            })
+            appendAnalyticsRecords(
+                geminiEvents,
+                to: &records,
+                appType: "gemini",
+                providerID: "ohmyusage-gemini-local",
+                providerName: "Gemini"
+            )
         } catch {
             diagnostics.append("Gemini 本地日志读取失败：\(error.localizedDescription)")
         }
 
         return (records, diagnostics)
+    }
+
+    private func appendAnalyticsRecords(
+        _ events: [LocalUsageEvent],
+        to records: inout [UsageAnalyticsRecord],
+        appType: String,
+        providerID: String,
+        providerName: String
+    ) {
+        records.reserveCapacity(records.count + events.count)
+        for event in events {
+            records.append(
+                analyticsRecord(
+                    event: event,
+                    appType: appType,
+                    providerID: providerID,
+                    providerName: providerName
+                )
+            )
+        }
     }
 
     private func analyticsRecord(

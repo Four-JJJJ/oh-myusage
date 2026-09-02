@@ -255,11 +255,7 @@ enum MenuDashboardStateBuilder {
                     planType: MenuCardStatusPresenter.planType(for: provider, snapshot: snapshot),
                     iconName: iconName(for: provider),
                     iconFallback: fallbackIcon(for: provider),
-                    subtitle: MenuDataCredibilityPresenter.liveSourceSubtitle(
-                        baseSubtitle,
-                        snapshot: snapshot,
-                        language: language
-                    ),
+                    subtitle: baseSubtitle,
                     status: visual.status,
                     metrics: metricDisplays,
                     errorText: visual.errorText,
@@ -274,12 +270,8 @@ enum MenuDashboardStateBuilder {
             snapshot: snapshot,
             errorText: error,
             language: language,
-            secondaryText: MenuDataCredibilityPresenter.liveSourceSubtitle(
-                MenuSubtitlePresenter.relaySecondaryText(
-                    provider: provider,
-                    snapshot: snapshot,
-                    language: language
-                ),
+            secondaryText: MenuSubtitlePresenter.relaySecondaryText(
+                provider: provider,
                 snapshot: snapshot,
                 language: language
             ),
@@ -344,15 +336,11 @@ enum MenuDashboardStateBuilder {
             id: slot.slotID,
             title: slot.title,
             planType: MenuCardStatusPresenter.planType(for: provider, snapshot: slot.snapshot),
-            subtitle: MenuDataCredibilityPresenter.liveSourceSubtitle(
-                MenuSubtitlePresenter.officialAccountSubtitle(
-                    providerType: provider.type,
-                    snapshot: slot.snapshot,
-                    showAccountEmail: showOfficialAccountEmail,
-                    codexTeamAliases: codexTeamAliases
-                ),
+            subtitle: MenuSubtitlePresenter.officialAccountSubtitle(
+                providerType: provider.type,
                 snapshot: slot.snapshot,
-                language: language
+                showAccountEmail: showOfficialAccountEmail,
+                codexTeamAliases: codexTeamAliases
             ),
             status: percentageStatus(
                 snapshot: slot.snapshot,
@@ -403,14 +391,10 @@ enum MenuDashboardStateBuilder {
             id: slot.slotID,
             title: slot.title,
             planType: MenuCardStatusPresenter.planType(for: provider, snapshot: slot.snapshot),
-            subtitle: MenuDataCredibilityPresenter.liveSourceSubtitle(
-                MenuSubtitlePresenter.officialAccountSubtitle(
-                    providerType: provider.type,
-                    snapshot: slot.snapshot,
-                    showAccountEmail: showOfficialAccountEmail
-                ),
+            subtitle: MenuSubtitlePresenter.officialAccountSubtitle(
+                providerType: provider.type,
                 snapshot: slot.snapshot,
-                language: language
+                showAccountEmail: showOfficialAccountEmail
             ),
             status: percentageStatus(
                 snapshot: slot.snapshot,

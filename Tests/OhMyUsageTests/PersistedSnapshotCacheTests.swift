@@ -220,9 +220,37 @@ final class PersistedSnapshotCacheTests: XCTestCase {
         XCTAssertEqual(entries.count, 2, "Each provider/account keeps its own main snapshot")
         XCTAssertEqual(Set(entries.map(\.accountFingerprint)).count, 2, "Different accounts must not share a fingerprint")
 
-        // The latest saved account wins for cold-start restore.
+        // Cold start cannot safely infer which account is current.
         let latest = cache.loadLatestSnapshots()
-        XCTAssertEqual(latest["codex-official"]?.payload.remaining, 90)
+        XCTAssertNil(latest["codex-official"])
+    }
+
+    func testRemoveProviderClearsOnlyThatProvidersAccounts() throws {
+        let directory = try makeTemporaryCacheDirectory()
+        let cache = makeCache(directory: directory)
+        cache.save(providerID: "first", snapshot: Self.makeSnapshot(source: "first", rawMeta: ["codex.identityKey": "a"]))
+        cache.save(providerID: "first", snapshot: Self.makeSnapshot(source: "first", rawMeta: ["codex.identityKey": "b"]))
+        cache.save(providerID: "second", snapshot: Self.makeSnapshot(source: "second"))
+
+        cache.remove(providerID: "first")
+
+        XCTAssertFalse(cache.loadAll().contains { $0.providerID == "first" })
+        XCTAssertEqual(cache.loadAll().map(\.providerID), ["second"])
+    }
+
+    func testInvalidationGenerationRejectsQueuedStaleWrite() throws {
+        let directory = try makeTemporaryCacheDirectory()
+        let cache = makeCache(directory: directory)
+        let staleGeneration = cache.currentGeneration(for: "provider")
+
+        cache.remove(providerID: "provider")
+        cache.save(
+            providerID: "provider",
+            snapshot: Self.makeSnapshot(source: "provider"),
+            expectedGeneration: staleGeneration
+        )
+
+        XCTAssertTrue(cache.loadAll().isEmpty)
     }
 
     func testUpsertReplacesMainSnapshotForSameProviderAndAccount() throws {
@@ -456,6 +484,37 @@ final class AppViewModelPersistedSnapshotCacheTests: XCTestCase {
         let entry = try XCTUnwrap(cache.loadLatestSnapshots()[descriptor.id])
         XCTAssertEqual(entry.payload.valueFreshness, .live)
         XCTAssertEqual(viewModel.snapshots[descriptor.id]?.remaining, 81)
+    }
+
+    func testResetLocalAppDataClearsPersistedSnapshots() throws {
+        let cache = try makeTemporaryCache()
+        let descriptor = makeRelayDescriptor(id: "reset-relay")
+        cache.save(
+            providerID: descriptor.id,
+            snapshot: UsageSnapshot(
+                source: descriptor.id,
+                status: .ok,
+                remaining: 55,
+                used: 45,
+                limit: 100,
+                unit: "%",
+                updatedAt: Date(),
+                note: "ok",
+                sourceLabel: "Test"
+            )
+        )
+        let viewModel = AppViewModel(
+            testingConfig: AppConfig(providers: [descriptor]),
+            appUpdateService: SnapshotCacheNoopAppUpdateService(),
+            providerFactory: SnapshotCacheProviderFactory(snapshotsByProviderID: [:]),
+            persistedSnapshotCache: cache
+        )
+        defer { viewModel.providerRefreshModel.stopPolling() }
+        XCTAssertEqual(cache.loadAll().count, 1)
+
+        viewModel.resetLocalAppData()
+
+        XCTAssertTrue(cache.loadAll().isEmpty)
     }
 
     private func waitUntil(

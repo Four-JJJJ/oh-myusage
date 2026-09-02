@@ -9,7 +9,10 @@ final class KimiLocalUsageService {
     private let onWireFileParsed: ((String) -> Void)?
 
     private static let wireFileEnumerationCache = LocalUsageFileEnumerationCache()
-    private static let parsedWireFileCache = LocalUsageParsedFileCache<LocalUsageEvent>(maxEntries: 2_048)
+    private static let parsedWireFileCache = LocalUsageParsedFileCache<LocalUsageEvent>(
+        maxEntries: RuntimeDiagnosticsLimits.localUsageParsedFileCacheMaxEntries,
+        maxCachedValues: RuntimeDiagnosticsLimits.localUsageParsedFileCacheMaxCachedValues
+    )
 
     init(
         fileManager: FileManager = .default,

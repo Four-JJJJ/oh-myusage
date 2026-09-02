@@ -123,7 +123,10 @@ final class CodexLocalUsageService {
     private let onSessionFileParsed: ((String) -> Void)?
 
     private static let sessionFileEnumerationCache = LocalUsageFileEnumerationCache()
-    private static let parsedSessionFileCache = LocalUsageParsedFileCache<ParsedTokenEvent>(maxEntries: 2_048)
+    private static let parsedSessionFileCache = LocalUsageParsedFileCache<ParsedTokenEvent>(
+        maxEntries: RuntimeDiagnosticsLimits.localUsageParsedFileCacheMaxEntries,
+        maxCachedValues: RuntimeDiagnosticsLimits.localUsageParsedFileCacheMaxCachedValues
+    )
 
     init(
         fileManager: FileManager = .default,

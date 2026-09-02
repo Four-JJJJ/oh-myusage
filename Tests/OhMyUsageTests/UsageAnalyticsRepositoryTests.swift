@@ -462,6 +462,53 @@ final class UsageAnalyticsRepositoryTests: XCTestCase {
         XCTAssertEqual(modelRows["gpt-5.4"], 15)
     }
 
+    func testSnapshotKeepsStableIdentityWinnerBeforeFuzzyDeduplication() throws {
+        let now = try fixedDate("2026-05-16T12:00:00Z")
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let sharedTotals = UsageMetricTotals(requestCount: 1, successCount: 1, inputTokens: 10, outputTokens: 5)
+
+        let snapshot = UsageAnalyticsAggregator.snapshot(
+            records: [
+                analyticsRecord(
+                    source: .ohMyUsageLocal,
+                    eventAt: now.addingTimeInterval(-60),
+                    providerID: "local",
+                    providerName: "Codex Local",
+                    modelID: "gpt-5.5",
+                    requestID: "Shared-Request",
+                    totals: sharedTotals
+                ),
+                analyticsRecord(
+                    source: .ccswitchProxy,
+                    eventAt: now.addingTimeInterval(-55),
+                    providerID: "relay",
+                    providerName: "Relay",
+                    modelID: "gpt-5.5",
+                    requestID: "shared-request",
+                    totals: UsageMetricTotals(requestCount: 1, successCount: 1, inputTokens: 20, outputTokens: 10)
+                ),
+                analyticsRecord(
+                    source: .ohMyUsageLocal,
+                    eventAt: now.addingTimeInterval(-50),
+                    providerID: "local",
+                    providerName: "Codex Local",
+                    modelID: "gpt-5.5",
+                    requestID: "independent-local",
+                    totals: sharedTotals
+                )
+            ],
+            filter: UsageAnalyticsFilter(mode: .all, selectedModelID: nil, range: .last24Hours),
+            calendar: calendar,
+            now: now,
+            diagnostics: []
+        )
+
+        XCTAssertEqual(snapshot.totals.requestCount, 2)
+        XCTAssertEqual(snapshot.totals.totalTokens, 45)
+        XCTAssertEqual(Set(snapshot.providerStats.map(\.providerName)), ["Relay", "Codex Local"])
+    }
+
     func testSnapshotMergesModelStatsByModelIDAcrossProviders() throws {
         let now = try fixedDate("2026-05-16T12:00:00Z")
         var calendar = Calendar(identifier: .gregorian)

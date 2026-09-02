@@ -198,6 +198,11 @@ final class AppConfigurationModel {
             }
         )
         applyCredentialMutationOutcome(outcome)
+        if outcome.didPersistCredential {
+            invalidateProviderSnapshotsAfterCredentialChange(
+                providerIDs: field.affectedProviderIDs(in: host.config.providers)
+            )
+        }
         if Self.shouldRestartPolling(didPersist: outcome.didPersistCredential, policy: restartPolicy) {
             host.restartPolling()
         }
@@ -911,6 +916,24 @@ final class AppConfigurationModel {
         let host = requireHost()
         if outcome.shouldBumpLookupVersion {
             host.credentialLookupVersion &+= 1
+        }
+    }
+
+    private func invalidateProviderSnapshotsAfterCredentialChange(providerIDs: Set<String>) {
+        guard !providerIDs.isEmpty else { return }
+        let host = requireHost()
+        host.providerRefreshModel.mutateProviderState { state in
+            for providerID in providerIDs {
+                state.snapshots.removeValue(forKey: providerID)
+                state.errors.removeValue(forKey: providerID)
+                state.consecutiveFailures.removeValue(forKey: providerID)
+                state.activeAlerts.remove("low:\(providerID)")
+                state.activeAlerts.remove("fail:\(providerID)")
+                state.activeAlerts.remove("auth:\(providerID)")
+            }
+        }
+        for providerID in providerIDs {
+            host.persistedSnapshotCache?.remove(providerID: providerID)
         }
     }
 

@@ -450,6 +450,44 @@ final class AppProviderRefreshCoordinatorTests: XCTestCase {
         }
     }
 
+    func testRunExclusiveRefreshCancellationSkipsQueuedAction() async throws {
+        let gate = CoordinatorConcurrencyTrackingGate()
+        let queuedActionCounter = ExclusiveRefreshCallCounter()
+        let coordinator = AppProviderRefreshCoordinator(
+            providerFactory: UnusedProviderFactory(),
+            notifications: NotificationService(),
+            maxConcurrentRefreshes: 1
+        )
+
+        let activeTask = Task { @MainActor in
+            await coordinator.runExclusiveRefresh(providerID: "active") {
+                await gate.enter("active")
+            }
+        }
+        try await waitUntil {
+            await gate.snapshot().entered == ["active"]
+        }
+
+        let queuedTask = Task { @MainActor in
+            await coordinator.runExclusiveRefresh(providerID: "queued") {
+                await queuedActionCounter.increment()
+            }
+        }
+        await Task.yield()
+        queuedTask.cancel()
+
+        await gate.releaseAll()
+        await activeTask.value
+        await queuedTask.value
+        let queuedActionCount = await queuedActionCounter.value()
+
+        XCTAssertEqual(
+            queuedActionCount,
+            0,
+            "A refresh canceled while waiting for a global slot must not execute its action"
+        )
+    }
+
     func testDisplayedProvidersForStartupRefreshHonorsExtraStalenessSeconds() {
         var provider = ProviderDescriptor.defaultOfficialGemini()
         provider.id = "plan-stale-aware"

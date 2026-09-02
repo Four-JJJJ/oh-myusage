@@ -441,47 +441,4 @@ final class MenuDataCredibilityPresenterTests: XCTestCase {
         )
     }
 
-    func testLiveSourceSubtitleAppendsLiveLabelOnlyForOfficialLiveData() {
-        let live = UsageSnapshot(
-            source: "p",
-            status: .ok,
-            remaining: 50,
-            used: 50,
-            limit: 100,
-            unit: "%",
-            updatedAt: Date(),
-            note: "ok",
-            sourceLabel: "API"
-        )
-        let cached = UsageSnapshot(
-            source: "p",
-            status: .ok,
-            fetchHealth: .ok,
-            valueFreshness: .cachedFallback,
-            remaining: 50,
-            used: 50,
-            limit: 100,
-            unit: "%",
-            updatedAt: Date(),
-            note: "ok",
-            sourceLabel: "API"
-        )
-
-        XCTAssertEqual(
-            MenuDataCredibilityPresenter.liveSourceSubtitle("a@b.com", snapshot: live, language: .zhHans),
-            "a@b.com · 官方实时"
-        )
-        XCTAssertEqual(
-            MenuDataCredibilityPresenter.liveSourceSubtitle(nil, snapshot: live, language: .en),
-            "Live"
-        )
-        // Degraded data is carried by the status chip, not the subtitle.
-        XCTAssertEqual(
-            MenuDataCredibilityPresenter.liveSourceSubtitle("a@b.com", snapshot: cached, language: .zhHans),
-            "a@b.com"
-        )
-        XCTAssertNil(
-            MenuDataCredibilityPresenter.liveSourceSubtitle(nil, snapshot: cached, language: .zhHans)
-        )
-    }
 }

@@ -31,12 +31,12 @@ struct MenuContentView: View {
     private let cardBackground = SettingsVisualTokens.Menu.cardBackground
     // 卡片垂直间距。
     private let cardSpacing = SettingsVisualTokens.Menu.cardSpacing
-    // 状态颜色：只有告警/错误用突出色，正常态用中性文字色降噪（doc §10.1）。
+    // 状态颜色：状态文字保持中性，额度进度条按健康程度使用绿/橙/红。
+    private let sufficientColor = SettingsVisualTokens.Status.sufficient
     private let warningColor = SettingsVisualTokens.Status.warning
     private let errorColor = SettingsVisualTokens.Status.error
-    // 正常态的中性色（状态文字 / 进度条填充）。
+    // 正常态状态文字的中性色。
     private let neutralStatusColor = SettingsVisualTokens.Text.secondary
-    private let neutralBarColor = SettingsVisualTokens.Text.primary
     // 顶部操作按钮尺寸与间距（Figma: 16x16，间距 12）。
     private let headerActionIconSize = SettingsVisualTokens.Menu.headerActionIconSize
     private let headerActionSpacing = SettingsVisualTokens.Menu.headerActionSpacing
@@ -433,8 +433,7 @@ struct MenuContentView: View {
         case .clear:
             return .clear
         case .normal:
-            // 正常态进度条用中性填充，让限流/耗尽的突出色更醒目（doc §10.1）。
-            return neutralBarColor
+            return sufficientColor
         case .warning:
             return warningColor
         case .error:

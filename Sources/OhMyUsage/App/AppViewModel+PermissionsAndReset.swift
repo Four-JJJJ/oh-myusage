@@ -42,6 +42,7 @@ extension AppViewModel {
                 resetPersistentState: {
                     self.launchAtLoginService.reset()
                     self.credentialAccessService.resetAllStoredCredentials()
+                    self.persistedSnapshotCache?.removeAll()
                     self.codexProfileStore.reset()
                     self.codexSlotStore.reset()
                     self.claudeProfileStore.reset()

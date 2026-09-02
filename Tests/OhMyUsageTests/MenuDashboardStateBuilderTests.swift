@@ -57,8 +57,50 @@ final class MenuDashboardStateBuilderTests: XCTestCase {
         XCTAssertEqual(amountCard.title, "open.ailinyu.de")
         XCTAssertEqual(amountCard.amountText, "42.50")
         XCTAssertEqual(amountCard.balanceLabel, "Balance")
-        // Live relay data names its source in the secondary line (doc §10.1/§10.2).
-        XCTAssertEqual(amountCard.secondaryText, "Live")
+        XCTAssertNil(amountCard.secondaryText)
+    }
+
+    func testOfficialLiveLabelIsNotAddedToPercentageCardSubtitle() {
+        var kimi = ProviderDescriptor.defaultOfficialKimi()
+        kimi.enabled = true
+        let snapshot = UsageSnapshot(
+            source: kimi.id,
+            status: .ok,
+            remaining: 80,
+            used: 20,
+            limit: 100,
+            unit: "%",
+            updatedAt: Date(timeIntervalSince1970: 100),
+            note: "ok",
+            quotaWindows: [
+                UsageQuotaWindow(
+                    id: "session",
+                    title: "5h",
+                    remainingPercent: 80,
+                    usedPercent: 20,
+                    kind: .session
+                )
+            ],
+            sourceLabel: "API"
+        )
+
+        let state = MenuDashboardStateBuilder.build(
+            config: AppConfig(language: .zhHans, providers: [kimi]),
+            snapshots: [kimi.id: snapshot],
+            errors: [:],
+            lastUpdatedAt: snapshot.updatedAt,
+            updateState: .init(kind: .idle, statusText: nil, tone: .neutral, retryTitle: nil, isRetryEnabled: false),
+            now: Date(timeIntervalSince1970: 160),
+            shouldShowPermissionGuide: false,
+            codexSlots: [],
+            claudeSlots: [],
+            localization: .englishTest
+        )
+
+        guard case let .percentage(card) = state.cards.first else {
+            return XCTFail("Expected Kimi to render as a percentage card")
+        }
+        XCTAssertNil(card.subtitle)
     }
 
     func testOfficialDeepSeekRendersCurrencyBalanceInsteadOfQuotaPlaceholders() {

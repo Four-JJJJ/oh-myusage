@@ -32,7 +32,11 @@ final class AppProviderRefreshCoordinator {
     /// Upper bound on concurrently executing provider refreshes (doc §9.3).
     private var maxConcurrentRefreshes: Int
     private var activeRefreshSlotCount = 0
-    private var waitingRefreshSlotContinuations: [CheckedContinuation<Void, Never>] = []
+    private struct RefreshSlotWaiter {
+        let id: UUID
+        let continuation: CheckedContinuation<Bool, Never>
+    }
+    private var waitingRefreshSlotContinuations: [RefreshSlotWaiter] = []
 
     init(
         providerFactory: any ProviderFactorying,
@@ -57,22 +61,42 @@ final class AppProviderRefreshCoordinator {
     /// caller (poll, manual, displayed, scope fan-out). Nothing in a refresh
     /// action re-enters `runExclusiveRefresh`, so a waiting-based gate cannot
     /// deadlock.
-    private func acquireRefreshSlot() async {
+    private func acquireRefreshSlot() async -> Bool {
+        guard !Task.isCancelled else { return false }
         if activeRefreshSlotCount < maxConcurrentRefreshes {
             activeRefreshSlotCount += 1
+            return true
+        }
+        let waiterID = UUID()
+        // 槽位由释放方直接移交（release 不递减），被取消的等待者返回 false。
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                guard !Task.isCancelled else {
+                    continuation.resume(returning: false)
+                    return
+                }
+                waitingRefreshSlotContinuations.append(
+                    RefreshSlotWaiter(id: waiterID, continuation: continuation)
+                )
+            }
+        } onCancel: {
+            Task { @MainActor [weak self] in
+                self?.cancelRefreshSlotWaiter(id: waiterID)
+            }
+        }
+    }
+
+    private func cancelRefreshSlotWaiter(id: UUID) {
+        guard let index = waitingRefreshSlotContinuations.firstIndex(where: { $0.id == id }) else {
             return
         }
-        await withCheckedContinuation { continuation in
-            waitingRefreshSlotContinuations.append(continuation)
-        }
-        // 槽位由释放方直接移交（release 不递减），这里无需再自增，
-        // 否则唤醒与新增 acquire 之间会把计数短暂推过上限。
+        waitingRefreshSlotContinuations.remove(at: index).continuation.resume(returning: false)
     }
 
     private func releaseRefreshSlot() {
         if !waitingRefreshSlotContinuations.isEmpty {
             // 直接把槽位移交给队首等待者，保持计数不变。
-            waitingRefreshSlotContinuations.removeFirst().resume()
+            waitingRefreshSlotContinuations.removeFirst().continuation.resume(returning: true)
             return
         }
         activeRefreshSlotCount = max(0, activeRefreshSlotCount - 1)
@@ -95,12 +119,17 @@ final class AppProviderRefreshCoordinator {
         }
 
         let task = Task { @MainActor in
-            await self.acquireRefreshSlot()
+            guard await self.acquireRefreshSlot() else { return }
+            defer { self.releaseRefreshSlot() }
+            guard !Task.isCancelled else { return }
             await action()
-            self.releaseRefreshSlot()
         }
         inFlightRefreshTasks[providerID] = task
-        await task.value
+        await withTaskCancellationHandler {
+            await task.value
+        } onCancel: {
+            task.cancel()
+        }
         if inFlightRefreshTasks[providerID] == task {
             inFlightRefreshTasks.removeValue(forKey: providerID)
         }

@@ -17,6 +17,31 @@ enum AppCredentialField: Equatable {
     case authToken(AuthConfig)
     /// 官方手动 Cookie → officialConfig.manualCookieAccount，固定 defaultServiceName
     case officialManualCookie(providerID: String)
+
+    func affectedProviderIDs(in providers: [ProviderDescriptor]) -> Set<String> {
+        switch self {
+        case .providerToken(let descriptor):
+            return Self.providerIDs(using: descriptor.auth, in: providers).union([descriptor.id])
+        case .officialManualCookie(let providerID):
+            return [providerID]
+        case .authToken(let auth):
+            return Self.providerIDs(using: auth, in: providers)
+        }
+    }
+
+    private static func providerIDs(
+        using auth: AuthConfig,
+        in providers: [ProviderDescriptor]
+    ) -> Set<String> {
+        Set(
+            providers.compactMap { provider in
+                if provider.auth == auth || provider.relayConfig?.balanceAuth == auth {
+                    return provider.id
+                }
+                return nil
+            }
+        )
+    }
 }
 
 /// 凭证保存成功后的轮询行为，从旧 wrapper（saveToken / saveTokenAndRestart 等）逐位抄来。

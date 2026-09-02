@@ -259,25 +259,38 @@ public enum UsageAnalyticsAggregator {
             }
         }
 
-        var selected = Array(selectedByIdentity.values)
-        selected.append(contentsOf: unmatched)
-
         var collapsed: [UsageAnalyticsRecord] = []
-        for record in selected {
-            if let index = collapsed.firstIndex(where: { fuzzyDuplicate($0, record) }) {
-                if record.source.priority > collapsed[index].source.priority {
-                    collapsed[index] = record
-                }
-            } else {
-                collapsed.append(record)
-            }
+        collapsed.reserveCapacity(selectedByIdentity.count + unmatched.count)
+
+        for record in selectedByIdentity.values {
+            appendForFuzzyDeduplication(record, to: &collapsed)
         }
+        selectedByIdentity.removeAll(keepingCapacity: false)
+
+        for record in unmatched {
+            appendForFuzzyDeduplication(record, to: &collapsed)
+        }
+        unmatched.removeAll(keepingCapacity: false)
 
         var keyed: [String: UsageAnalyticsRecord] = [:]
+        keyed.reserveCapacity(collapsed.count)
         for record in collapsed {
             keyed[record.dedupKey + "|" + record.requestID] = record
         }
         return keyed
+    }
+
+    private static func appendForFuzzyDeduplication(
+        _ record: UsageAnalyticsRecord,
+        to collapsed: inout [UsageAnalyticsRecord]
+    ) {
+        if let index = collapsed.firstIndex(where: { fuzzyDuplicate($0, record) }) {
+            if record.source.priority > collapsed[index].source.priority {
+                collapsed[index] = record
+            }
+        } else {
+            collapsed.append(record)
+        }
     }
 
     private static func fuzzyDuplicate(_ lhs: UsageAnalyticsRecord, _ rhs: UsageAnalyticsRecord) -> Bool {

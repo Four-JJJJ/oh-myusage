@@ -191,8 +191,9 @@ final class NetworkReachabilityMonitor: @unchecked Sendable {
         lock.unlock()
 
         guard let handler else { return }
+        let valueToNotify = notifyValue
         callbackQueue.async {
-            handler(notifyValue)
+            handler(valueToNotify)
         }
     }
 }
