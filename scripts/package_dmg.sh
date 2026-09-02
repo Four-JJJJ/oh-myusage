@@ -4,6 +4,8 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 APP_NAME="oh-myusage"
 EXECUTABLE_NAME="OhMyUsage"
+# 固定 Bundle ID（优化文档 11.2）：不得随版本、APP_VERSION 或构建机器变化，
+# 以保持 Keychain 访问组与用户设置的连续性。请勿改成从 VERSION 或环境变量推导。
 BUNDLE_ID="com.oh-myusage.app"
 DIST_DIR="$ROOT_DIR/dist"
 TMP_ROOT="$(mktemp -d /tmp/aibm_pkg.XXXXXX)"
@@ -26,6 +28,8 @@ ICNS_PATH="$TMP_ROOT/AppIcon.icns"
 INSTALL_GUIDE_PATH="$DMG_STAGING/$INSTALL_GUIDE_NAME"
 VERSION_FILE="$ROOT_DIR/VERSION"
 APP_VERSION="${APP_VERSION:-}"
+# 扩展属性清理只允许针对这个资源目录（优化文档 11.4）。
+RESOURCES_DIR="$ROOT_DIR/Sources/OhMyUsage/Resources"
 
 if [[ -z "$APP_VERSION" && -f "$VERSION_FILE" ]]; then
   APP_VERSION="$(tr -d '[:space:]' < "$VERSION_FILE")"
@@ -82,6 +86,7 @@ clean_previous_artifacts() {
       -name "AI Plan Monitor [0-9]*.dmg" -o \
       -name "AI-Plan-Monitor-macOS.zip" -o \
       -name "AI-Plan-Monitor-macOS [0-9]*.zip" -o \
+      -name "SHA256SUMS.txt" -o \
       -name "dmg-root" \
     \) -print0
   )
@@ -108,9 +113,17 @@ should_notarize() {
   is_truthy "${NOTARIZE_DMG:-false}"
 }
 
+# 签名优先级（优化文档 11.3）：
+#   1. DEVELOPER_ID_APPLICATION —— 拥有 Apple Developer ID 时使用（唯一可公证的路径）
+#   2. LOCAL_CODESIGN_IDENTITY  —— 可选的本地自签名证书（不等于 Developer ID，不能消除 Gatekeeper 首次提示）
+#   3. ad-hoc "-"               —— 默认回退
+# CODESIGN_IDENTITY 作为历史兼容别名保留，排在 LOCAL_CODESIGN_IDENTITY 之后。
+# 证书私钥只保存在登录钥匙串，脚本不读取、不写入仓库、也不回显任何身份或私钥内容。
 signing_identity() {
   if [[ -n "${DEVELOPER_ID_APPLICATION:-}" ]]; then
     echo "$DEVELOPER_ID_APPLICATION"
+  elif [[ -n "${LOCAL_CODESIGN_IDENTITY:-}" ]]; then
+    echo "$LOCAL_CODESIGN_IDENTITY"
   elif [[ -n "${CODESIGN_IDENTITY:-}" ]]; then
     echo "$CODESIGN_IDENTITY"
   else
@@ -118,11 +131,28 @@ signing_identity() {
   fi
 }
 
+# 只有实际签名身份来自 DEVELOPER_ID_APPLICATION 时才允许 notarization；
+# 自签名 / ad-hoc 构建一律不得公证，也不得输出任何"已公证"字样。
+developer_id_signing() {
+  [[ -n "${DEVELOPER_ID_APPLICATION:-}" ]]
+}
+
+# 运行 codesign；失败时只输出退出码，避免身份/证书细节进入构建日志。
+run_codesign() {
+  local step="$1"
+  shift
+  local status=0
+  "$@" >/dev/null 2>&1 || status=$?
+  if (( status != 0 )); then
+    die "$step failed (codesign exit code: $status)"
+  fi
+}
+
 sign_mode() {
-  local identity
-  identity="$(signing_identity)"
-  if [[ -n "$identity" ]]; then
+  if [[ -n "${DEVELOPER_ID_APPLICATION:-}" ]]; then
     echo "developer-id"
+  elif [[ -n "$(signing_identity)" ]]; then
+    echo "local-codesign (self-signed, not Developer ID)"
   else
     echo "ad-hoc"
   fi
@@ -212,15 +242,24 @@ sign_app_bundle() {
     return 0
   fi
 
-  if [[ -n "$identity" ]]; then
+  if [[ -n "$identity" ]] && developer_id_signing; then
     log "Signing app bundle with Developer ID identity"
-    codesign --force --deep --options runtime --timestamp --sign "$identity" "$target"
+    run_codesign "Signing app bundle" \
+      codesign --force --deep --options runtime --timestamp --sign "$identity" "$target"
+  elif [[ -n "$identity" ]]; then
+    # 本地自签名：不等于 Developer ID，不能消除 Gatekeeper 首次提示。
+    # 不加 --timestamp（避免依赖 Apple 时间戳服务），行为尽量贴近 ad-hoc。
+    log "Signing app bundle with local self-signed identity (not a Developer ID; Gatekeeper will still warn on first launch)"
+    run_codesign "Signing app bundle" \
+      codesign --force --deep --sign "$identity" "$target"
   else
     log "Signing app bundle with ad-hoc identity"
-    codesign --force --deep --sign - --timestamp=none "$target"
+    run_codesign "Signing app bundle" \
+      codesign --force --deep --sign - --timestamp=none "$target"
   fi
 
-  codesign --verify --deep --strict --verbose=2 "$target" >/dev/null
+  run_codesign "Verifying app bundle signature" \
+    codesign --verify --deep --strict --verbose=2 "$target"
 }
 
 sign_disk_image() {
@@ -232,15 +271,24 @@ sign_disk_image() {
     return 0
   fi
 
-  if [[ -n "$identity" ]]; then
+  if [[ -n "$identity" ]] && developer_id_signing; then
     log "Signing disk image with Developer ID identity"
-    codesign --force --timestamp --sign "$identity" "$target"
-    codesign --verify --strict --verbose=2 "$target" >/dev/null
+    run_codesign "Signing disk image" \
+      codesign --force --timestamp --sign "$identity" "$target"
+    run_codesign "Verifying disk image signature" \
+      codesign --verify --strict --verbose=2 "$target"
+  elif [[ -n "$identity" ]]; then
+    log "Signing disk image with local self-signed identity (not a Developer ID)"
+    run_codesign "Signing disk image" \
+      codesign --force --sign "$identity" "$target"
+    run_codesign "Verifying disk image signature" \
+      codesign --verify --strict --verbose=2 "$target"
   fi
 }
 
 assess_bundle() {
   local target="$1"
+  # ad-hoc / 自签名构建未公证，spctl assess 失败是预期行为，不算打包失败。
   if have_cmd spctl; then
     spctl --assess --type exec --verbose=2 "$target" || true
   fi
@@ -335,6 +383,12 @@ clean_previous_artifacts
 
 # Always build fresh release before packaging to avoid stale DMG content.
 # SWIFT_BUILD_SYSTEM 可覆盖构建系统（如 native），适配本机工具链 quirks。
+# 构建前只清理资源目录的扩展属性，避免 bundle 资源被 FinderInfo/quarantine 污染
+# （优化文档 11.4）。禁止对 $HOME、仓库根或其他宽泛路径递归执行 xattr。
+if command -v xattr >/dev/null 2>&1 && [[ -d "$RESOURCES_DIR" ]]; then
+  xattr -cr "$RESOURCES_DIR" >/dev/null 2>&1 || true
+fi
+
 log "Building universal release binary..."
 swift build -c release --arch arm64 --arch x86_64 ${SWIFT_BUILD_SYSTEM:+--build-system "$SWIFT_BUILD_SYSTEM"}
 
@@ -405,19 +459,29 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
 PLIST
 
 # Remove filesystem metadata that can invalidate app bundles (e.g. FinderInfo).
+# 范围仅限 $APP_DIR（优化文档 11.4）：禁止对 $HOME、仓库根或其他宽泛路径递归执行。
 if command -v xattr >/dev/null 2>&1; then
   xattr -cr "$APP_DIR" >/dev/null 2>&1 || true
 fi
 
-if should_notarize && [[ -z "$(signing_identity)" ]]; then
-  die "notarization requires DEVELOPER_ID_APPLICATION (or CODESIGN_IDENTITY) to be set"
+# Notarization 门控（优化文档 11.3）：没有 Developer ID 签名身份时绝不执行公证。
+# 自签名 / ad-hoc 构建一律跳过，且后续输出不得出现"已公证"之类的误导描述。
+NOTARIZE_ENABLED=0
+if should_notarize; then
+  if developer_id_signing; then
+    NOTARIZE_ENABLED=1
+  elif is_truthy "${NOTARIZE_DMG:-false}"; then
+    die "NOTARIZE_DMG is enabled but notarization requires a Developer ID signing identity (DEVELOPER_ID_APPLICATION); ad-hoc or self-signed builds cannot be notarized"
+  else
+    warn "Notarization credentials detected but signing will not use a Developer ID identity; skipping notarization (this build is NOT notarized)"
+  fi
 fi
 
 log "Packaging mode: $(sign_mode)"
 sign_app_bundle "$APP_DIR"
 assess_bundle "$APP_DIR"
 
-if should_notarize; then
+if (( NOTARIZE_ENABLED )); then
   log "Creating app zip for notarization"
   require_cmd ditto
   rm -f "$APP_ZIP_PATH"
@@ -452,13 +516,30 @@ hdiutil convert "$RW_DMG_PATH" -ov -format UDZO -o "$DMG_PATH" >/dev/null
 
 sign_disk_image "$DMG_PATH"
 
-if should_notarize; then
+if (( NOTARIZE_ENABLED )); then
   log "Submitting DMG for notarization"
   notary_submit "$DMG_PATH"
   log "Stapling DMG"
   staple_artifact "$DMG_PATH"
 fi
 
+# 生成 SHA-256 校验文件（优化文档 11.5）：shasum -a 256 输出风格，"摘要 + 两个空格 + 文件名"。
+# 文件名使用相对路径，便于用户在任意目录校验下载产物。
+require_cmd shasum
+(
+  cd "$DIST_DIR"
+  shasum -a 256 "$APP_NAME.dmg" "$ZIP_NAME" > "SHA256SUMS.txt"
+)
+
 log "DMG: $DMG_PATH"
 log "ZIP: $ZIP_PATH"
+log "SHA256SUMS: $DIST_DIR/SHA256SUMS.txt"
 log "TMP_APP: $APP_DIR"
+
+# 如实输出公证状态：未公证时必须明确说明，不得出现"已公证"字样。
+if (( NOTARIZE_ENABLED )); then
+  log "Notarization: submitted and stapled"
+else
+  log "Notarization: not performed — this build is NOT notarized; users will see a Gatekeeper warning on first launch (see docs/INSTALL_UNSIGNED.md)"
+fi
+cat "$DIST_DIR/SHA256SUMS.txt"

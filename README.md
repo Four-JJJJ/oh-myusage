@@ -149,6 +149,8 @@ oh-myusage 的目标是让这些信息变得可扫读、可诊断、可维护：
 
 更完整的安装和排障步骤见 [docs/DOWNLOAD.md](docs/DOWNLOAD.md)。
 
+GitHub 分发的构建未使用 Apple Developer ID 签名、未经公证（notarization），首次打开会被 Gatekeeper 拦截，升级后可能需要重新确认 Keychain 访问：详见[未签名构建安装说明](docs/INSTALL_UNSIGNED.md)。
+
 ### 系统要求
 
 - macOS 14 或更高版本
