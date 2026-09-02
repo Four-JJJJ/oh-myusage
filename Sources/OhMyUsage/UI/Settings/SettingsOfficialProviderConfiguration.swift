@@ -40,7 +40,49 @@ extension SettingsView {
             set: { officialEditorDraft.officialWebModeInputs[provider.id] = $0 }
         )
 
+        // doc 10.3：详情配置区固定信息顺序——
+        // 5. 授权或重新导入操作 → 6. 套餐字段 → 7. Cookie、API 覆盖规则和调试信息（凭证输入默认折叠）。
+        let hasSavedOfficialCredential = providerConfigurationFacade.hasToken(for: provider)
+            || providerConfigurationFacade.hasOfficialManualCookie(for: provider)
+
         settingsConfigurationRows {
+            settingsDetailGroupCaption(viewModel.localizedText("授权与导入", "Authorization & Import"))
+
+            if !supportedSourceModes.isEmpty {
+                settingsConfigRow(title: viewModel.localizedText("来源", "Source"), nested: true) {
+                    settingsConfigSegmentedControl(
+                        options: supportedSourceModes.map {
+                            SettingsPillSegmentOption(id: $0.id, title: officialConfigSourceModeLabel($0))
+                        },
+                        selection: sourceBinding.wrappedValue.id,
+                        width: officialConfigSourceSegmentWidth(supportedSourceModes)
+                    ) { selectedID in
+                        if let selected = supportedSourceModes.first(where: { $0.id == selectedID }) {
+                            sourceBinding.wrappedValue = selected
+                        }
+                    }
+                }
+            }
+
+            if visibleWebModes.count > 1 {
+                let webSelection = officialConfigResolvedWebSelection(webBinding.wrappedValue, visibleModes: visibleWebModes)
+                settingsConfigRow(title: viewModel.localizedText("网页", "Web"), nested: true) {
+                    settingsConfigSegmentedControl(
+                        options: visibleWebModes.map {
+                            SettingsPillSegmentOption(id: $0.id, title: officialConfigWebModeLabel($0))
+                        },
+                        selection: webSelection.id,
+                        width: officialConfigWebSegmentWidth(visibleWebModes)
+                    ) { selectedID in
+                        if let selected = visibleWebModes.first(where: { $0.id == selectedID }) {
+                            webBinding.wrappedValue = selected
+                        }
+                    }
+                }
+            }
+
+            settingsDetailGroupCaption(viewModel.localizedText("套餐与显示", "Plan & Display"))
+
             settingsConfigToggleRow(
                 title: officialStatusBarTitle,
                 isOn: Binding(
@@ -74,22 +116,6 @@ extension SettingsView {
 
             officialUsagePreferenceConfigRow(quotaDisplayBinding)
 
-            if !supportedSourceModes.isEmpty {
-                settingsConfigRow(title: viewModel.localizedText("来源", "Source"), nested: true) {
-                    settingsConfigSegmentedControl(
-                        options: supportedSourceModes.map {
-                            SettingsPillSegmentOption(id: $0.id, title: officialConfigSourceModeLabel($0))
-                        },
-                        selection: sourceBinding.wrappedValue.id,
-                        width: officialConfigSourceSegmentWidth(supportedSourceModes)
-                    ) { selectedID in
-                        if let selected = supportedSourceModes.first(where: { $0.id == selectedID }) {
-                            sourceBinding.wrappedValue = selected
-                        }
-                    }
-                }
-            }
-
             if settingsSpec.showsTraeValueDisplayMode {
                 settingsConfigRow(title: viewModel.localizedText("显示", "Display"), nested: true) {
                     settingsConfigSegmentedControl(
@@ -103,42 +129,6 @@ extension SettingsView {
                         if let selected = [OfficialTraeValueDisplayMode.percent, .amount].first(where: { $0.id == selectedID }) {
                             traeValueDisplayBinding.wrappedValue = selected
                         }
-                    }
-                }
-            }
-
-            if visibleWebModes.count > 1 {
-                let webSelection = officialConfigResolvedWebSelection(webBinding.wrappedValue, visibleModes: visibleWebModes)
-                settingsConfigRow(title: viewModel.localizedText("网页", "Web"), nested: true) {
-                    settingsConfigSegmentedControl(
-                        options: visibleWebModes.map {
-                            SettingsPillSegmentOption(id: $0.id, title: officialConfigWebModeLabel($0))
-                        },
-                        selection: webSelection.id,
-                        width: officialConfigWebSegmentWidth(visibleWebModes)
-                    ) { selectedID in
-                        if let selected = visibleWebModes.first(where: { $0.id == selectedID }) {
-                            webBinding.wrappedValue = selected
-                        }
-                    }
-                }
-            }
-
-            ForEach(settingsSpec.credentialFields) { credentialField in
-                VStack(alignment: .leading, spacing: 5) {
-                    settingsConfigRow(title: officialConfigCredentialTitle(for: credentialField), nested: true) {
-                        officialConfigCredentialField(
-                            credentialField,
-                            provider: provider,
-                            sourceMode: sourceBinding.wrappedValue,
-                            webMode: webBinding.wrappedValue,
-                            quotaDisplayMode: quotaDisplayBinding.wrappedValue,
-                            traeValueDisplayMode: settingsSpec.showsTraeValueDisplayMode ? traeValueDisplayBinding.wrappedValue : nil
-                        )
-                    }
-
-                    if let credentialHint = officialCredentialHint(for: credentialField, provider: provider) {
-                        thirdPartyHintText(credentialHint)
                     }
                 }
             }
@@ -171,6 +161,37 @@ extension SettingsView {
             .onChange(of: focusedThresholdProviderID) { oldValue, newValue in
                 if oldValue == provider.id, newValue != provider.id {
                     applyOfficialThresholdInput(provider)
+                }
+            }
+
+            if !settingsSpec.credentialFields.isEmpty {
+                settingsDetailGroupCaption(viewModel.localizedText("凭证与调试信息", "Credentials & Debug"))
+
+                // 凭证输入默认折叠，只有点击「重新导入凭证 / 手动配置凭证」时展开。
+                SettingsCredentialDisclosureBlock(
+                    headerTitle: SettingsCredentialDisclosurePresenter.headerTitle(
+                        hasSavedCredential: hasSavedOfficialCredential,
+                        language: viewModel.language
+                    )
+                ) {
+                    ForEach(settingsSpec.credentialFields) { credentialField in
+                        VStack(alignment: .leading, spacing: 5) {
+                            settingsConfigRow(title: officialConfigCredentialTitle(for: credentialField), nested: true) {
+                                officialConfigCredentialField(
+                                    credentialField,
+                                    provider: provider,
+                                    sourceMode: sourceBinding.wrappedValue,
+                                    webMode: webBinding.wrappedValue,
+                                    quotaDisplayMode: quotaDisplayBinding.wrappedValue,
+                                    traeValueDisplayMode: settingsSpec.showsTraeValueDisplayMode ? traeValueDisplayBinding.wrappedValue : nil
+                                )
+                            }
+
+                            if let credentialHint = officialCredentialHint(for: credentialField, provider: provider) {
+                                thirdPartyHintText(credentialHint)
+                            }
+                        }
+                    }
                 }
             }
         }

@@ -57,7 +57,8 @@ final class MenuDashboardStateBuilderTests: XCTestCase {
         XCTAssertEqual(amountCard.title, "open.ailinyu.de")
         XCTAssertEqual(amountCard.amountText, "42.50")
         XCTAssertEqual(amountCard.balanceLabel, "Balance")
-        XCTAssertNil(amountCard.secondaryText)
+        // Live relay data names its source in the secondary line (doc §10.1/§10.2).
+        XCTAssertEqual(amountCard.secondaryText, "Live")
     }
 
     func testOfficialDeepSeekRendersCurrencyBalanceInsteadOfQuotaPlaceholders() {

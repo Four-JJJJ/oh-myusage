@@ -175,6 +175,8 @@ enum L10nKey {
     case permissionKeychainDeleteConfirm
     case permissionKeychainDeleted
     case permissionKeychainDeleteFailed
+    case credentialDisclosureReimport
+    case credentialDisclosureManualSetup
     case credentialStatusNotConfigured
     case credentialStatusReady
     case credentialStatusReloginRequired
@@ -213,6 +215,17 @@ enum L10nKey {
     case updateAvailableTitle
     case updateAvailableBody
     case updateDownloadAction
+    // Menu data credibility mapping (doc §10.2).
+    case menuDataCredibilityLive
+    case menuDataCredibilityLocalCache
+    case menuDataCredibilityLocalEstimate
+    case menuDataCredibilityPendingRefresh
+    // Menu degraded-state chips (doc §10.1).
+    case menuStatusAuthFailed
+    case menuStatusConfigIssue
+    case menuStatusRateLimited
+    case menuStatusRefreshFailedStale
+    case menuStatusRefreshFailed
 }
 
 enum Localizer {
@@ -394,6 +407,8 @@ enum Localizer {
             case .permissionKeychainDeleteConfirm: return "确认后将删除 oh-myusage 钥匙串 vault 中保存的全部本机凭证（手动录入的 Cookie、Token、API Key 和已导入的登录态）。受影响的数据源需要重新录入凭证或重新导入后才能继续刷新；模型配置和其他本地数据不受影响。"
             case .permissionKeychainDeleted: return "本机凭证已删除。"
             case .permissionKeychainDeleteFailed: return "本机凭证删除失败，请稍后重试。"
+            case .credentialDisclosureReimport: return "重新导入凭证"
+            case .credentialDisclosureManualSetup: return "手动配置凭证"
             case .credentialStatusNotConfigured: return "未配置"
             case .credentialStatusReady: return "已准备，可后台读取"
             case .credentialStatusReloginRequired: return "需要重新登录"
@@ -432,6 +447,15 @@ enum Localizer {
             case .updateAvailableTitle: return "发现新版本"
             case .updateAvailableBody: return "最新 %@（当前 %@）"
             case .updateDownloadAction: return "下载最新安装包"
+            case .menuDataCredibilityLive: return "官方实时"
+            case .menuDataCredibilityLocalCache: return "本地缓存"
+            case .menuDataCredibilityLocalEstimate: return "本地估算"
+            case .menuDataCredibilityPendingRefresh: return "待刷新"
+            case .menuStatusAuthFailed: return "认证失败"
+            case .menuStatusConfigIssue: return "配置异常"
+            case .menuStatusRateLimited: return "限流"
+            case .menuStatusRefreshFailedStale: return "刷新失败，显示旧数据"
+            case .menuStatusRefreshFailed: return "刷新失败"
             }
         case .en:
             switch key {
@@ -609,6 +633,8 @@ enum Localizer {
             case .permissionKeychainDeleteConfirm: return "Continue to delete every credential stored in the oh-myusage Keychain vault (manually entered cookies, tokens, API keys, and imported sessions). Affected providers must re-enter or re-import credentials before refreshing; provider configs and other local data are not touched."
             case .permissionKeychainDeleted: return "Local credentials were deleted."
             case .permissionKeychainDeleteFailed: return "Failed to delete local credentials. Please try again."
+            case .credentialDisclosureReimport: return "Re-import Credentials"
+            case .credentialDisclosureManualSetup: return "Set Up Manually"
             case .credentialStatusNotConfigured: return "Not configured"
             case .credentialStatusReady: return "Ready for background reads"
             case .credentialStatusReloginRequired: return "Re-login required"
@@ -647,6 +673,15 @@ enum Localizer {
             case .updateAvailableTitle: return "Update Available"
             case .updateAvailableBody: return "Latest %@ (current %@)"
             case .updateDownloadAction: return "Download latest installer"
+            case .menuDataCredibilityLive: return "Live"
+            case .menuDataCredibilityLocalCache: return "Cached"
+            case .menuDataCredibilityLocalEstimate: return "Estimated"
+            case .menuDataCredibilityPendingRefresh: return "Pending"
+            case .menuStatusAuthFailed: return "Auth failed"
+            case .menuStatusConfigIssue: return "Config issue"
+            case .menuStatusRateLimited: return "Rate limited"
+            case .menuStatusRefreshFailedStale: return "Refresh failed, showing old data"
+            case .menuStatusRefreshFailed: return "Refresh failed"
             }
         }
     }

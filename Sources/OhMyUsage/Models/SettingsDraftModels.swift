@@ -230,6 +230,7 @@ struct RelayProviderEditorDraft: Equatable {
     var thirdPartyQuotaDisplayModeInputs: [String: OfficialQuotaDisplayMode] = [:]
     var relayTestResult: [String: RelayDiagnosticResult] = [:]
     var relayAdvancedExpanded: [String: Bool] = [:]
+    var relayCredentialDisclosureExpanded: [String: Bool] = [:]
     var selectedRelayTemplateInputs: [String: String] = [:]
     var relayCredentialModeInputs: [String: RelayCredentialMode] = [:]
     var relayShowExpirationTimeInputs: [String: Bool] = [:]

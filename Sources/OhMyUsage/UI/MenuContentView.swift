@@ -31,10 +31,12 @@ struct MenuContentView: View {
     private let cardBackground = SettingsVisualTokens.Menu.cardBackground
     // 卡片垂直间距。
     private let cardSpacing = SettingsVisualTokens.Menu.cardSpacing
-    // 状态颜色：健康/警告/错误。
-    private let sufficientColor = SettingsVisualTokens.Status.sufficient
+    // 状态颜色：只有告警/错误用突出色，正常态用中性文字色降噪（doc §10.1）。
     private let warningColor = SettingsVisualTokens.Status.warning
     private let errorColor = SettingsVisualTokens.Status.error
+    // 正常态的中性色（状态文字 / 进度条填充）。
+    private let neutralStatusColor = SettingsVisualTokens.Text.secondary
+    private let neutralBarColor = SettingsVisualTokens.Text.primary
     // 顶部操作按钮尺寸与间距（Figma: 16x16，间距 12）。
     private let headerActionIconSize = SettingsVisualTokens.Menu.headerActionIconSize
     private let headerActionSpacing = SettingsVisualTokens.Menu.headerActionSpacing
@@ -145,7 +147,9 @@ struct MenuContentView: View {
 
             HStack(spacing: headerActionSpacing) {
                 headerIconButton(iconName: "refresh_icon", fallback: "arrow.clockwise") {
-                    viewModel.refreshNow()
+                    // Doc §9.4/§10.1: the menu can only see the visible cards,
+                    // so the in-menu refresh entry refreshes visible providers.
+                    viewModel.refreshNow(scope: .visible)
                 }
                 headerIconButton(iconName: "settings_icon", fallback: "gearshape") {
                     if let onOpenSettings {
@@ -349,7 +353,7 @@ struct MenuContentView: View {
                 errorText: card.errorText,
                 backgroundColor: cardBackground,
                 isDisconnected: card.isDisconnected,
-                highlightColor: card.showsErrorHighlight ? errorColor : nil
+                highlightColor: card.highlightTone.map { color(for: $0) }
             )
         case let .amount(card):
             AmountModelCard(
@@ -363,7 +367,7 @@ struct MenuContentView: View {
                 errorText: card.errorText,
                 backgroundColor: cardBackground,
                 isDisconnected: card.isDisconnected,
-                highlightColor: card.showsErrorHighlight ? errorColor : nil,
+                highlightColor: card.highlightTone.map { color(for: $0) },
                 balanceLabel: card.balanceLabel
             )
         case let .officialGroup(card):
@@ -415,7 +419,8 @@ struct MenuContentView: View {
     private func color(for tone: MenuCardStatusPresentation.Tone) -> Color {
         switch tone {
         case .normal:
-            return sufficientColor
+            // 正常态降噪：状态文字不再使用绿色强调（doc §10.1）。
+            return neutralStatusColor
         case .warning:
             return warningColor
         case .error:
@@ -428,7 +433,8 @@ struct MenuContentView: View {
         case .clear:
             return .clear
         case .normal:
-            return sufficientColor
+            // 正常态进度条用中性填充，让限流/耗尽的突出色更醒目（doc §10.1）。
+            return neutralBarColor
         case .warning:
             return warningColor
         case .error:

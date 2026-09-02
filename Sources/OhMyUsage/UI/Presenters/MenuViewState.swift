@@ -54,7 +54,7 @@ struct MenuPercentageCardViewState: Identifiable, Equatable {
     var metrics: [MenuQuotaMetricDisplayPresentation]
     var errorText: String?
     var isDisconnected: Bool
-    var showsErrorHighlight: Bool
+    var highlightTone: MenuCardStatusPresentation.Tone?
 }
 
 struct MenuAmountCardViewState: Identifiable, Equatable {
@@ -68,7 +68,7 @@ struct MenuAmountCardViewState: Identifiable, Equatable {
     var secondaryText: String?
     var errorText: String?
     var isDisconnected: Bool
-    var showsErrorHighlight: Bool
+    var highlightTone: MenuCardStatusPresentation.Tone?
     var balanceLabel: String
 }
 

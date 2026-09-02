@@ -226,6 +226,100 @@ final class CredentialAccessServiceTests: XCTestCase {
         try? FileManager.default.removeItem(at: storageURL.deletingLastPathComponent())
     }
 
+    func testDeleteAllCredentialsRemovesTargetsAndKeepsUnrelatedSecureStoreItems() {
+        let suite = "CredentialAccessServiceTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defaults.removePersistentDomain(forName: suite)
+        let store = InMemorySecureStore()
+        let adapter = KeychainService.SecureStoreAdapter(
+            readData: { service, account, _ in
+                store.readData(service: service, account: account)
+            },
+            readAll: { service, _ in
+                store.readAll(service: service)
+            },
+            saveData: { data, service, account, _ in
+                store.saveData(data, service: service, account: account)
+            },
+            deleteItem: { service, account in
+                store.deleteItem(service: service, account: account)
+            },
+            deleteAll: { service in
+                store.deleteAll(service: service)
+            }
+        )
+        let keychain = KeychainService(defaults: defaults, forceSecureStore: true, secureStore: adapter)
+        let service = CredentialAccessService(keychain: keychain)
+
+        XCTAssertTrue(
+            service.saveCredential(
+                "test-token-a",
+                service: KeychainService.defaultServiceName,
+                account: "acct-a"
+            )
+        )
+        XCTAssertTrue(service.saveCredential("test-token-b", service: "relay-svc", account: "acct-b"))
+        // Item the app never enumerates (different service namespace) must survive
+        // a full local-credential wipe.
+        store.saveData(Data("test-token-keep".utf8), service: "unrelated-svc", account: "acct-keep")
+
+        XCTAssertTrue(
+            service.deleteAllCredentials(extraServiceAccounts: [("relay-svc", "acct-b")])
+        )
+
+        let deletedTargets = [
+            (KeychainService.defaultServiceName, "acct-a"),
+            ("relay-svc", "acct-b")
+        ]
+        for target in deletedTargets {
+            XCTAssertNil(
+                service.savedCredentialLength(
+                    service: target.0,
+                    account: target.1,
+                    secureStorageReady: true,
+                    onLookupStateChanged: {}
+                ),
+                "credential \(target.1) should have been deleted"
+            )
+            XCTAssertEqual(
+                service.credentialAccessState(service: target.0, account: target.1),
+                .notConfigured
+            )
+        }
+
+        // The vault item itself no longer carries the deleted entries — the wipe
+        // is persisted, not just hidden from the in-memory cache.
+        let vaultData = store.readData(
+            service: KeychainService.defaultServiceName,
+            account: "__credential_vault__"
+        )
+        let vaultSnapshot = vaultData.flatMap { try? JSONDecoder().decode([String: String].self, from: $0) } ?? [:]
+        XCTAssertNil(vaultSnapshot["\(KeychainService.defaultServiceName)::acct-a"])
+        XCTAssertNil(vaultSnapshot["relay-svc::acct-b"])
+
+        // A fresh service over the same store and defaults sees no leftovers.
+        let fresh = CredentialAccessService(
+            keychain: KeychainService(defaults: defaults, forceSecureStore: true, secureStore: adapter)
+        )
+        for target in deletedTargets {
+            XCTAssertNil(
+                fresh.savedCredentialLength(
+                    service: target.0,
+                    account: target.1,
+                    secureStorageReady: true,
+                    onLookupStateChanged: {}
+                ),
+                "credential \(target.1) should be gone from persistent storage"
+            )
+        }
+
+        XCTAssertEqual(
+            store.readData(service: "unrelated-svc", account: "acct-keep"),
+            Data("test-token-keep".utf8),
+            "unrelated secure-store items must survive deleteAllCredentials"
+        )
+    }
+
     func testDeleteAllCredentialsOnSecureStoreStaysNonInteractive() {
         let suite = "CredentialAccessServiceTests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
@@ -332,5 +426,58 @@ private final class CredentialReadRecorder: @unchecked Sendable {
         }
         lock.unlock()
         _ = service
+    }
+}
+
+/// Mutable in-memory `SecureStoreAdapter` backing store for deletion tests.
+/// Keys are "<service>::<account>"; only aggregate plumbing lives here, values
+/// are opaque Data blobs written by the keychain under test.
+private final class InMemorySecureStore: @unchecked Sendable {
+    private let lock = NSLock()
+    private var items: [String: Data] = [:]
+
+    private func key(service: String, account: String) -> String {
+        "\(service)::\(account)"
+    }
+
+    func readData(service: String, account: String) -> Data? {
+        lock.lock()
+        defer { lock.unlock() }
+        return items[key(service: service, account: account)]
+    }
+
+    func readAll(service: String) -> [String: String]? {
+        lock.lock()
+        defer { lock.unlock() }
+        let prefix = "\(service)::"
+        var result: [String: String] = [:]
+        for (itemKey, data) in items where itemKey.hasPrefix(prefix) {
+            let account = String(itemKey.dropFirst(prefix.count))
+            if let token = String(data: data, encoding: .utf8), !token.isEmpty {
+                result[account] = token
+            }
+        }
+        return result
+    }
+
+    @discardableResult
+    func saveData(_ data: Data, service: String, account: String) -> Bool {
+        lock.lock()
+        items[key(service: service, account: account)] = data
+        lock.unlock()
+        return true
+    }
+
+    func deleteItem(service: String, account: String) {
+        lock.lock()
+        items.removeValue(forKey: key(service: service, account: account))
+        lock.unlock()
+    }
+
+    func deleteAll(service: String) {
+        lock.lock()
+        let prefix = "\(service)::"
+        items = items.filter { !$0.key.hasPrefix(prefix) }
+        lock.unlock()
     }
 }

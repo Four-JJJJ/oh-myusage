@@ -243,6 +243,64 @@ final class AppPermissionCredentialFlowTests: XCTestCase {
         XCTAssertTrue(targets.contains { $0.service == KeychainService.defaultServiceName && $0.account == "cookie-account" })
     }
 
+    func testCredentialTargetsIncludeRelaySlotsAndSkipBlankEntries() {
+        let providers = [
+            // Relay provider: auth slot plus a balance slot on a distinct service.
+            makeDescriptor(
+                id: "relay-1",
+                auth: AuthConfig(
+                    kind: .bearer,
+                    keychainService: KeychainService.defaultServiceName,
+                    keychainAccount: "relay-1/token"
+                ),
+                relayConfig: RelayProviderConfig(
+                    baseURL: "https://relay-1.example.com",
+                    balanceAuth: AuthConfig(
+                        kind: .bearer,
+                        keychainService: "relay-balance-service",
+                        keychainAccount: "relay-1/balance"
+                    )
+                )
+            ),
+            // Same balance slot with padded whitespace must deduplicate to one entry.
+            makeDescriptor(
+                id: "relay-2",
+                auth: .none,
+                relayConfig: RelayProviderConfig(
+                    baseURL: "https://relay-2.example.com",
+                    balanceAuth: AuthConfig(
+                        kind: .bearer,
+                        keychainService: " relay-balance-service ",
+                        keychainAccount: " relay-1/balance "
+                    )
+                )
+            ),
+            // Blank or missing slots are skipped entirely.
+            makeDescriptor(
+                id: "blank-service",
+                auth: AuthConfig(kind: .bearer, keychainService: "   ", keychainAccount: "blank-account")
+            ),
+            makeDescriptor(
+                id: "missing-account",
+                auth: AuthConfig(kind: .bearer, keychainService: KeychainService.defaultServiceName)
+            ),
+            // Provider without any credential slots contributes nothing.
+            makeDescriptor(id: "plain", auth: .none)
+        ]
+
+        let targets = AppConfigurationModel.credentialTargets(in: providers)
+
+        XCTAssertEqual(targets.count, 2)
+        XCTAssertTrue(
+            targets.contains {
+                $0.service == KeychainService.defaultServiceName && $0.account == "relay-1/token"
+            }
+        )
+        XCTAssertTrue(
+            targets.contains { $0.service == "relay-balance-service" && $0.account == "relay-1/balance" }
+        )
+    }
+
     // MARK: - Helpers
 
     private func makeBoundModel(recorder: PrepareFlowRecorder) -> AppPermissionModel {

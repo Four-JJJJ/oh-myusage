@@ -1,6 +1,51 @@
 import OhMyUsageDomain
 import SwiftUI
 
+/// doc 10.3：凭证折叠区的标题文案。已有凭证 → 重新导入；没有 → 手动配置。
+enum SettingsCredentialDisclosurePresenter {
+    static func headerTitle(hasSavedCredential: Bool, language: AppLanguage) -> String {
+        Localizer.text(
+            hasSavedCredential ? .credentialDisclosureReimport : .credentialDisclosureManualSetup,
+            language: language
+        )
+    }
+}
+
+/// doc 10.3 第 4 层：更新时间、来源和可信度。任何估算/缓存值都不会显示成“官方确认”——
+/// 可信度段与菜单栏共用 MenuDataCredibilityPresenter 的五态文案
+/// （官方实时 / 本地缓存 / 本地估算 / 待刷新 / 刷新失败，显示旧数据）。
+enum SettingsProviderProvenancePresenter {
+    static func provenanceLine(
+        updatedAt: Date?,
+        sourceLabel: String?,
+        snapshot: UsageSnapshot?,
+        now: Date,
+        language: AppLanguage
+    ) -> String? {
+        guard let updatedAt else { return nil }
+        let updatedText = "\(Localizer.text(.updatedAgo, language: language)) \(SettingsOverviewPresenter.elapsedText(from: updatedAt, now: now, language: language))"
+        var segments = [updatedText]
+
+        let trimmedSource = sourceLabel?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !trimmedSource.isEmpty {
+            switch language {
+            case .zhHans:
+                segments.append("来源：\(trimmedSource)")
+            case .en:
+                segments.append("Source: \(trimmedSource)")
+            }
+        }
+
+        if let snapshot {
+            let credibility = MenuDataCredibilityPresenter.credibility(snapshot: snapshot)
+            segments.append(MenuDataCredibilityPresenter.label(credibility, language: language))
+        }
+
+        let separator = language == .zhHans ? "｜" : " | "
+        return segments.joined(separator: separator)
+    }
+}
+
 extension SettingsView {
     @ViewBuilder
     func providerSettingsCard(_ provider: ProviderDescriptor) -> some View {
@@ -428,5 +473,115 @@ extension SettingsView {
         }
         guard snapshot?.valueFreshness == .empty else { return nil }
         return officialSubscriptionAccountVisibleError(snapshot?.note)
+    }
+
+    // MARK: - doc 10.3 详情区信息层级
+
+    /// 第 1 层：Provider 状态。正常状态保持低视觉噪音，只有异常才使用突出颜色。
+    @ViewBuilder
+    func providerDetailStatusSection(
+        _ provider: ProviderDescriptor,
+        snapshot: UsageSnapshot?,
+        error: String?
+    ) -> some View {
+        let status = providerDetailStatusPresentation(
+            provider: provider,
+            snapshot: snapshot,
+            error: error
+        )
+        settingsConfigurationSection(title: viewModel.localizedText("状态", "Status")) {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 8) {
+                    Circle()
+                        .fill(status.color)
+                        .frame(width: 6, height: 6)
+                    Text(status.text)
+                        .font(.system(size: 12, weight: .regular))
+                        .foregroundStyle(SettingsVisualTokens.Text.primary)
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+
+                if provider.enabled,
+                   let visibleError = officialSubscriptionAccountVisibleError(error),
+                   !visibleError.isEmpty {
+                    Text(visibleError)
+                        .font(settingsHintFont)
+                        .foregroundStyle(Color(hex: 0xD05757))
+                        .lineSpacing(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 12)
+                }
+            }
+        }
+    }
+
+    func providerDetailStatusPresentation(
+        provider: ProviderDescriptor,
+        snapshot: UsageSnapshot?,
+        error: String?
+    ) -> (text: String, color: Color) {
+        guard provider.enabled else {
+            return (viewModel.localizedText("已停用", "Disabled"), settingsMutedHintColor)
+        }
+        if provider.isRelay {
+            return relayProviderSummaryStatus(
+                snapshot: snapshot,
+                hasError: officialSubscriptionAccountVisibleError(error) != nil
+            )
+        }
+        if officialSubscriptionAccountVisibleError(error) != nil {
+            return (viewModel.localizedText("认证故障", "Auth Error"), Color(hex: 0xD05858))
+        }
+        guard snapshot != nil else {
+            return (viewModel.localizedText("待刷新", "Pending refresh"), settingsMutedHintColor)
+        }
+        return officialSingleAccountStatus(provider: provider, snapshot: snapshot, visibleError: nil)
+    }
+
+    /// 第 4 层：更新时间、来源和可信度。以低噪音提示行呈现。
+    @ViewBuilder
+    func providerDetailProvenanceSection(
+        _ provider: ProviderDescriptor,
+        snapshot: UsageSnapshot?
+    ) -> some View {
+        if let snapshot {
+            let line = SettingsProviderProvenancePresenter.provenanceLine(
+                updatedAt: snapshot.updatedAt,
+                sourceLabel: providerDetailSourceLabel(provider: provider, snapshot: snapshot),
+                snapshot: snapshot,
+                now: runtimeState.settingsNow,
+                language: viewModel.language
+            )
+            if let line, !line.isEmpty {
+                Text(line)
+                    .font(settingsHintFont)
+                    .foregroundStyle(settingsHintColor)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .frame(maxWidth: .infinity, minHeight: 14, alignment: .leading)
+                    .accessibilityLabel(line)
+            }
+        }
+    }
+
+    func providerDetailSourceLabel(provider: ProviderDescriptor, snapshot: UsageSnapshot) -> String? {
+        let trimmed = snapshot.sourceLabel.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty {
+            return trimmed
+        }
+        return viewModel.relayAuthSource(for: provider.id)
+    }
+
+    /// 详情配置区的小节标题（doc 10.3 第 5/6/7 层分组）。
+    func settingsDetailGroupCaption(_ title: String) -> some View {
+        Text(title)
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundStyle(SettingsVisualTokens.Text.tertiary)
+            .frame(maxWidth: .infinity, minHeight: 14, alignment: .leading)
+            .padding(.top, 4)
     }
 }

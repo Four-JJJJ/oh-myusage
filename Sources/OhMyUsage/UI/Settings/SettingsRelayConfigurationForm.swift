@@ -206,46 +206,64 @@ extension SettingsView {
             }
 
             VStack(alignment: .leading, spacing: 5) {
-                relayCompactConfigRow(title: viewModel.localizedText("凭证", "Credential")) {
-                    HStack(spacing: 8) {
-                        Group {
-                            if showBalanceCredential {
-                                let hasSavedBalanceToken = accountAuth.map { providerConfiguration.hasToken(auth: $0) } ?? false
-                                let savedBalanceTokenLength = accountAuth.flatMap { providerConfiguration.savedTokenLength(auth: $0) }
-                                settingsConfigSecureField(
-                                    hasSavedBalanceToken ? maskedSecretDots(length: savedBalanceTokenLength) : balanceCredentialTemplate.placeholder,
-                                    text: Binding(
-                                        get: { relayEditorDraft.systemTokenInputs[provider.id, default: ""] },
-                                        set: { relayEditorDraft.systemTokenInputs[provider.id] = $0 }
-                                    ),
-                                    width: credentialFieldWidth
-                                )
-                                .focused($focusedRelayCredentialProviderID, equals: provider.id)
-                                .onSubmit(saveBalanceCredential)
-                            } else {
-                                let hasSavedToken = providerConfiguration.hasToken(for: provider)
-                                let savedTokenLength = providerConfiguration.savedTokenLength(for: provider)
-                                settingsConfigSecureField(
-                                    hasSavedToken ? maskedSecretDots(length: savedTokenLength) : quotaCredentialTemplate.placeholder,
-                                    text: Binding(
-                                        get: { relayEditorDraft.tokenInputs[provider.id, default: ""] },
-                                        set: { relayEditorDraft.tokenInputs[provider.id] = $0 }
-                                    ),
-                                    width: credentialFieldWidth
-                                )
-                                .focused($focusedRelayCredentialProviderID, equals: provider.id)
-                                .onSubmit(saveQuotaCredential)
+                let hasSavedRelayCredential: Bool = {
+                    if showBalanceCredential {
+                        return accountAuth.map { providerConfiguration.hasToken(auth: $0) } ?? false
+                    }
+                    return providerConfiguration.hasToken(for: provider)
+                }()
+                SettingsCredentialDisclosureBlock(
+                    headerTitle: hasSavedRelayCredential
+                        ? viewModel.text(.credentialDisclosureReimport)
+                        : viewModel.text(.credentialDisclosureManualSetup),
+                    isExpanded: Binding(
+                        get: { relayEditorDraft.relayCredentialDisclosureExpanded[provider.id] ?? false },
+                        set: { relayEditorDraft.relayCredentialDisclosureExpanded[provider.id] = $0 }
+                    )
+                ) {
+                    VStack(alignment: .leading, spacing: 5) {
+                        relayCompactConfigRow(title: viewModel.localizedText("凭证", "Credential")) {
+                            HStack(spacing: 8) {
+                                Group {
+                                    if showBalanceCredential {
+                                        let hasSavedBalanceToken = accountAuth.map { providerConfiguration.hasToken(auth: $0) } ?? false
+                                        let savedBalanceTokenLength = accountAuth.flatMap { providerConfiguration.savedTokenLength(auth: $0) }
+                                        settingsConfigSecureField(
+                                            hasSavedBalanceToken ? maskedSecretDots(length: savedBalanceTokenLength) : balanceCredentialTemplate.placeholder,
+                                            text: Binding(
+                                                get: { relayEditorDraft.systemTokenInputs[provider.id, default: ""] },
+                                                set: { relayEditorDraft.systemTokenInputs[provider.id] = $0 }
+                                            ),
+                                            width: credentialFieldWidth
+                                        )
+                                        .focused($focusedRelayCredentialProviderID, equals: provider.id)
+                                        .onSubmit(saveBalanceCredential)
+                                    } else {
+                                        let hasSavedToken = providerConfiguration.hasToken(for: provider)
+                                        let savedTokenLength = providerConfiguration.savedTokenLength(for: provider)
+                                        settingsConfigSecureField(
+                                            hasSavedToken ? maskedSecretDots(length: savedTokenLength) : quotaCredentialTemplate.placeholder,
+                                            text: Binding(
+                                                get: { relayEditorDraft.tokenInputs[provider.id, default: ""] },
+                                                set: { relayEditorDraft.tokenInputs[provider.id] = $0 }
+                                            ),
+                                            width: credentialFieldWidth
+                                        )
+                                        .focused($focusedRelayCredentialProviderID, equals: provider.id)
+                                        .onSubmit(saveQuotaCredential)
+                                    }
+                                }
+
+                                settingsSmallOutlineButton(viewModel.localizedText("保存", "Save"), width: 46) {
+                                    saveCurrentCredentialIfNeeded()
+                                }
                             }
                         }
 
-                        settingsSmallOutlineButton(viewModel.localizedText("保存", "Save"), width: 46) {
-                            saveCurrentCredentialIfNeeded()
+                        ForEach(credentialHintLines, id: \.self) { line in
+                            thirdPartyHintText(line)
                         }
                     }
-                }
-
-                ForEach(credentialHintLines, id: \.self) { line in
-                    thirdPartyHintText(line)
                 }
             }
 
@@ -327,10 +345,11 @@ extension SettingsView {
         }
     }
 
-    /// 保存新站点后若缺凭证，编辑页出现时自动聚焦凭证输入框补录
+    /// 保存新站点后若缺凭证，编辑页出现时自动展开凭证折叠区并聚焦输入框补录
     func focusPendingRelayCredentialIfNeeded(_ provider: ProviderDescriptor) {
         guard pendingRelayCredentialFocusProviderID == provider.id else { return }
         pendingRelayCredentialFocusProviderID = nil
+        relayEditorDraft.relayCredentialDisclosureExpanded[provider.id] = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
             focusedRelayCredentialProviderID = provider.id
         }
@@ -698,95 +717,129 @@ extension SettingsView {
                 }
             }
 
-            if showBalanceCredential {
-                let hasSavedBalanceToken = accountAuth.map { providerConfiguration.hasToken(auth: $0) } ?? false
-                let savedBalanceTokenLength = accountAuth.flatMap { providerConfiguration.savedTokenLength(auth: $0) }
-                let balanceTextBinding = Binding(
-                    get: { relayEditorDraft.systemTokenInputs[provider.id, default: ""] },
-                    set: { relayEditorDraft.systemTokenInputs[provider.id] = $0 }
-                )
-                let resolvedBalancePlaceholder = hasSavedBalanceToken
-                    ? maskedSecretDots(length: savedBalanceTokenLength)
-                    : balancePlaceholder
-
-                if selectedTemplate.id == "generic-newapi", let accountAuth {
-                    // Phase 1 试点：generic-newapi 余额凭证行走 spec 驱动的通用 CredentialFieldRow，
-                    // 保存仍走同一 facade 入口，行为与原内联实现逐位一致。
-                    let spec = CredentialFieldSpec(
-                        kind: .relayBalanceAuth,
-                        storageTarget: .auth(accountAuth),
-                        requiresExplicitSave: true,
-                        copy: CredentialFieldCopy(
-                            title: balanceFieldTitle,
-                            placeholder: resolvedBalancePlaceholder,
-                            hintLines: balanceHintLines
-                        ),
-                        autoImport: supportsBrowserImport ? .browser : nil
+            if showBalanceCredential || showTokenCredential {
+                // doc 10.3：凭证输入默认折叠，任一通道已有保存凭证时标题为「重新导入凭证」。
+                let hasSavedRelayCredential = (showBalanceCredential
+                    && (accountAuth.map { providerConfiguration.hasToken(auth: $0) } ?? false))
+                    || (showTokenCredential && providerConfiguration.hasToken(for: provider))
+                SettingsCredentialDisclosureBlock(
+                    headerTitle: SettingsCredentialDisclosurePresenter.headerTitle(
+                        hasSavedCredential: hasSavedRelayCredential,
+                        language: viewModel.language
+                    ),
+                    isExpanded: Binding(
+                        get: { relayEditorDraft.relayCredentialDisclosureExpanded[provider.id] ?? false },
+                        set: { relayEditorDraft.relayCredentialDisclosureExpanded[provider.id] = $0 }
                     )
-                    credentialFieldRow(
-                        spec: spec,
-                        text: balanceTextBinding,
-                        saveLabel: tokenSaveButtonTitle,
-                        fallbackTitle: balanceFieldTitle,
-                        fallbackPlaceholder: resolvedBalancePlaceholder,
-                        fallbackHintLines: balanceHintLines
-                    ) { value in
-                        _ = providerConfiguration.saveCredential(value, field: .authToken(accountAuth), restartPolicy: .restartPolling)
-                    }
-                } else {
-                    VStack(alignment: .leading, spacing: 8) {
-                        thirdPartyConfigRow(title: balanceFieldTitle) {
-                            HStack(spacing: 8) {
-                                relayProminentSecureField(resolvedBalancePlaceholder, text: balanceTextBinding)
-                                    .frame(maxWidth: .infinity, minHeight: 24, maxHeight: 24)
+                ) {
+                    VStack(alignment: .leading, spacing: 24) {
+                        if showBalanceCredential {
+                            let hasSavedBalanceToken = accountAuth.map { providerConfiguration.hasToken(auth: $0) } ?? false
+                            let savedBalanceTokenLength = accountAuth.flatMap { providerConfiguration.savedTokenLength(auth: $0) }
+                            let balanceTextBinding = Binding(
+                                get: { relayEditorDraft.systemTokenInputs[provider.id, default: ""] },
+                                set: { relayEditorDraft.systemTokenInputs[provider.id] = $0 }
+                            )
+                            let resolvedBalancePlaceholder = hasSavedBalanceToken
+                                ? maskedSecretDots(length: savedBalanceTokenLength)
+                                : balancePlaceholder
 
-                                settingsCapsuleButton(tokenSaveButtonTitle, dismissInputFocus: true) {
-                                    guard let accountAuth else { return }
-                                    let token = balanceTextBinding.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines)
-                                    guard !token.isEmpty else { return }
-                                    _ = providerConfiguration.saveCredential(token, field: .authToken(accountAuth), restartPolicy: .restartPolling)
-                                    balanceTextBinding.wrappedValue = ""
+                            if selectedTemplate.id == "generic-newapi", let accountAuth {
+                                // Phase 1 试点：generic-newapi 余额凭证行走 spec 驱动的通用 CredentialFieldRow，
+                                // 保存仍走同一 facade 入口，行为与原内联实现逐位一致。
+                                let spec = CredentialFieldSpec(
+                                    kind: .relayBalanceAuth,
+                                    storageTarget: .auth(accountAuth),
+                                    requiresExplicitSave: true,
+                                    copy: CredentialFieldCopy(
+                                        title: balanceFieldTitle,
+                                        placeholder: resolvedBalancePlaceholder,
+                                        hintLines: balanceHintLines
+                                    ),
+                                    autoImport: supportsBrowserImport ? .browser : nil
+                                )
+                                credentialFieldRow(
+                                    spec: spec,
+                                    text: balanceTextBinding,
+                                    saveLabel: tokenSaveButtonTitle,
+                                    fallbackTitle: balanceFieldTitle,
+                                    fallbackPlaceholder: resolvedBalancePlaceholder,
+                                    fallbackHintLines: balanceHintLines,
+                                    focus: (binding: $focusedRelayCredentialProviderID, value: provider.id)
+                                ) { value in
+                                    _ = providerConfiguration.saveCredential(value, field: .authToken(accountAuth), restartPolicy: .restartPolling)
                                 }
-                                .fixedSize(horizontal: true, vertical: false)
-                                .layoutPriority(2)
+                            } else {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    thirdPartyConfigRow(title: balanceFieldTitle) {
+                                        HStack(spacing: 8) {
+                                            relayProminentSecureField(resolvedBalancePlaceholder, text: balanceTextBinding)
+                                                .focused($focusedRelayCredentialProviderID, equals: provider.id)
+                                                .frame(maxWidth: .infinity, minHeight: 24, maxHeight: 24)
+
+                                            settingsCapsuleButton(tokenSaveButtonTitle, dismissInputFocus: true) {
+                                                guard let accountAuth else { return }
+                                                let token = balanceTextBinding.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                                                guard !token.isEmpty else { return }
+                                                _ = providerConfiguration.saveCredential(token, field: .authToken(accountAuth), restartPolicy: .restartPolling)
+                                                balanceTextBinding.wrappedValue = ""
+                                            }
+                                            .fixedSize(horizontal: true, vertical: false)
+                                            .layoutPriority(2)
+                                        }
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                    }
+
+                                    ForEach(balanceHintLines, id: \.self) { line in
+                                        thirdPartyHintText(line)
+                                    }
+                                }
                             }
-                            .frame(maxWidth: .infinity, alignment: .leading)
                         }
 
-                        ForEach(balanceHintLines, id: \.self) { line in
-                            thirdPartyHintText(line)
-                        }
-                    }
-                }
-            }
-
-            if showTokenCredential {
-                let hasSavedToken = providerConfiguration.hasToken(for: provider)
-                let savedTokenLength = providerConfiguration.savedTokenLength(for: provider)
-
-                VStack(alignment: .leading, spacing: 8) {
-                    thirdPartyConfigRow(title: quotaFieldTitle) {
-                        HStack(spacing: 8) {
-                            relayProminentSecureField(hasSavedToken ? maskedSecretDots(length: savedTokenLength) : quotaPlaceholder, text: Binding(
+                        if showTokenCredential {
+                            let hasSavedToken = providerConfiguration.hasToken(for: provider)
+                            let savedTokenLength = providerConfiguration.savedTokenLength(for: provider)
+                            let tokenTextBinding = Binding(
                                 get: { relayEditorDraft.tokenInputs[provider.id, default: ""] },
                                 set: { relayEditorDraft.tokenInputs[provider.id] = $0 }
-                            ))
-                            .frame(maxWidth: .infinity, minHeight: 24, maxHeight: 24)
+                            )
+                            let resolvedQuotaPlaceholder = hasSavedToken
+                                ? maskedSecretDots(length: savedTokenLength)
+                                : quotaPlaceholder
 
-                            settingsCapsuleButton(tokenSaveButtonTitle, dismissInputFocus: true) {
-                                let token = relayEditorDraft.tokenInputs[provider.id, default: ""].trimmingCharacters(in: .whitespacesAndNewlines)
-                                guard !token.isEmpty else { return }
-                                _ = providerConfiguration.saveCredential(token, field: .providerToken(provider), restartPolicy: .restartPolling)
-                                relayEditorDraft.tokenInputs[provider.id] = ""
+                            VStack(alignment: .leading, spacing: 8) {
+                                thirdPartyConfigRow(title: quotaFieldTitle) {
+                                    HStack(spacing: 8) {
+                                        // 与 condensed 形态一致：每个 provider 同一时间只有一个凭证框
+                                        // 持有 focusedRelayCredentialProviderID，余额通道优先。
+                                        Group {
+                                            if showBalanceCredential {
+                                                relayProminentSecureField(resolvedQuotaPlaceholder, text: tokenTextBinding)
+                                            } else {
+                                                relayProminentSecureField(resolvedQuotaPlaceholder, text: tokenTextBinding)
+                                                    .focused($focusedRelayCredentialProviderID, equals: provider.id)
+                                            }
+                                        }
+                                        .frame(maxWidth: .infinity, minHeight: 24, maxHeight: 24)
+
+                                        settingsCapsuleButton(tokenSaveButtonTitle, dismissInputFocus: true) {
+                                            let token = relayEditorDraft.tokenInputs[provider.id, default: ""].trimmingCharacters(in: .whitespacesAndNewlines)
+                                            guard !token.isEmpty else { return }
+                                            _ = providerConfiguration.saveCredential(token, field: .providerToken(provider), restartPolicy: .restartPolling)
+                                            relayEditorDraft.tokenInputs[provider.id] = ""
+                                        }
+                                        .fixedSize(horizontal: true, vertical: false)
+                                        .layoutPriority(2)
+                                    }
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                }
+
+                                ForEach(quotaHintLines, id: \.self) { line in
+                                    thirdPartyHintText(line)
+                                }
                             }
-                            .fixedSize(horizontal: true, vertical: false)
-                            .layoutPriority(2)
                         }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-
-                    ForEach(quotaHintLines, id: \.self) { line in
-                        thirdPartyHintText(line)
                     }
                 }
             }
@@ -1033,6 +1086,10 @@ extension SettingsView {
             }
         }
         .padding(.bottom, 8)
+        .onAppear { focusPendingRelayCredentialIfNeeded(provider) }
+        .onChange(of: navigationState.selectedProviderID) { _, _ in
+            focusPendingRelayCredentialIfNeeded(provider)
+        }
     }
 
     func relayCredentialTemplate(authHeader: String?, authScheme: String?) -> RelayCredentialTemplate {

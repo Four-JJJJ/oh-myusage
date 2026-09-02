@@ -311,10 +311,9 @@ extension SettingsView {
     }
 
     var fullDiskActionTitle: String {
-        if viewModel.language == .zhHans {
-            return viewModel.fullDiskAccessGranted ? "取消授权" : "打开设置"
-        }
-        return viewModel.text(.permissionFullDiskAction)
+        // 按钮行为始终是打开系统全盘访问设置页（已授权与否都一样），
+        // 文案如实描述行为，避免“取消授权”造成的误解（doc 4.2/7.5）。
+        viewModel.text(.permissionFullDiskAction)
     }
 
     var notificationPermissionStatusText: String {

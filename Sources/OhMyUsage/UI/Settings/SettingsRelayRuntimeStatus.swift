@@ -86,7 +86,6 @@ extension SettingsView {
         let snapshot = viewModel.snapshots[provider.id]
         let authSource = viewModel.relayAuthSource(for: provider.id)
         let fetchHealth = viewModel.relayFetchHealth(for: provider.id)
-        let freshness = viewModel.relayValueFreshness(for: provider.id)
         let error = viewModel.errors[provider.id]?.trimmingCharacters(in: .whitespacesAndNewlines)
         let effectiveHealth = fetchHealth ?? snapshot?.fetchHealth
         let hasError = error?.isEmpty == false
@@ -100,7 +99,13 @@ extension SettingsView {
         let balanceText = balanceValue.map(formattedSettingsAmount) ?? "--"
         let updatedText = snapshot.map { "\(viewModel.text(.updatedAgo)) \(settingsElapsedText(from: $0.updatedAt))" }
             ?? (viewModel.language == .zhHans ? "更新于 --" : "Updated --")
-        let freshnessText = freshness.map(relayValueFreshnessLabel) ?? (viewModel.language == .zhHans ? "未知" : "Unknown")
+        // doc 10.2：数据状态与菜单栏共用五态可信度文案，本地估算不会显示成官方实时。
+        let freshnessText = snapshot.map {
+            MenuDataCredibilityPresenter.label(
+                MenuDataCredibilityPresenter.credibility(snapshot: $0),
+                language: viewModel.language
+            )
+        } ?? (viewModel.language == .zhHans ? "未知" : "Unknown")
         let sourceValue = authSource?.isEmpty == false ? authSource! : selectedTemplate.displayName
         let sourceLine = viewModel.language == .zhHans
             ? "来源：\(sourceValue)｜\(freshnessText)"
@@ -441,10 +446,6 @@ extension SettingsView {
 
     func relayFetchHealthColor(_ health: FetchHealth) -> Color {
         RelayStatusPresenter.fetchHealthColor(health)
-    }
-
-    func relayValueFreshnessLabel(_ freshness: ValueFreshness) -> String {
-        RelayStatusPresenter.valueFreshnessLabel(freshness, language: viewModel.language)
     }
 
     func relayRuntimeStatusTitle() -> String {

@@ -2,10 +2,10 @@ import XCTest
 @testable import OhMyUsage
 
 final class MenuContentViewStatusTests: XCTestCase {
-    func testCachedAuthExpiredStatusTextUsesFailureLabel() {
+    func testCachedAuthExpiredStatusTextNamesAuthFailure() {
         XCTAssertEqual(
             MenuContentView.cachedFetchHealthStatusText(.authExpired, language: .zhHans),
-            "故障"
+            "认证失败"
         )
         XCTAssertNotEqual(
             MenuContentView.cachedFetchHealthStatusText(.authExpired, language: .zhHans),
@@ -13,10 +13,21 @@ final class MenuContentViewStatusTests: XCTestCase {
         )
     }
 
-    func testCachedAuthExpiredStatusTextUsesEnglishFailureLabel() {
+    func testCachedAuthExpiredStatusTextUsesEnglishAuthFailureLabel() {
         XCTAssertEqual(
             MenuContentView.cachedFetchHealthStatusText(.authExpired, language: .en),
-            "Failure"
+            "Auth failed"
+        )
+    }
+
+    func testHealthyCachedFallbackStatusTextUsesLocalCacheLabel() {
+        XCTAssertEqual(
+            MenuContentView.cachedFetchHealthStatusText(.ok, language: .zhHans),
+            "本地缓存"
+        )
+        XCTAssertEqual(
+            MenuContentView.cachedFetchHealthStatusText(.ok, language: .en),
+            "Cached"
         )
     }
 }

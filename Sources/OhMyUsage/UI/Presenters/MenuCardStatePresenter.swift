@@ -6,7 +6,11 @@ struct MenuCardVisualPresentation: Equatable {
     var status: MenuCardStatusPresentation
     var errorText: String?
     var isDisconnected: Bool
-    var showsErrorHighlight: Bool
+    /// Border highlight tone. `nil` renders no border; `.error` marks
+    /// error-level credibility problems (auth failure, refresh failure,
+    /// disconnect). Warning-level degradations (cache fallback, estimates)
+    /// stay border-free to keep normal screens quiet (doc §10.1).
+    var highlightTone: MenuCardStatusPresentation.Tone?
 }
 
 struct MenuAmountCardPresentation: Equatable {
@@ -42,6 +46,12 @@ enum MenuCardStatePresenter {
     ) -> MenuCardVisualPresentation {
         let stale = snapshot?.valueFreshness == .cachedFallback
         let disconnected = errorText != nil && !stale
+        let degraded = MenuCardStatusPresenter.degradedCredibilityStatus(
+            snapshot: snapshot,
+            disconnected: disconnected,
+            disconnectedText: disconnectedText,
+            language: language
+        )
 
         return MenuCardVisualPresentation(
             status: MenuCardStatusPresenter.percentageStatus(
@@ -56,7 +66,7 @@ enum MenuCardStatePresenter {
             ),
             errorText: errorText,
             isDisconnected: disconnected,
-            showsErrorHighlight: disconnected || stale || (snapshot?.valueFreshness == .empty && snapshot?.fetchHealth != .ok)
+            highlightTone: degraded?.tone == .error ? .error : nil
         )
     }
 
@@ -75,6 +85,12 @@ enum MenuCardStatePresenter {
     ) -> MenuAmountCardPresentation {
         let stale = snapshot?.valueFreshness == .cachedFallback
         let disconnected = errorText != nil && !stale
+        let degraded = MenuCardStatusPresenter.degradedCredibilityStatus(
+            snapshot: snapshot,
+            disconnected: disconnected,
+            disconnectedText: disconnectedText,
+            language: language
+        )
         let visual = MenuCardVisualPresentation(
             status: MenuCardStatusPresenter.amountStatus(
                 remaining: snapshot?.remaining,
@@ -87,14 +103,16 @@ enum MenuCardStatePresenter {
                 disconnectedText: disconnectedText
             ),
             errorText: errorText,
-            isDisconnected: disconnected || stale,
-            showsErrorHighlight: disconnected || (snapshot?.valueFreshness == .empty && snapshot?.fetchHealth != .ok)
+            isDisconnected: disconnected,
+            highlightTone: degraded?.tone == .error ? .error : nil
         )
 
         return MenuAmountCardPresentation(
             visual: visual,
-            amountText: (disconnected || stale) ? "-" : formattedBalanceNumber(displayedAmountValue(provider: provider, snapshot: snapshot)),
-            secondaryText: (disconnected || stale) ? nil : secondaryText,
+            // Cached fallback keeps showing the cached balance (doc §10.2
+            // "显示旧数据"); only a live disconnect suppresses the value.
+            amountText: disconnected ? "-" : formattedBalanceNumber(displayedAmountValue(provider: provider, snapshot: snapshot)),
+            secondaryText: disconnected ? nil : secondaryText,
             balanceLabel: provider.displaysUsedQuota ? usedLabel : balanceLabel
         )
     }
