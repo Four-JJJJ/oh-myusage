@@ -169,6 +169,8 @@ final class AppProviderListMutationCoordinatorTests: XCTestCase {
 
         var config = AppConfig(
             statusBarProviderID: codex.id,
+            statusBarMultiUsageEnabled: true,
+            statusBarMultiProviderIDs: [codex.id, gemini.id, relay.id],
             providers: [codex, claude, gemini, relay]
         )
         let coordinator = AppProviderListMutationCoordinator()
@@ -181,7 +183,14 @@ final class AppProviderListMutationCoordinatorTests: XCTestCase {
         )
 
         XCTAssertEqual(config.providers.map(\.id), ["gemini-c", "claude-b", "codex-a", "relay-d"])
-        XCTAssertTrue(outcome.shouldPersistAndRestart)
+        XCTAssertEqual(config.statusBarMultiProviderIDs, ["gemini-c", "codex-a", "relay-d"])
+        XCTAssertEqual(
+            outcome,
+            AppProviderListMutationOutcome(
+                shouldPersistAndRestart: true,
+                shouldNotifyDisplayConfigChange: true
+            )
+        )
     }
 
     func testCommitThresholdClampsValueAndRequestsPersist() {

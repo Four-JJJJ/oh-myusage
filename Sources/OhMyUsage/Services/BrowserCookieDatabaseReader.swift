@@ -1,4 +1,3 @@
-import CommonCrypto
 import Foundation
 import OhMyUsageProviders
 
@@ -354,28 +353,10 @@ final class BrowserCookieDatabaseReader {
         }
 
         guard let passphrase = safeStoragePassword(for: browser, accessIntent: accessIntent), !passphrase.isEmpty,
-              let key = pbkdf2SHA1(password: passphrase, salt: "saltysalt", rounds: 1003, keyByteCount: 16) else {
+              let decoded = ChromiumSafeStorageCrypto.decryptUTF8(encrypted, passphrase: passphrase) else {
             return nil
         }
-
-        let cipher = Data(encrypted.dropFirst(3))
-        let iv = Data(repeating: 0x20, count: kCCBlockSizeAES128)
-        guard let decrypted = aesCBCDecrypt(ciphertext: cipher, key: key, iv: iv) else {
-            return nil
-        }
-
-        if let decoded = String(data: decrypted, encoding: .utf8), !decoded.isEmpty {
-            return cleanCookieValue(decoded)
-        }
-
-        if decrypted.count > 32 {
-            let trimmed = Data(decrypted.dropFirst(32))
-            if let decoded = String(data: trimmed, encoding: .utf8), !decoded.isEmpty {
-                return cleanCookieValue(decoded)
-            }
-        }
-
-        return nil
+        return cleanCookieValue(decoded)
     }
 
     private func safeStoragePassword(
@@ -477,65 +458,6 @@ final class BrowserCookieDatabaseReader {
         case .safari:
             return []
         }
-    }
-
-    private func pbkdf2SHA1(password: String, salt: String, rounds: Int, keyByteCount: Int) -> Data? {
-        guard let saltData = salt.data(using: .utf8) else {
-            return nil
-        }
-
-        var keyData = Data(repeating: 0, count: keyByteCount)
-        let keyLength = keyData.count
-        let result = keyData.withUnsafeMutableBytes { keyBytes in
-            password.utf8CString.withUnsafeBytes { passBytes in
-                saltData.withUnsafeBytes { saltBytes in
-                    CCKeyDerivationPBKDF(
-                        CCPBKDFAlgorithm(kCCPBKDF2),
-                        passBytes.bindMemory(to: Int8.self).baseAddress,
-                        passBytes.count - 1,
-                        saltBytes.bindMemory(to: UInt8.self).baseAddress,
-                        saltData.count,
-                        CCPseudoRandomAlgorithm(kCCPRFHmacAlgSHA1),
-                        UInt32(rounds),
-                        keyBytes.bindMemory(to: UInt8.self).baseAddress,
-                        keyLength
-                    )
-                }
-            }
-        }
-
-        return result == kCCSuccess ? keyData : nil
-    }
-
-    private func aesCBCDecrypt(ciphertext: Data, key: Data, iv: Data) -> Data? {
-        var outLength = 0
-        var outData = Data(repeating: 0, count: ciphertext.count + kCCBlockSizeAES128)
-        let outCapacity = outData.count
-        let status = outData.withUnsafeMutableBytes { outBytes in
-            ciphertext.withUnsafeBytes { cipherBytes in
-                key.withUnsafeBytes { keyBytes in
-                    iv.withUnsafeBytes { ivBytes in
-                        CCCrypt(
-                            CCOperation(kCCDecrypt),
-                            CCAlgorithm(kCCAlgorithmAES),
-                            CCOptions(kCCOptionPKCS7Padding),
-                            keyBytes.baseAddress,
-                            key.count,
-                            ivBytes.baseAddress,
-                            cipherBytes.baseAddress,
-                            ciphertext.count,
-                            outBytes.baseAddress,
-                            outCapacity,
-                            &outLength
-                        )
-                    }
-                }
-            }
-        }
-
-        guard status == kCCSuccess else { return nil }
-        outData.count = outLength
-        return outData
     }
 
     private func cleanCookieValue(_ value: String) -> String {

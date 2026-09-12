@@ -221,6 +221,35 @@ struct AppConfig: Codable, Equatable {
         }
         return normalizedIDs
     }
+
+    static func statusBarMultiProviderIDsMatchingProviderOrder(
+        _ ids: [String],
+        providers: [ProviderDescriptor]
+    ) -> [String] {
+        let selectedIDs = Set(normalizedStatusBarMultiProviderIDs(ids, providers: providers))
+        return providers.compactMap { provider in
+            selectedIDs.contains(provider.id) ? provider.id : nil
+        }
+    }
+
+    func statusBarProvidersForDisplay() -> [ProviderDescriptor] {
+        if !statusBarMultiUsageEnabled {
+            if let id = statusBarProviderID,
+               let selected = providers.first(where: { $0.id == id && $0.enabled && $0.showsInMenuBar }) {
+                return [selected]
+            }
+            if let fallbackID = Self.defaultStatusBarProviderID(from: providers),
+               let fallback = providers.first(where: { $0.id == fallbackID && $0.enabled && $0.showsInMenuBar }) {
+                return [fallback]
+            }
+            return []
+        }
+
+        let selectedIDs = Set(statusBarMultiProviderIDs)
+        return providers.filter { provider in
+            provider.enabled && provider.showsInMenuBar && selectedIDs.contains(provider.id)
+        }
+    }
 }
 
 private struct AppConfigDiagnosticEnvelope: Decodable {

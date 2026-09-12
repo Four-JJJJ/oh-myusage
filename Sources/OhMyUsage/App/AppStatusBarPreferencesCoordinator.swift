@@ -23,10 +23,16 @@ struct AppStatusBarPreferencesCoordinator {
             config.statusBarProviderID = AppConfig.defaultStatusBarProviderID(from: config.providers)
         }
 
-        config.statusBarMultiProviderIDs = AppConfig.normalizedStatusBarMultiProviderIDs(
-            config.statusBarMultiProviderIDs,
+        let selectedIDs = Set(
+            AppConfig.normalizedStatusBarMultiProviderIDs(
+                config.statusBarMultiProviderIDs,
+                providers: config.providers
+            ).filter { visibleProviderIDs.contains($0) }
+        )
+        config.statusBarMultiProviderIDs = AppConfig.statusBarMultiProviderIDsMatchingProviderOrder(
+            Array(selectedIDs),
             providers: config.providers
-        ).filter { visibleProviderIDs.contains($0) }
+        )
 
         if let selectedSlotID = config.claudeStatusBarDisplaySlotID,
            !visibleClaudeMonitoringSlotIDs.contains(selectedSlotID) {

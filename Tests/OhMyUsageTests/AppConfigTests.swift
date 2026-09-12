@@ -563,6 +563,44 @@ final class AppConfigTests: XCTestCase {
         XCTAssertFalse(config.providers.first(where: { $0.id == "codex-official" })?.showsInMenuBar ?? true)
     }
 
+    func testStatusBarProvidersForDisplayFollowsProviderListOrder() {
+        var cursor = ProviderDescriptor.defaultOfficialCursor()
+        cursor.id = "cursor-official"
+        cursor.enabled = true
+        var grokBot = ProviderDescriptor.defaultOfficialGrokBot()
+        grokBot.id = "grokbot-official"
+        grokBot.enabled = true
+        var kimi = ProviderDescriptor.defaultOfficialKimi()
+        kimi.id = "kimi-official"
+        kimi.enabled = true
+
+        let config = AppConfig(
+            statusBarProviderID: cursor.id,
+            statusBarMultiUsageEnabled: true,
+            statusBarMultiProviderIDs: [kimi.id, grokBot.id, cursor.id],
+            providers: [cursor, grokBot, kimi]
+        )
+
+        XCTAssertEqual(
+            config.statusBarProvidersForDisplay().map(\.id),
+            [cursor.id, grokBot.id, kimi.id]
+        )
+    }
+
+    func testStatusBarMultiProviderIDsMatchingProviderOrderKeepsSelectionAndUsesProviderOrder() {
+        XCTAssertEqual(
+            AppConfig.statusBarMultiProviderIDsMatchingProviderOrder(
+                ["kimi-official", "missing", "cursor-official", "kimi-official"],
+                providers: [
+                    ProviderDescriptor.defaultOfficialCursor(),
+                    ProviderDescriptor.defaultOfficialGrokBot(),
+                    ProviderDescriptor.defaultOfficialKimi()
+                ]
+            ),
+            ["cursor-official", "kimi-official"]
+        )
+    }
+
     func testDecodeClaudeStatusBarDisplaySlotIDWhenPresent() throws {
         let json = #"""
         {

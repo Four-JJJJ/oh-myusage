@@ -136,19 +136,7 @@ extension AppViewModel {
     }
 
     func statusBarProvidersForDisplay() -> [ProviderDescriptor] {
-        if !config.statusBarMultiUsageEnabled {
-            if let provider = statusBarProvider() {
-                return [provider]
-            }
-            return []
-        }
-
-        let providersByID = Dictionary(uniqueKeysWithValues: config.providers.map { ($0.id, $0) })
-        let selectedProviders = config.statusBarMultiProviderIDs.compactMap { id -> ProviderDescriptor? in
-            guard let provider = providersByID[id], provider.enabled, provider.showsInMenuBar else { return nil }
-            return provider
-        }
-        return selectedProviders
+        config.statusBarProvidersForDisplay()
     }
 
     func refreshDisplayedStatusBarProviders(forceRefresh: Bool = false) {

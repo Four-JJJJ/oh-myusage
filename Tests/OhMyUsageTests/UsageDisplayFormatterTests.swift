@@ -33,10 +33,145 @@ final class UsageDisplayFormatterTests: XCTestCase {
     func testPlanTypeResolutionIsOnlyEnabledForSelectedOfficialModels() {
         XCTAssertNil(
             PlanTypeDisplayFormatter.resolvedPlanType(
-                providerType: .copilot,
-                extrasPlanType: "Business",
+                providerType: .jetbrains,
+                extrasPlanType: "Ultimate",
                 rawPlanType: "Pro"
             )
+        )
+
+        XCTAssertEqual(
+            PlanTypeDisplayFormatter.resolvedPlanType(
+                providerType: .relay,
+                extrasPlanType: "Coding Plan",
+                rawPlanType: nil
+            ),
+            "Coding Plan"
+        )
+
+        XCTAssertEqual(
+            PlanTypeDisplayFormatter.resolvedPlanType(
+                providerType: .copilot,
+                extrasPlanType: "pro",
+                rawPlanType: nil
+            ),
+            "Pro"
+        )
+
+        XCTAssertEqual(
+            PlanTypeDisplayFormatter.resolvedPlanType(
+                providerType: .gemini,
+                extrasPlanType: "pro",
+                rawPlanType: nil
+            ),
+            "Pro"
+        )
+
+        XCTAssertEqual(
+            PlanTypeDisplayFormatter.resolvedPlanType(
+                providerType: .microsoftCopilot,
+                extrasPlanType: "M365",
+                rawPlanType: nil
+            ),
+            "M365"
+        )
+
+        XCTAssertEqual(
+            PlanTypeDisplayFormatter.resolvedPlanType(
+                providerType: .zai,
+                extrasPlanType: "GLM Coding Max",
+                rawPlanType: nil
+            ),
+            "GLM Coding Max"
+        )
+
+        XCTAssertEqual(
+            PlanTypeDisplayFormatter.resolvedPlanType(
+                providerType: .amp,
+                extrasPlanType: "Free",
+                rawPlanType: nil
+            ),
+            "Free"
+        )
+
+        XCTAssertEqual(
+            PlanTypeDisplayFormatter.resolvedPlanType(
+                providerType: .windsurf,
+                extrasPlanType: "Pro",
+                rawPlanType: nil
+            ),
+            "Pro"
+        )
+
+        XCTAssertEqual(
+            PlanTypeDisplayFormatter.resolvedPlanType(
+                providerType: .grok,
+                extrasPlanType: "SuperGrok",
+                rawPlanType: nil
+            ),
+            "SuperGrok"
+        )
+
+        XCTAssertEqual(
+            PlanTypeDisplayFormatter.resolvedPlanType(
+                providerType: .grokBot,
+                extrasPlanType: "SuperGrok Plus",
+                rawPlanType: nil
+            ),
+            "SuperGrok Plus"
+        )
+
+        XCTAssertEqual(
+            PlanTypeDisplayFormatter.resolvedPlanType(
+                providerType: .qwen,
+                extrasPlanType: "Standard",
+                rawPlanType: nil
+            ),
+            "Standard"
+        )
+
+        XCTAssertEqual(
+            PlanTypeDisplayFormatter.resolvedPlanType(
+                providerType: .ollamaCloud,
+                extrasPlanType: "free",
+                rawPlanType: nil
+            ),
+            "Free"
+        )
+
+        XCTAssertEqual(
+            PlanTypeDisplayFormatter.resolvedPlanType(
+                providerType: .cursor,
+                extrasPlanType: "pro",
+                rawPlanType: nil
+            ),
+            "Pro"
+        )
+
+        XCTAssertEqual(
+            PlanTypeDisplayFormatter.resolvedPlanType(
+                providerType: .cursor,
+                extrasPlanType: "pro_plus",
+                rawPlanType: nil
+            ),
+            "Pro+"
+        )
+
+        XCTAssertEqual(
+            PlanTypeDisplayFormatter.resolvedPlanType(
+                providerType: .cursor,
+                extrasPlanType: "ultra",
+                rawPlanType: nil
+            ),
+            "Ultra"
+        )
+
+        XCTAssertEqual(
+            PlanTypeDisplayFormatter.resolvedPlanType(
+                providerType: .cursor,
+                extrasPlanType: "hobby",
+                rawPlanType: nil
+            ),
+            "Free"
         )
 
         XCTAssertEqual(

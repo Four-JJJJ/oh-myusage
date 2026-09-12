@@ -24,6 +24,7 @@ public enum ProviderType: String, Codable, CaseIterable, Sendable {
     case kimi
     case kimiBalance
     case grok
+    case grokBot
     case qwen
     case qwenBalance
 }

@@ -88,6 +88,12 @@ enum ProviderTypeMetadataCatalog {
             fallbackSystemIcon: "cursorarrow.rays",
             supportsLocalUsageHistory: true
         ),
+        .grokBot: ProviderTypeMetadata(
+            displayName: "Grok Bot",
+            iconName: "menu_grokbot_icon",
+            fallbackSystemIcon: "sparkle",
+            preferredMetricCount: 2
+        ),
         .jetbrains: ProviderTypeMetadata(displayName: "JetBrains", iconName: "menu_jetbrains_icon", fallbackSystemIcon: "brain.head.profile"),
         .kiro: ProviderTypeMetadata(
             displayName: "Kiro",

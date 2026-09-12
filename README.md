@@ -9,6 +9,16 @@ oh-myusage 把官方订阅额度、模型使用窗口、第三方中转余额、
 
 [下载最新版本](https://github.com/Four-JJJJ/oh-myusage/releases/latest) · [安装说明](docs/DOWNLOAD.md) · [支持的服务](docs/PROVIDERS.md) · [扩展指南](docs/EXTENDING.md) · [发布清单](docs/RELEASE_CHECKLIST.md) · [English](docs/README.en.md)
 
+## V2.5.1 更新
+
+V2.5.1 新增 Grok Bot 官方来源，并让菜单栏排序、订阅档位展示与设置保持一致。
+
+| 方向 | 改进 |
+| --- | --- |
+| Grok Bot | 新增独立官方卡：读取 Grok Bot 桌面端或 Cursor 登录态，显示每周 Bot 额度与可选按量窗口 |
+| 菜单栏排序 | 设置里拖拽官方 / API 服务商顺序后，菜单栏立即按同一顺序刷新 |
+| 订阅档位 | Cursor、Copilot、Gemini、Z.ai、Amp、Windsurf、Grok、Grok Bot、Qwen、Ollama Cloud 以及带套餐名的官方中转，会在卡片标题旁显示 Pro / Ultra / SuperGrok 等档位 |
+
 ## V2.5.0 更新
 
 V2.5.0 聚焦官方账号授权、低功耗刷新与菜单栏状态可信度，让常驻查询更少打扰、更容易判断。
@@ -137,7 +147,7 @@ oh-myusage 的目标是让这些信息变得可扫读、可诊断、可维护：
 
 | 类型 | 服务 |
 | --- | --- |
-| 官方 / 本地桌面端 | Codex、Claude、Gemini、GitHub Copilot、Cursor、Windsurf、Grok |
+| 官方 / 本地桌面端 | Codex、Claude、Gemini、GitHub Copilot、Cursor、Grok Bot、Windsurf、Grok |
 | 官方 / API 或网页来源 | Kimi / Moonshot、DeepSeek、MiniMax、Xiaomi MiMo、Amp、Z.ai、OpenCode Go |
 | 官方 / 本地数据来源 | JetBrains AI、Kiro |
 

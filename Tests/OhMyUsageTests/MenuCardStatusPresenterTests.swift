@@ -28,6 +28,66 @@ final class MenuCardStatusPresenterTests: XCTestCase {
         XCTAssertNil(MenuCardStatusPresenter.planType(for: official, snapshot: snapshot))
     }
 
+    func testCursorPlanTypeMapsMembershipTierLikeKimi() {
+        var cursor = ProviderDescriptor.defaultOfficialCursor()
+        cursor.officialConfig?.showPlanTypeInMenuBar = true
+        let snapshot = UsageSnapshot(
+            source: cursor.id,
+            status: .ok,
+            remaining: 80,
+            used: 20,
+            limit: 100,
+            unit: "%",
+            updatedAt: Date(),
+            note: "ok",
+            sourceLabel: "API",
+            extras: ["planType": "pro"]
+        )
+
+        XCTAssertEqual(
+            MenuCardStatusPresenter.planType(for: cursor, snapshot: snapshot),
+            "Pro"
+        )
+    }
+
+    func testOfficialProvidersWithPlanMetadataShowPlanType() {
+        let cases: [(ProviderDescriptor, String, String)] = [
+            (.defaultOfficialCopilot(), "pro", "Pro"),
+            (.defaultOfficialGemini(), "standard", "Standard"),
+            (.defaultOfficialZai(), "GLM Coding Max", "GLM Coding Max"),
+            (.defaultOfficialWindsurf(), "Pro", "Pro"),
+            (.defaultOfficialGrok(), "SuperGrok", "SuperGrok"),
+            (.defaultOfficialGrokBot(), "Cursor Ultra", "Cursor Ultra"),
+            (.defaultOfficialQwen(), "Standard", "Standard"),
+            (.defaultOfficialOllamaCloud(), "free", "Free"),
+            (.defaultOfficialAmp(), "Credits", "Credits"),
+            (.defaultOfficialMicrosoftCopilot(), "M365", "M365"),
+            (.defaultOfficialDeepSeek(), "Coding Plan", "Coding Plan")
+        ]
+
+        for (descriptor, rawPlan, expected) in cases {
+            var provider = descriptor
+            provider.officialConfig?.showPlanTypeInMenuBar = true
+            let snapshot = UsageSnapshot(
+                source: provider.id,
+                status: .ok,
+                remaining: 80,
+                used: 20,
+                limit: 100,
+                unit: "%",
+                updatedAt: Date(),
+                note: "ok",
+                sourceLabel: "API",
+                extras: ["planType": rawPlan]
+            )
+            XCTAssertEqual(
+                MenuCardStatusPresenter.planType(for: provider, snapshot: snapshot),
+                expected,
+                "\(provider.type.rawValue) should display \(expected)"
+            )
+        }
+    }
+
     func testPercentageStatusNamesAuthFailureForCachedAuthExpired() {
         let snapshot = UsageSnapshot(
             source: "relay",

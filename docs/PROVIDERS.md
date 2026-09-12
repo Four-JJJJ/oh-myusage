@@ -12,7 +12,8 @@ For extension and integration paths after the refactor, see [EXTENDING.md](./EXT
 | Claude | API, CLI, or web session depending on mode | Web overlays can enrich usage windows |
 | Gemini | official API/web quota data | Supports model-specific windows; local history from `~/.gemini/tmp/*/chats` |
 | GitHub Copilot | local GitHub auth | Reads Copilot usage and quota state |
-| Cursor | official/local session data | Monthly and on-demand usage; local history prefers dashboard events, then `state.vscdb` |
+| Cursor | official/local session data | Monthly and on-demand usage, plan tier (Pro / Pro+ / Ultra); local history prefers dashboard events, then `state.vscdb` |
+| Grok Bot | Cursor session (Grok Bot app or Cursor IDE) | Independent weekly Bot grant plus optional on-demand; Cursor paid plans or a SuperGrok / X Premium+ link on the same Cursor account |
 | Windsurf | official API | Daily and weekly windows |
 | Grok | local Grok CLI auth (`~/.grok/auth.json`) | Weekly shared pool, plan name, and pay-as-you-go cap; local history from `~/.grok/sessions` |
 | Kimi | official API | Session and overall usage; local history from Kimi CLI / Kimi Code sessions |

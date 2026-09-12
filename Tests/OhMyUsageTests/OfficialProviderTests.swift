@@ -17,6 +17,7 @@ final class OfficialProviderTests: XCTestCase {
         XCTAssertTrue(migrated.providers.contains(where: { $0.id == "zai-official" && $0.family == .official && !$0.enabled }))
         XCTAssertTrue(migrated.providers.contains(where: { $0.id == "amp-official" && $0.family == .official && !$0.enabled }))
         XCTAssertTrue(migrated.providers.contains(where: { $0.id == "cursor-official" && $0.family == .official && !$0.enabled }))
+        XCTAssertTrue(migrated.providers.contains(where: { $0.id == "grokbot-official" && $0.family == .official && !$0.enabled }))
         XCTAssertTrue(migrated.providers.contains(where: { $0.id == "jetbrains-official" && $0.family == .official && !$0.enabled }))
         XCTAssertTrue(migrated.providers.contains(where: { $0.id == "kiro-official" && $0.family == .official && !$0.enabled }))
         XCTAssertTrue(migrated.providers.contains(where: { $0.id == "windsurf-official" && $0.family == .official && !$0.enabled }))

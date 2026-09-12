@@ -59,7 +59,7 @@ struct AppProviderListMutationCoordinator {
             } else {
                 config.statusBarMultiProviderIDs.removeAll { $0 == providerID }
             }
-            config.statusBarMultiProviderIDs = AppConfig.normalizedStatusBarMultiProviderIDs(
+            config.statusBarMultiProviderIDs = AppConfig.statusBarMultiProviderIDsMatchingProviderOrder(
                 config.statusBarMultiProviderIDs,
                 providers: config.providers
             )
@@ -91,7 +91,15 @@ struct AppProviderListMutationCoordinator {
             config.providers[index] = enabledProviders[position]
         }
 
-        return AppProviderListMutationOutcome(shouldPersistAndRestart: true)
+        config.statusBarMultiProviderIDs = AppConfig.statusBarMultiProviderIDsMatchingProviderOrder(
+            config.statusBarMultiProviderIDs,
+            providers: config.providers
+        )
+
+        return AppProviderListMutationOutcome(
+            shouldPersistAndRestart: true,
+            shouldNotifyDisplayConfigChange: true
+        )
     }
 
     func commitThreshold(

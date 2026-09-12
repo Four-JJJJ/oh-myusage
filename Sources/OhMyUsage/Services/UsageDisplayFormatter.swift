@@ -174,7 +174,9 @@ enum TraeValueDisplayFormatter {
 
 enum PlanTypeDisplayFormatter {
     private static let supportedProviderTypes: Set<ProviderType> = [
-        .codex, .claude, .gemini, .kimi, .trae
+        .codex, .claude, .gemini, .copilot, .microsoftCopilot,
+        .zai, .amp, .cursor, .windsurf, .trae, .ollamaCloud,
+        .kimi, .grok, .grokBot, .qwen, .relay, .open, .dragon
     ]
 
     private static let hiddenValues: Set<String> = [
@@ -225,13 +227,42 @@ enum PlanTypeDisplayFormatter {
 
     private static func normalizedDisplayPlanType(_ value: String, providerType: ProviderType) -> String {
         switch providerType {
-        case .codex, .claude:
+        case .codex, .claude, .gemini, .copilot, .ollamaCloud:
             return titleCaseASCIIWords(value)
+        case .cursor:
+            return normalizedCursorPlanType(value)
         case .kimi:
             return normalizedKimiPlanType(value)
         default:
             return value
         }
+    }
+
+    private static func normalizedCursorPlanType(_ value: String) -> String {
+        switch normalizeCursorPlanKey(value) {
+        case "FREE", "HOBBY":
+            return "Free"
+        case "PRO":
+            return "Pro"
+        case "PROPLUS", "PRO+":
+            return "Pro+"
+        case "ULTRA":
+            return "Ultra"
+        case "TEAM", "TEAMS":
+            return "Teams"
+        case "BUSINESS":
+            return "Business"
+        case "ENTERPRISE":
+            return "Enterprise"
+        default:
+            return titleCaseASCIIWords(value)
+        }
+    }
+
+    private static func normalizeCursorPlanKey(_ value: String) -> String {
+        let uppercase = value.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        let separators = CharacterSet(charactersIn: " _-")
+        return uppercase.components(separatedBy: separators).filter { !$0.isEmpty }.joined()
     }
 
     private static func normalizedKimiPlanType(_ value: String) -> String {

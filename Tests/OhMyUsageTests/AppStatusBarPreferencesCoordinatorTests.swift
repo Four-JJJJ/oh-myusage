@@ -31,6 +31,26 @@ final class AppStatusBarPreferencesCoordinatorTests: XCTestCase {
         )
     }
 
+    func testNormalizeSelectionsReordersMultiProviderIDsToMatchProviders() {
+        var config = AppConfig(
+            statusBarProviderID: "beta",
+            statusBarMultiUsageEnabled: true,
+            statusBarMultiProviderIDs: ["beta", "alpha"],
+            providers: [
+                makeProvider(id: "alpha"),
+                makeProvider(id: "beta")
+            ]
+        )
+        let coordinator = AppStatusBarPreferencesCoordinator()
+
+        coordinator.normalizeSelections(
+            config: &config,
+            visibleClaudeMonitoringSlotIDs: []
+        )
+
+        XCTAssertEqual(config.statusBarMultiProviderIDs, ["alpha", "beta"])
+    }
+
     func testSetStatusBarProviderUpdatesSelectionAndRequestsRefresh() {
         var config = AppConfig(
             statusBarProviderID: "alpha",

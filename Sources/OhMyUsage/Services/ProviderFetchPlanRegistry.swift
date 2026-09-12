@@ -138,6 +138,17 @@ struct ProviderFetchPlanRegistry {
             supportsWebOverlay: false,
             requiresBrowserAccess: false
         ),
+        // Sand weekly status (1) + optional current-period on-demand (1);
+        // ConnectRPC may fall back to REST. Token from Grok Bot app or Cursor IDE.
+        .grokBot: ProviderFetchPlan(
+            providerType: .grokBot,
+            activeTTL: 60,
+            backgroundTTL: 900,
+            metadataTTL: 21_600,
+            estimatedRequestCount: 2,
+            supportsWebOverlay: false,
+            requiresBrowserAccess: false
+        ),
         // Local XML parsing only; no network requests.
         .jetbrains: ProviderFetchPlan(
             providerType: .jetbrains,

@@ -30,6 +30,7 @@ final class ProviderFactoryTests: XCTestCase {
             (.defaultOfficialKimi(), KimiSmartProvider.self),
             (.defaultOfficialKimiBalance(), MoonshotBalanceProvider.self),
             (.defaultOfficialGrok(), GrokProvider.self),
+            (.defaultOfficialGrokBot(), GrokBotProvider.self),
             (.defaultOfficialQwen(), QwenProvider.self),
             (.defaultOfficialQwenBalance(), QwenProvider.self)
         ]

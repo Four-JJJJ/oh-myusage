@@ -4,6 +4,12 @@ A macOS menu bar app for monitoring AI plan limits, credits, relay balances, and
 
 [Download Latest Release](https://github.com/Four-JJJJ/oh-myusage/releases/latest) · [Install Guide](DOWNLOAD.md) · [Supported Services](PROVIDERS.md) · [中文说明](../README.md)
 
+## V2.5.1
+
+- Add official Grok Bot usage from the Grok Bot desktop app or Cursor session
+- Keep the menu bar provider order in sync with the settings list
+- Show subscription plan tiers (Pro, Ultra, SuperGrok, and similar) on cards that already expose that metadata
+
 ## What It Is
 
 oh-myusage solves a simple but annoying problem: AI usage and balance information is scattered everywhere.
@@ -32,6 +38,7 @@ Official coverage currently includes:
 - Gemini
 - GitHub Copilot
 - Cursor
+- Grok Bot
 - Windsurf
 - Grok
 - Kimi
