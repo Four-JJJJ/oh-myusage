@@ -16,6 +16,7 @@ final class ProviderFactoryTests: XCTestCase {
             (.defaultOfficialZaiBalance(), ZaiProvider.self),
             (.defaultOfficialAmp(), AmpProvider.self),
             (.defaultOfficialCursor(), CursorProvider.self),
+            (.defaultOfficialGrokBot(), GrokBotProvider.self),
             (.defaultOfficialJetBrains(), JetBrainsProvider.self),
             (.defaultOfficialKiro(), KiroProvider.self),
             (.defaultOfficialWindsurf(), WindsurfProvider.self),

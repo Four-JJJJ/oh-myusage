@@ -400,6 +400,7 @@ final class MonolithRetirementBoundaryTests: XCTestCase {
                 "zai-balance-official",
                 "amp-official",
                 "cursor-official",
+                "grokbot-official",
                 "jetbrains-official",
                 "kiro-official",
                 "windsurf-official",

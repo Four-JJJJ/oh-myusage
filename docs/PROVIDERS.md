@@ -13,8 +13,9 @@ For extension and integration paths after the refactor, see [EXTENDING.md](./EXT
 | Gemini | official API/web quota data | Supports model-specific windows; local history from `~/.gemini/tmp/*/chats` |
 | GitHub Copilot | local GitHub auth | Reads Copilot usage and quota state |
 | Cursor | official/local session data | Monthly and on-demand usage; local history prefers dashboard events, then `state.vscdb` |
+| Grok Bot | Cursor IDE session (`state.vscdb`) | Cursor cloud-agent weekly Sand usage via `get-sand-usage-status`; separate from Cursor Models and Grok CLI |
 | Windsurf | official API | Daily and weekly windows |
-| Grok | local Grok CLI auth (`~/.grok/auth.json`) | Weekly shared pool, plan name, and pay-as-you-go cap; local history from `~/.grok/sessions` |
+| Grok | local Grok CLI auth (`~/.grok/auth.json`) | SuperGrok **or** Cursor-subscription CLI weekly pool via `cli-chat-proxy`; plan name from `subscription_tier_display`; local history from `~/.grok/sessions` |
 | Kimi | official API | Session and overall usage; local history from Kimi CLI / Kimi Code sessions |
 | Kimi (API) | Moonshot open platform API key | Pay-as-you-go balance (CNY); auto-detects `MOONSHOT_API_KEY` |
 | Amp | official API | Free and credit views |

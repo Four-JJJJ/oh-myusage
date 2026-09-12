@@ -146,6 +146,21 @@ enum OfficialProviderDefaultCatalog {
         )
     }
 
+    static func grokBot() -> ProviderDescriptor {
+        ProviderDescriptor(
+            id: "grokbot-official",
+            name: "Grok Bot",
+            family: .official,
+            type: .grokBot,
+            enabled: false,
+            pollIntervalSec: 60,
+            threshold: AlertRule(lowRemaining: 20, maxConsecutiveFailures: 2, notifyOnAuthError: true),
+            auth: .none,
+            baseURL: baseURL(for: .grokBot),
+            officialConfig: config(for: .grokBot)
+        )
+    }
+
     static func jetBrains() -> ProviderDescriptor {
         ProviderDescriptor(
             id: "jetbrains-official",
@@ -388,6 +403,8 @@ enum OfficialProviderDefaultCatalog {
             return "https://ampcode.com"
         case .cursor:
             return "https://api2.cursor.sh"
+        case .grokBot:
+            return "https://cursor.com"
         case .jetbrains:
             return "file://jetbrains-local"
         case .kiro:
@@ -434,7 +451,7 @@ enum OfficialProviderDefaultCatalog {
                 autoDiscoveryEnabled: true,
                 quotaDisplayMode: .used
             )
-        case .gemini, .copilot, .microsoftCopilot, .zai, .zaiBalance, .amp, .cursor, .jetbrains, .kiro, .windsurf, .kimi, .kimiBalance, .grok,
+        case .gemini, .copilot, .microsoftCopilot, .zai, .zaiBalance, .amp, .cursor, .grokBot, .jetbrains, .kiro, .windsurf, .kimi, .kimiBalance, .grok,
              .openrouterCredits, .openrouterAPI:
             return OfficialProviderConfig(
                 sourceMode: .auto,

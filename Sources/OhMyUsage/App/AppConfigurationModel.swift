@@ -878,6 +878,8 @@ final class AppConfigurationModel {
             return "Amp"
         case .cursor:
             return "Cursor"
+        case .grokBot:
+            return "Grok Bot"
         case .jetbrains:
             return "JetBrains"
         case .kiro:

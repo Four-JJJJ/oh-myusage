@@ -10,6 +10,7 @@ public enum ProviderType: String, Codable, CaseIterable, Sendable {
     case zaiBalance
     case amp
     case cursor
+    case grokBot
     case jetbrains
     case kiro
     case windsurf

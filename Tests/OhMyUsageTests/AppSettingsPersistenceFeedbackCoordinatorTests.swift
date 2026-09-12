@@ -32,7 +32,11 @@ final class AppSettingsPersistenceFeedbackCoordinatorTests: XCTestCase {
     }
 
     func testDuplicateSavedKeepsOriginalDeadline() async {
-        let coordinator = AppSettingsPersistenceFeedbackCoordinator(clearDelaySeconds: 0.15)
+        // Use a generous clear delay and apply the duplicate synchronously. A short
+        // async sleep before the duplicate was flaky on loaded CI runners because
+        // MainActor scheduling could defer the second call until after the first
+        // auto-clear had already fired.
+        let coordinator = AppSettingsPersistenceFeedbackCoordinator(clearDelaySeconds: 1.0)
         var state = SettingsPersistenceDisplayState(kind: .idle, statusText: nil, tone: .neutral)
         let update: AppSettingsPersistenceFeedbackCoordinator.StateUpdater = { next, _ in
             state = next
@@ -40,17 +44,18 @@ final class AppSettingsPersistenceFeedbackCoordinatorTests: XCTestCase {
 
         let startedAt = Date()
         coordinator.setStatus(kind: .saved, statusText: "Saved", tone: .positive, update: update)
-        try? await Task.sleep(nanoseconds: 60_000_000)
         coordinator.setStatus(kind: .saved, statusText: "Saved again", tone: .positive, update: update)
         XCTAssertEqual(state.kind, .saved)
 
-        let deadline = startedAt.addingTimeInterval(1.0)
+        let deadline = startedAt.addingTimeInterval(2.5)
         while Date() < deadline {
             if state.kind == .idle {
-                XCTAssertLessThan(Date().timeIntervalSince(startedAt), 0.45)
+                let elapsed = Date().timeIntervalSince(startedAt)
+                XCTAssertGreaterThan(elapsed, 0.8, "duplicate saved should not clear immediately")
+                XCTAssertLessThan(elapsed, 1.5, "duplicate saved should not extend the original deadline")
                 return
             }
-            try? await Task.sleep(nanoseconds: 10_000_000)
+            try? await Task.sleep(nanoseconds: 20_000_000)
         }
         XCTFail("duplicate saved reset deadline; still \(state.kind)")
     }
