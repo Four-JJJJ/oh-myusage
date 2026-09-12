@@ -393,6 +393,17 @@ extension SettingsView {
                         kind: .custom
                     )
                 ]
+            case .grokBot:
+                windows = [
+                    UsageQuotaWindow(
+                        id: "\(provider.id)-placeholder-weekly",
+                        title: viewModel.text(.quotaWeekly),
+                        remainingPercent: 0,
+                        usedPercent: 100,
+                        resetAt: nil,
+                        kind: .weekly
+                    )
+                ]
             default:
                 windows = [
                     UsageQuotaWindow(

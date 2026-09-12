@@ -138,6 +138,17 @@ struct ProviderFetchPlanRegistry {
             supportsWebOverlay: false,
             requiresBrowserAccess: false
         ),
+        // 1 request to cursor.com/api/dashboard/get-sand-usage-status; shares Cursor
+        // state.vscdb session auth with CursorProvider via CursorSessionAuthStore.
+        .grokBot: ProviderFetchPlan(
+            providerType: .grokBot,
+            activeTTL: 60,
+            backgroundTTL: 900,
+            metadataTTL: 21_600,
+            estimatedRequestCount: 1,
+            supportsWebOverlay: false,
+            requiresBrowserAccess: false
+        ),
         // Local XML parsing only; no network requests.
         .jetbrains: ProviderFetchPlan(
             providerType: .jetbrains,

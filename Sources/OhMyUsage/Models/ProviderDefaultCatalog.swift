@@ -12,6 +12,7 @@ enum ProviderDefaultCatalog {
             OfficialProviderDefaultCatalog.zaiBalance(),
             OfficialProviderDefaultCatalog.amp(),
             OfficialProviderDefaultCatalog.cursor(),
+            OfficialProviderDefaultCatalog.grokBot(),
             OfficialProviderDefaultCatalog.jetBrains(),
             OfficialProviderDefaultCatalog.kiro(),
             OfficialProviderDefaultCatalog.windsurf(),

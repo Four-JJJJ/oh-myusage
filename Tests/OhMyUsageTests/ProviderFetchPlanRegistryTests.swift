@@ -40,6 +40,7 @@ final class ProviderFetchPlanRegistryTests: XCTestCase {
         XCTAssertEqual(registry.plan(for: .zaiBalance).activeTTL, 300)
         XCTAssertEqual(registry.plan(for: .amp).activeTTL, 60)
         XCTAssertEqual(registry.plan(for: .cursor).activeTTL, 60)
+        XCTAssertEqual(registry.plan(for: .grokBot).activeTTL, 60)
         XCTAssertEqual(registry.plan(for: .jetbrains).activeTTL, 120)
         XCTAssertEqual(registry.plan(for: .kiro).activeTTL, 60)
         XCTAssertEqual(registry.plan(for: .windsurf).activeTTL, 60)

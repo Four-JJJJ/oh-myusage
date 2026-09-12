@@ -88,6 +88,9 @@ struct ProviderFactoryRegistry {
             .cursor: { descriptor, _ in
                 CursorProvider(descriptor: descriptor, sqlite: DefaultSQLiteShell())
             },
+            .grokBot: { descriptor, _ in
+                GrokBotProvider(descriptor: descriptor)
+            },
             .jetbrains: { descriptor, _ in
                 JetBrainsProvider(descriptor: descriptor, localJSONReader: DefaultLocalJSONFileReader())
             },

@@ -40,6 +40,10 @@ extension ProviderDescriptor {
         OfficialProviderDefaultCatalog.cursor()
     }
 
+    static func defaultOfficialGrokBot() -> ProviderDescriptor {
+        OfficialProviderDefaultCatalog.grokBot()
+    }
+
     static func defaultOfficialJetBrains() -> ProviderDescriptor {
         OfficialProviderDefaultCatalog.jetBrains()
     }

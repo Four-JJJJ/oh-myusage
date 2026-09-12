@@ -6,8 +6,8 @@ import OhMyUsageProviders
 ///
 /// Reads the Grok CLI login from `~/.grok/auth.json` (or `$GROK_HOME/auth.json`) and calls the
 /// same billing endpoint the CLI itself uses: `GET /v1/billing?format=credits` on
-/// `cli-chat-proxy.grok.com`. The response is a proto3 message serialized as JSON, so zero-valued
-/// fields (for example `creditUsagePercent`) are omitted entirely and must be treated as 0.
+/// `cli-chat-proxy.grok.com`. SuperGrok and Cursor-subscription CLI sessions share this path;
+/// when the top-level `creditUsagePercent` is omitted, usage is resolved from `productUsage`.
 final class GrokProvider: UsageProvider, @unchecked Sendable {
     static let defaultOIDCClientID = "b1a00492-073a-47ea-816f-4c329264a828"
     static let weeklyPeriodType = "USAGE_PERIOD_TYPE_WEEKLY"
@@ -51,12 +51,18 @@ final class GrokProvider: UsageProvider, @unchecked Sendable {
             refresh: { [self] state in try await refresh(credentials: state) }
         )
 
-        var snapshot = try Self.parseSnapshot(root: result.response, descriptor: descriptor)
+        var snapshot = try Self.parseSnapshot(
+            root: result.response,
+            descriptor: descriptor,
+            credentials: result.state
+        )
         if let email = result.state.email {
             snapshot.accountLabel = email
             snapshot.authSourceLabel = "Grok CLI"
             snapshot.rawMeta["grok.accountLabel"] = email
         }
+        snapshot.rawMeta["grok.oidcClientID"] = result.state.resolvedClientID
+        snapshot.rawMeta["grok.entryKey"] = result.state.entryKey
 
         if let plan = try? await requestPlanName(accessToken: result.state.accessToken) {
             snapshot.extras["planType"] = plan
@@ -139,10 +145,25 @@ final class GrokProvider: UsageProvider, @unchecked Sendable {
             )
         }
 
-        // Prefer the entry with the latest expiry so multi-account files pick the freshest login.
-        return candidates.max { lhs, rhs in
-            (lhs.expiresAt ?? .distantPast) < (rhs.expiresAt ?? .distantPast)
+        return selectPreferredCredentials(from: candidates)
+    }
+
+    internal static func selectPreferredCredentials(from candidates: [GrokCredentials]) -> GrokCredentials? {
+        guard !candidates.isEmpty else { return nil }
+
+        let authXAI = candidates.filter { $0.entryKey.hasPrefix("https://auth.x.ai::") }
+        let legacySignIn = candidates.filter { $0.entryKey == "https://accounts.x.ai/sign-in" }
+        let others = candidates.filter { candidate in
+            !authXAI.contains(where: { $0.entryKey == candidate.entryKey })
+                && !legacySignIn.contains(where: { $0.entryKey == candidate.entryKey })
         }
+
+        for pool in [authXAI, others, legacySignIn] where !pool.isEmpty {
+            if let best = pool.max(by: { ($0.expiresAt ?? .distantPast) < ($1.expiresAt ?? .distantPast) }) {
+                return best
+            }
+        }
+        return nil
     }
 
     internal static func needsRefresh(expiresAt: Date?, now: Date = Date()) -> Bool {
@@ -265,7 +286,11 @@ final class GrokProvider: UsageProvider, @unchecked Sendable {
 
     // MARK: - Parsing
 
-    internal static func parseSnapshot(root: [String: Any], descriptor: ProviderDescriptor) throws -> UsageSnapshot {
+    internal static func parseSnapshot(
+        root: [String: Any],
+        descriptor: ProviderDescriptor,
+        credentials: GrokCredentials? = nil
+    ) throws -> UsageSnapshot {
         guard let config = root["config"] as? [String: Any] else {
             throw ProviderError.invalidResponse("missing Grok billing config")
         }
@@ -275,8 +300,10 @@ final class GrokProvider: UsageProvider, @unchecked Sendable {
             throw ProviderError.invalidResponse("missing Grok billing period")
         }
 
-        // proto-JSON omits zero-valued fields, so an absent percent means a genuine 0%.
-        let usedPercent = min(100, max(0, OfficialValueParser.double(config["creditUsagePercent"]) ?? 0))
+        let usageResolution = resolveUsagePercent(config: config)
+        guard let usedPercent = usageResolution.usedPercent else {
+            throw ProviderError.unavailable("Grok CLI usage percent unavailable")
+        }
         let remainingPercent = max(0, 100 - usedPercent)
 
         let isWeekly = periodType == weeklyPeriodType
@@ -317,6 +344,15 @@ final class GrokProvider: UsageProvider, @unchecked Sendable {
             .map { "\($0.title) \(Int($0.remainingPercent.rounded()))%" }
             .joined(separator: " | ")
 
+        var rawMeta: [String: String] = ["grok.periodType": periodType]
+        if let product = usageResolution.product {
+            rawMeta["grok.usageProduct"] = product
+        }
+        if let credentials {
+            rawMeta["grok.oidcClientID"] = credentials.resolvedClientID
+            rawMeta["grok.entryKey"] = credentials.entryKey
+        }
+
         return UsageSnapshot(
             source: descriptor.id,
             status: remainingPercent <= descriptor.threshold.lowRemaining ? .warning : .ok,
@@ -330,8 +366,49 @@ final class GrokProvider: UsageProvider, @unchecked Sendable {
             sourceLabel: "API",
             accountLabel: nil,
             extras: extras,
-            rawMeta: ["grok.periodType": periodType]
+            rawMeta: rawMeta
         )
+    }
+
+    struct GrokUsagePercentResolution {
+        var usedPercent: Double?
+        var product: String?
+    }
+
+    internal static func resolveUsagePercent(config: [String: Any]) -> GrokUsagePercentResolution {
+        if let topLevel = OfficialValueParser.double(config["creditUsagePercent"]) {
+            return GrokUsagePercentResolution(
+                usedPercent: min(100, max(0, topLevel)),
+                product: nil
+            )
+        }
+
+        guard let productUsage = config["productUsage"] as? [[String: Any]] else {
+            return GrokUsagePercentResolution(usedPercent: nil, product: nil)
+        }
+
+        if let grokBuild = productUsage.first(where: {
+            OfficialValueParser.string($0["product"]) == "GrokBuild"
+        }),
+           let percent = OfficialValueParser.double(grokBuild["usagePercent"]) {
+            return GrokUsagePercentResolution(
+                usedPercent: min(100, max(0, percent)),
+                product: "GrokBuild"
+            )
+        }
+
+        for item in productUsage {
+            guard let product = OfficialValueParser.string(item["product"]),
+                  let percent = OfficialValueParser.double(item["usagePercent"]) else {
+                continue
+            }
+            return GrokUsagePercentResolution(
+                usedPercent: min(100, max(0, percent)),
+                product: product
+            )
+        }
+
+        return GrokUsagePercentResolution(usedPercent: nil, product: nil)
     }
 
     /// xAI timestamps carry microsecond precision (`2026-08-13T03:47:03.411698+00:00`), which

@@ -254,6 +254,10 @@ enum MenuQuotaPresenter {
                 MenuQuotaMetric(id: "\(provider.id)-placeholder-cursor-models", title: "Cursor Models", displayPercent: 0, healthPercent: 0, resetAt: nil, isAvailable: true, valueTextOverride: nil, kind: nil),
                 MenuQuotaMetric(id: "\(provider.id)-placeholder-other-models", title: "Other Models", displayPercent: 0, healthPercent: 0, resetAt: nil, isAvailable: true, valueTextOverride: nil, kind: nil)
             ]
+        case .grokBot:
+            return [
+                MenuQuotaMetric(id: "\(provider.id)-placeholder-weekly", title: placeholderMetricTitle(localization.quotaWeekly, provider: provider, language: language), displayPercent: 0, healthPercent: 0, resetAt: nil, isAvailable: true, valueTextOverride: nil, kind: nil)
+            ]
         case .jetbrains:
             return [
                 MenuQuotaMetric(id: "\(provider.id)-placeholder-quota", title: "Quota", displayPercent: 0, healthPercent: 0, resetAt: nil, isAvailable: true, valueTextOverride: nil, kind: nil)

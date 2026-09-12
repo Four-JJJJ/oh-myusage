@@ -48,8 +48,33 @@ final class GrokProviderTests: XCTestCase {
         XCTAssertEqual(snapshot.extras["payAsYouGoUsed"], "625")
     }
 
-    func testParseSnapshotTreatsMissingPercentAsZero() throws {
-        // proto-JSON omits zero-valued fields; observed live from an unused account.
+    func testParseSnapshotWithoutAnyPercentIsUnavailable() throws {
+        let descriptor = ProviderDescriptor.defaultOfficialGrok()
+
+        XCTAssertThrowsError(
+            try GrokProvider.parseSnapshot(
+                root: [
+                    "config": [
+                        "currentPeriod": [
+                            "type": "USAGE_PERIOD_TYPE_WEEKLY",
+                            "start": "2026-08-13T03:47:03.411698+00:00",
+                            "end": "2026-08-20T03:47:03.411698+00:00"
+                        ],
+                        "onDemandCap": ["val": 0],
+                        "isUnifiedBillingUser": true
+                    ]
+                ],
+                descriptor: descriptor
+            )
+        ) { error in
+            guard case .unavailable = error as? ProviderError else {
+                XCTFail("Expected unavailable, got \(error)")
+                return
+            }
+        }
+    }
+
+    func testParseSnapshotUsesGrokBuildProductUsageWhenTopLevelPercentMissing() throws {
         let descriptor = ProviderDescriptor.defaultOfficialGrok()
 
         let snapshot = try GrokProvider.parseSnapshot(
@@ -60,17 +85,36 @@ final class GrokProviderTests: XCTestCase {
                         "start": "2026-08-13T03:47:03.411698+00:00",
                         "end": "2026-08-20T03:47:03.411698+00:00"
                     ],
-                    "onDemandCap": ["val": 0],
-                    "isUnifiedBillingUser": true
+                    "productUsage": [
+                        ["product": "GrokChat", "usagePercent": 10],
+                        ["product": "GrokBuild", "usagePercent": 42.5]
+                    ]
                 ]
             ],
             descriptor: descriptor
         )
 
-        XCTAssertEqual(snapshot.used ?? -1, 0, accuracy: 0.001)
-        XCTAssertEqual(snapshot.remaining ?? -1, 100, accuracy: 0.001)
-        XCTAssertEqual(snapshot.quotaWindows.count, 1)
-        XCTAssertEqual(snapshot.quotaWindows.first?.kind, .weekly)
+        XCTAssertEqual(snapshot.used ?? -1, 42.5, accuracy: 0.001)
+        XCTAssertEqual(snapshot.rawMeta["grok.usageProduct"], "GrokBuild")
+    }
+
+    func testParseCredentialsPrefersAuthXAIOverLegacySignIn() throws {
+        let json: [String: Any] = [
+            "https://accounts.x.ai/sign-in": [
+                "key": "legacy-token",
+                "expires_at": "2099-01-01T00:00:00Z",
+                "email": "legacy@example.com"
+            ],
+            "https://auth.x.ai::cursor-client": [
+                "key": "cursor-token",
+                "expires_at": "2026-08-13T08:00:00Z",
+                "email": "cursor@example.com"
+            ]
+        ]
+
+        let credentials = try XCTUnwrap(GrokProvider.parseCredentials(json: json, filePath: "/tmp/auth.json"))
+        XCTAssertEqual(credentials.accessToken, "cursor-token")
+        XCTAssertEqual(credentials.email, "cursor@example.com")
     }
 
     func testParseSnapshotNonWeeklyPeriodUsesCustomKind() throws {
@@ -320,9 +364,15 @@ final class GrokProviderTests: XCTestCase {
             environment: { [:] }
         )
 
-        let snapshot = try await provider.fetch()
-        XCTAssertEqual(snapshot.remaining ?? -1, 100, accuracy: 0.001)
-        XCTAssertNil(snapshot.extras["planType"])
+        do {
+            _ = try await provider.fetch()
+            XCTFail("Expected unavailable when billing omits all usage percents")
+        } catch let error as ProviderError {
+            guard case .unavailable = error else {
+                XCTFail("Expected unavailable, got \(error)")
+                return
+            }
+        }
 
         let persisted = try JSONSerialization.jsonObject(
             with: Data(contentsOf: URL(fileURLWithPath: home + "/.grok/auth.json"))
@@ -331,6 +381,50 @@ final class GrokProviderTests: XCTestCase {
         XCTAssertEqual(entry["key"] as? String, "fresh-token")
         XCTAssertEqual(entry["refresh_token"] as? String, "rotated-refresh")
         XCTAssertEqual(entry["email"] as? String, "tester@example.com")
+    }
+
+    func testFetchMergesCursorSubscriptionPlanDisplay() async throws {
+        let home = try makeTemporaryHome(authJSON: [
+            "https://auth.x.ai::cursor-client": [
+                "key": "access-token-123",
+                "refresh_token": "refresh-token-123",
+                "expires_at": iso8601(Date().addingTimeInterval(3600)),
+                "email": "cursor@example.com",
+                "oidc_client_id": "cursor-client"
+            ]
+        ])
+        defer { try? FileManager.default.removeItem(atPath: home) }
+
+        let session = makeMockSession()
+        GrokMockURLProtocol.requestHandler = { request in
+            switch request.url?.path {
+            case "/v1/billing":
+                let body = #"""
+                {"config":{"currentPeriod":{"type":"USAGE_PERIOD_TYPE_WEEKLY","start":"2026-08-13T03:47:03.411698+00:00","end":"2026-08-20T03:47:03.411698+00:00"},"productUsage":[{"product":"GrokBuild","usagePercent":18.0}]}}
+                """#
+                return (Self.okResponse(for: request), Data(body.utf8))
+            case "/v1/settings":
+                let body = #"{"subscription_tier_display":"Ultra"}"#
+                return (Self.okResponse(for: request), Data(body.utf8))
+            default:
+                XCTFail("Unexpected request path: \(request.url?.path ?? "nil")")
+                throw URLError(.badURL)
+            }
+        }
+        defer { GrokMockURLProtocol.requestHandler = nil }
+
+        let provider = GrokProvider(
+            descriptor: .defaultOfficialGrok(),
+            session: session,
+            homeDirectory: { home },
+            environment: { [:] }
+        )
+
+        let snapshot = try await provider.fetch()
+        XCTAssertEqual(snapshot.used ?? -1, 18, accuracy: 0.001)
+        XCTAssertEqual(snapshot.extras["planType"], "Ultra")
+        XCTAssertEqual(snapshot.rawMeta["grok.usageProduct"], "GrokBuild")
+        XCTAssertEqual(snapshot.rawMeta["grok.oidcClientID"], "cursor-client")
     }
 
     func testFetchThrowsMissingCredentialWithoutAuthFile() async throws {
