@@ -1181,10 +1181,7 @@ enum RelayResponseInterpreter {
     }
 
     private static func firstPositive(_ values: [Double?]) -> Double? {
-        values.compactMap { value in
-            guard let value, value > 0 else { return nil }
-            return value
-        }.first
+        values.compactMap { $0 }.first(where: { $0 > 0 })
     }
 
     private static func sub2APIWindowKind(_ window: String) -> UsageQuotaKind {
