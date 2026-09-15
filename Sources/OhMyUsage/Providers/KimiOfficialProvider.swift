@@ -5,6 +5,11 @@ import OhMyUsageProviders
 final class KimiOfficialProvider: UsageProvider, @unchecked Sendable {
     private static let cache = SnapshotTimestampOfficialSnapshotCache()
     private static let gate = PassthroughOfficialFetchGate()
+    private static let planCache = KimiPlanMetadataCache()
+
+    /// Plan-name metadata TTL. Quota refreshes should not re-hit `/coding/v1/me`
+    /// every 15s; the vendor plan label changes only on upgrade/downgrade.
+    static let planMetadataTTL: TimeInterval = 30 * 60
 
     private let cacheTTL: TimeInterval = 15
     private let refreshBuffer: TimeInterval = 5 * 60
@@ -12,6 +17,7 @@ final class KimiOfficialProvider: UsageProvider, @unchecked Sendable {
     private let keychain: any TokenCredentialStoring
     private let cache: any OfficialSnapshotCaching
     private let gate: any OfficialFetchGating
+    private let planCache: KimiPlanMetadataCache
     private let homeDirectory: () -> String
 
     let descriptor: ProviderDescriptor
@@ -22,6 +28,7 @@ final class KimiOfficialProvider: UsageProvider, @unchecked Sendable {
         keychain: any TokenCredentialStoring,
         cache: any OfficialSnapshotCaching = KimiOfficialProvider.cache,
         gate: any OfficialFetchGating = KimiOfficialProvider.gate,
+        planCache: KimiPlanMetadataCache = KimiOfficialProvider.planCache,
         homeDirectory: @escaping () -> String = { NSHomeDirectory() }
     ) {
         self.descriptor = descriptor
@@ -29,6 +36,7 @@ final class KimiOfficialProvider: UsageProvider, @unchecked Sendable {
         self.keychain = keychain
         self.cache = cache
         self.gate = gate
+        self.planCache = planCache
         self.homeDirectory = homeDirectory
     }
 
@@ -76,7 +84,21 @@ final class KimiOfficialProvider: UsageProvider, @unchecked Sendable {
     }
 
     private func requestSnapshot(accessToken: String) async throws -> UsageSnapshot {
-        var request = URLRequest(url: URL(string: "https://api.kimi.com/coding/v1/usages")!)
+        let root = try await requestJSON(path: "/coding/v1/usages", accessToken: accessToken)
+        var profilePlan: String?
+        if !Self.hasUsablePlanValue(Self.parsePlanType(from: root)) {
+            profilePlan = await planNameFromProfile(accessToken: accessToken)
+        }
+        return try Self.parseUsageSnapshot(
+            root: root,
+            descriptor: descriptor,
+            sourceLabel: "API",
+            planNameOverride: profilePlan
+        )
+    }
+
+    private func requestJSON(path: String, accessToken: String) async throws -> [String: Any] {
+        var request = URLRequest(url: URL(string: "https://api.kimi.com\(path)")!)
         request.httpMethod = "GET"
         request.timeoutInterval = 15
         request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
@@ -99,11 +121,30 @@ final class KimiOfficialProvider: UsageProvider, @unchecked Sendable {
         guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw ProviderError.invalidResponse("Kimi response decode failed")
         }
-        return try Self.parseUsageSnapshot(
-            root: root,
-            descriptor: descriptor,
-            sourceLabel: "API"
-        )
+        return root
+    }
+
+    /// `/coding/v1/me` exposes the vendor plan label (`user_level_name`). The
+    /// usages payload often only has a raw `LEVEL_*` enum — and after a
+    /// subscription downgrade it may omit membership entirely.
+    private func planNameFromProfile(accessToken: String) async -> String? {
+        let key = Self.planCacheKey(descriptor: descriptor, accessToken: accessToken)
+        if let cached = await planCache.metadataIfFresh(forKey: key) {
+            return cached.planName
+        }
+        do {
+            let root = try await requestJSON(path: "/coding/v1/me", accessToken: accessToken)
+            let parsed = KimiPlanMetadata(planName: Self.parsePlanProfile(from: root))
+            await planCache.store(parsed, forKey: key)
+            return parsed.planName
+        } catch {
+            return await planCache.metadataAny(forKey: key)?.planName
+        }
+    }
+
+    internal static func planCacheKey(descriptor: ProviderDescriptor, accessToken: String) -> String {
+        let tokenTail = accessToken.suffix(16)
+        return "\(descriptor.id)|plan|\(tokenTail)"
     }
 
     private func loadCredentials() throws -> KimiOfficialCredentials {
@@ -242,10 +283,11 @@ final class KimiOfficialProvider: UsageProvider, @unchecked Sendable {
     internal static func parseUsageSnapshot(
         root: [String: Any],
         descriptor: ProviderDescriptor,
-        sourceLabel: String
+        sourceLabel: String,
+        planNameOverride: String? = nil
     ) throws -> UsageSnapshot {
-        let membership = (root["user"] as? [String: Any])?["membership"] as? [String: Any]
-        let plan = OfficialValueParser.string(membership?["level"] ?? membership?["tier"] ?? root["plan"]) ?? "unknown"
+        let plan = OfficialValueParser.nonPlaceholderString(planNameOverride)
+            ?? parsePlanType(from: root)
         let accountLabel = OfficialValueParser.string((root["user"] as? [String: Any])?["email"])
 
         var windows: [UsageQuotaWindow] = []
@@ -263,7 +305,10 @@ final class KimiOfficialProvider: UsageProvider, @unchecked Sendable {
             }
         }
 
-        var extras: [String: String] = ["planType": plan]
+        var extras: [String: String] = [:]
+        if let plan {
+            extras["planType"] = plan
+        }
         let usageCandidates = aggregateUsageCandidates(from: root)
         for (index, usage) in usageCandidates.enumerated() {
             if let customWindow = parseOverallUsage(
@@ -328,13 +373,109 @@ final class KimiOfficialProvider: UsageProvider, @unchecked Sendable {
             limit: 100,
             unit: "%",
             updatedAt: Date(),
-            note: "Plan \(plan) | \(note)",
+            note: plan.map { "Plan \($0) | \(note)" } ?? note,
             quotaWindows: windows,
             sourceLabel: sourceLabel,
             accountLabel: accountLabel,
             extras: extras,
             rawMeta: rawMeta
         )
+    }
+
+    /// Reads a plan identifier from `/coding/v1/usages`. After a subscription
+    /// downgrade the payload may use a numeric `user_level`, a new `LEVEL_*`
+    /// enum, or omit membership entirely.
+    internal static func parsePlanType(from root: [String: Any]) -> String? {
+        let user = root["user"] as? [String: Any]
+        let membership = user?["membership"] as? [String: Any]
+        let candidates: [Any?] = [
+            user?["user_level_name"],
+            user?["userLevelName"],
+            root["user_level_name"],
+            root["userLevelName"],
+            membership?["name"],
+            membership?["planName"],
+            membership?["productName"],
+            membership?["displayName"],
+            membership?["level"],
+            membership?["tier"],
+            root["plan"],
+            root["planType"],
+            root["plan_type"],
+            root["subType"],
+            root["sub_type"],
+            user?["user_level"],
+            user?["userLevel"],
+            root["user_level"],
+            root["userLevel"]
+        ]
+        for candidate in candidates {
+            if let text = OfficialValueParser.nonPlaceholderString(planValueString(candidate)),
+               hasUsablePlanValue(text) {
+                return text
+            }
+        }
+        return nil
+    }
+
+    internal static func parsePlanProfile(from root: [String: Any]) -> String? {
+        let user = root["user"] as? [String: Any]
+        let namedCandidates: [Any?] = [
+            root["user_level_name"],
+            root["userLevelName"],
+            user?["user_level_name"],
+            user?["userLevelName"],
+            root["level_name"],
+            root["levelName"]
+        ]
+        for candidate in namedCandidates {
+            if let text = OfficialValueParser.nonPlaceholderString(planValueString(candidate)),
+               hasUsablePlanValue(text) {
+                return text
+            }
+        }
+        let levelCandidates: [Any?] = [
+            root["user_level"],
+            root["userLevel"],
+            user?["user_level"],
+            user?["userLevel"]
+        ]
+        for candidate in levelCandidates {
+            if let text = OfficialValueParser.nonPlaceholderString(planValueString(candidate)),
+               hasUsablePlanValue(text) {
+                return text
+            }
+        }
+        return nil
+    }
+
+    internal static func hasUsablePlanValue(_ value: String?) -> Bool {
+        guard let text = OfficialValueParser.nonPlaceholderString(value) else {
+            return false
+        }
+        let compact = text
+            .uppercased()
+            .replacingOccurrences(of: "MEMBERSHIP_LEVEL_", with: "")
+            .replacingOccurrences(of: "LEVEL_", with: "")
+            .replacingOccurrences(of: "_", with: "")
+            .replacingOccurrences(of: " ", with: "")
+        return compact != "UNSPECIFIED"
+            && compact != "UNKNOWN"
+            && compact != "NONE"
+            && compact != "0"
+    }
+
+    private static func planValueString(_ value: Any?) -> String? {
+        if let text = OfficialValueParser.string(value) {
+            return text
+        }
+        if let number = OfficialValueParser.int(value) {
+            return String(number)
+        }
+        if let number = OfficialValueParser.double(value), number == number.rounded() {
+            return String(Int(number))
+        }
+        return nil
     }
 
     private static func parseLimitWindow(item: [String: Any], descriptor: ProviderDescriptor, index: Int) -> UsageQuotaWindow? {
@@ -753,4 +894,43 @@ private struct KimiRawModelEntry {
     let remainingPercent: Double
     let usedPercent: Double
     let resetAt: Date?
+}
+
+struct KimiPlanMetadata: Equatable, Sendable {
+    var planName: String?
+}
+
+actor KimiPlanMetadataCache {
+    private struct Entry {
+        let metadata: KimiPlanMetadata
+        let fetchedAt: Date
+    }
+
+    private var entries: [String: Entry] = [:]
+    private let ttl: TimeInterval
+    private let now: @Sendable () -> Date
+
+    init(
+        ttl: TimeInterval = KimiOfficialProvider.planMetadataTTL,
+        now: @escaping @Sendable () -> Date = { Date() }
+    ) {
+        self.ttl = max(0, ttl)
+        self.now = now
+    }
+
+    func metadataIfFresh(forKey key: String) -> KimiPlanMetadata? {
+        guard let entry = entries[key],
+              now().timeIntervalSince(entry.fetchedAt) <= ttl else {
+            return nil
+        }
+        return entry.metadata
+    }
+
+    func metadataAny(forKey key: String) -> KimiPlanMetadata? {
+        entries[key]?.metadata
+    }
+
+    func store(_ metadata: KimiPlanMetadata, forKey key: String) {
+        entries[key] = Entry(metadata: metadata, fetchedAt: now())
+    }
 }

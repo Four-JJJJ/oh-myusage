@@ -235,7 +235,15 @@ final class GrokProvider: UsageProvider, @unchecked Sendable {
         guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             return nil
         }
-        return OfficialValueParser.nonPlaceholderString(root["subscription_tier_display"])
+        return OfficialValueParser.firstPlanLabel([
+            root["subscription_tier_display"],
+            root["subscriptionTierDisplay"],
+            root["subscription_tier"],
+            root["subscriptionTier"],
+            root["plan_name"],
+            root["planName"],
+            root["plan"]
+        ])
     }
 
     private func requestJSON(url: URL, accessToken: String) async throws -> Data {

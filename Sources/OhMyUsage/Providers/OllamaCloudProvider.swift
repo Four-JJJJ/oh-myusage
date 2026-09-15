@@ -239,8 +239,7 @@ final class OllamaCloudProvider: UsageProvider, @unchecked Sendable {
         guard let value = firstCapture(in: html, pattern: pattern) else {
             return nil
         }
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : trimmed
+        return OfficialValueParser.planLabel(value)
     }
 
     private static func firstCapture(in text: String, pattern: String) -> String? {

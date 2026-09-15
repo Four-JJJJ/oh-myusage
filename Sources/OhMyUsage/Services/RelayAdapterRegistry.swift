@@ -101,6 +101,17 @@ final class RelayAdapterRegistry: @unchecked Sendable {
         cacheLock.unlock()
     }
 
+    static let genericNewAPIAdapterID = "generic-newapi"
+    static let genericSub2APIAdapterID = "generic-sub2api"
+
+    static func isGenericRelaySiteTemplate(_ id: String?) -> Bool {
+        id == genericNewAPIAdapterID || id == genericSub2APIAdapterID
+    }
+
+    static func isGenericRelaySiteTemplate(_ manifest: RelayAdapterManifest) -> Bool {
+        isGenericRelaySiteTemplate(manifest.id)
+    }
+
     private func decorate(_ manifest: RelayAdapterManifest) -> RelayAdapterManifest {
         var copy = manifest
         switch copy.id {
@@ -112,7 +123,7 @@ final class RelayAdapterRegistry: @unchecked Sendable {
             copy.displayMode = .quotaPercent
             copy.supportsBrowserFallback = true
             copy.supportsSeparateBalanceAuth = true
-        case "generic-newapi", "deepseek", "hongmacc", "xiaomimimo", "moonshot", "minimax":
+        case "generic-newapi", "generic-sub2api", "deepseek", "hongmacc", "xiaomimimo", "moonshot", "minimax":
             copy.displayMode = .balance
             copy.supportsBrowserFallback = true
             copy.supportsSeparateBalanceAuth = true
@@ -149,6 +160,11 @@ final class RelayAdapterRegistry: @unchecked Sendable {
             return .init(
                 zhHans: "先尝试标准 New API 配置；只有当站点接口路径或字段不兼容时再改高级设置。",
                 en: "Start with the standard New API template. Change Advanced settings only when the site uses different paths or field names."
+            )
+        case "generic-sub2api":
+            return .init(
+                zhHans: "填写站点根地址（不要带 /v1）和分组 API Key；通过 GET /v1/usage 读取钱包、配额或订阅余额。",
+                en: "Enter the site root URL (without /v1) and a group API key. Balance comes from GET /v1/usage for wallet, quota, or subscription modes."
             )
         default:
             return nil
@@ -307,6 +323,11 @@ final class RelayAdapterRegistry: @unchecked Sendable {
         }
         manifests.sort { $0.id < $1.id }
 
+        if !manifests.contains(where: { $0.id == genericSub2APIAdapterID }) {
+            manifests.append(genericSub2APIManifest)
+            manifests.sort { $0.id < $1.id }
+        }
+
         return manifests.isEmpty ? [genericManifest] : manifests
     }
 
@@ -442,5 +463,44 @@ final class RelayAdapterRegistry: @unchecked Sendable {
             accountLabel: "coalesce(data.group,\"默认套餐\")"
         ),
         postprocessID: .quotaDisplayStatus
+    )
+
+    static let genericSub2APIManifest = RelayAdapterManifest(
+        id: genericSub2APIAdapterID,
+        displayName: "Generic Sub2API",
+        match: RelayAdapterMatch(
+            hostPatterns: ["*"],
+            defaultDisplayName: "Generic Sub2API",
+            defaultTokenChannelEnabled: false,
+            defaultBalanceChannelEnabled: true
+        ),
+        setup: RelaySetupManifest(
+            requiredInputs: [.displayName, .baseURL, .balanceAuth],
+            balanceAuthHint: .init(
+                zhHans: "填写 Sub2API 分组 API Key，支持直接粘贴 `Bearer sk-...` 或纯 `sk-...`。站点地址填根地址，不要带 `/v1`。",
+                en: "Enter the Sub2API group API key. Both `Bearer sk-...` and the raw `sk-...` key are accepted. Use the site root URL without `/v1`."
+            )
+        ),
+        authStrategies: [
+            RelayAuthStrategy(kind: .savedBearer),
+            RelayAuthStrategy(kind: .browserBearer)
+        ],
+        displayMode: .balance,
+        supportsBrowserFallback: true,
+        supportsSeparateBalanceAuth: true,
+        balanceRequest: RelayRequestManifest(
+            method: "GET",
+            path: "/v1/usage",
+            authHeader: "Authorization",
+            authScheme: "Bearer"
+        ),
+        extract: RelayExtractManifest(
+            remaining: "coalesce(quota.remaining,remaining)",
+            used: "coalesce(quota.used,subscription.monthly_usage_usd)",
+            limit: "coalesce(quota.limit,subscription.monthly_limit_usd)",
+            unit: "coalesce(quota.unit,unit,\"USD\")",
+            accountLabel: "coalesce(planName,\"Sub2API\")"
+        ),
+        postprocessID: .sub2apiUsage
     )
 }

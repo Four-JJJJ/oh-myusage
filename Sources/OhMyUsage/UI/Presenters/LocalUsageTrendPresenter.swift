@@ -19,6 +19,17 @@ struct LocalUsageTrendPresentation: Equatable, Sendable {
     var cacheStatusText: String?
 }
 
+struct LocalUsageTrendTooltipRow: Equatable, Identifiable, Sendable {
+    var id: String
+    var label: String
+    var value: String
+}
+
+struct LocalUsageTrendPointTooltip: Equatable, Sendable {
+    var title: String
+    var rows: [LocalUsageTrendTooltipRow]
+}
+
 enum LocalUsageTrendPresenter {
     typealias LocalizedText = (String, String) -> String
     typealias IntegerFormatter = (Int) -> String
@@ -63,6 +74,63 @@ enum LocalUsageTrendPresenter {
                 dateText: dateText
             )
         )
+    }
+
+    static func pointTooltip(
+        for point: LocalUsageTrendPoint,
+        language: AppLanguage,
+        localizedText: LocalizedText
+    ) -> LocalUsageTrendPointTooltip {
+        let compactToken = { (value: Int) in
+            LocalTrendValueFormatter.compactNumber(max(0, value), language: language)
+        }
+
+        return LocalUsageTrendPointTooltip(
+            title: hourRangeTitle(startAt: point.startAt),
+            rows: [
+                LocalUsageTrendTooltipRow(
+                    id: "total",
+                    label: localizedText("总Token", "Total"),
+                    value: compactToken(point.totalTokens)
+                ),
+                LocalUsageTrendTooltipRow(
+                    id: "input",
+                    label: localizedText("输入", "Input"),
+                    value: compactToken(point.inputTokens)
+                ),
+                LocalUsageTrendTooltipRow(
+                    id: "output",
+                    label: localizedText("输出", "Output"),
+                    value: compactToken(point.outputTokens)
+                ),
+                LocalUsageTrendTooltipRow(
+                    id: "cacheRead",
+                    label: localizedText("缓存命中", "Cache Hit"),
+                    value: compactToken(point.cacheReadTokens)
+                ),
+                LocalUsageTrendTooltipRow(
+                    id: "cacheWrite",
+                    label: localizedText("缓存写入", "Cache Write"),
+                    value: compactToken(point.cacheWriteTokens)
+                ),
+                LocalUsageTrendTooltipRow(
+                    id: "responses",
+                    label: localizedText("请求", "Requests"),
+                    value: LocalTrendValueFormatter.responseCountText(point.responses, language: language)
+                )
+            ]
+        )
+    }
+
+    static func hourRangeTitle(startAt: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "HH:00"
+        let startText = formatter.string(from: startAt)
+        let endDate = Calendar(identifier: .gregorian).date(byAdding: .hour, value: 1, to: startAt)
+            ?? startAt.addingTimeInterval(3600)
+        let endText = formatter.string(from: endDate)
+        return "\(startText)–\(endText)"
     }
 
     static func hasData(_ summary: LocalUsageSummary) -> Bool {

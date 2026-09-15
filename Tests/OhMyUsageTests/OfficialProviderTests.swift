@@ -1475,7 +1475,8 @@ final class OfficialProviderTests: XCTestCase {
         OfficialMockURLProtocol.requestHandler = { request in
             requestCount += 1
             let url = try XCTUnwrap(request.url)
-            XCTAssertEqual(url.absoluteString, "https://api.kimi.com/coding/v1/usages")
+            XCTAssertEqual(url.path, "/coding/v1/usages")
+            XCTAssertEqual(url.host, "api.kimi.com")
             if requestCount == 1 {
                 let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
                 let body = """
@@ -1597,9 +1598,16 @@ final class OfficialProviderTests: XCTestCase {
         XCTAssertTrue(keychain.saveToken("kimi-coding-api-key", service: service, account: account))
 
         OfficialMockURLProtocol.requestHandler = { request in
-            XCTAssertEqual(request.url?.absoluteString, "https://api.kimi.com/coding/v1/usages")
+            XCTAssertTrue(
+                request.url?.absoluteString == "https://api.kimi.com/coding/v1/usages"
+                    || request.url?.absoluteString == "https://api.kimi.com/coding/v1/me",
+                "unexpected Kimi URL \(request.url?.absoluteString ?? "nil")"
+            )
             XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer kimi-coding-api-key")
             let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            if request.url?.path == "/coding/v1/me" {
+                return (response, Data(#"{"user_level":15,"user_level_name":"Andante"}"#.utf8))
+            }
             let body = """
             {
               "usage": { "used": "40", "limit": "100" },
@@ -1623,12 +1631,14 @@ final class OfficialProviderTests: XCTestCase {
             keychain: keychain,
             cache: SnapshotTimestampOfficialSnapshotCache(),
             gate: PassthroughOfficialFetchGate(),
+            planCache: KimiPlanMetadataCache(),
             homeDirectory: { "/path/that/does/not/exist" }
         )
 
         let snapshot = try await provider.fetch(forceRefresh: true)
         XCTAssertEqual(snapshot.remaining ?? -1, 60, accuracy: 0.001)
         XCTAssertEqual(snapshot.sourceLabel, "API")
+        XCTAssertEqual(snapshot.extras["planType"], "Andante")
     }
 
     func testCodexWebBackoffSkipsRepeatedBrowserReadAndForceRefreshBypasses() async throws {
@@ -2267,6 +2277,92 @@ final class OfficialProviderTests: XCTestCase {
         XCTAssertEqual(weekly?.remainingPercent ?? -1, 85, accuracy: 0.001)
 
         XCTAssertFalse(snapshot.quotaWindows.isEmpty)
+        XCTAssertNil(snapshot.extras["planType"])
+    }
+
+    func testOfficialKimiResponseParsesNumericAndStandardMembershipLevels() throws {
+        let numericRoot: [String: Any] = [
+            "user": ["membership": ["level": 15]],
+            "usage": ["used": "10", "limit": "100"],
+        ]
+        let numericSnapshot = try KimiOfficialProvider.parseUsageSnapshot(
+            root: numericRoot,
+            descriptor: ProviderDescriptor.defaultOfficialKimi(),
+            sourceLabel: "API"
+        )
+        XCTAssertEqual(numericSnapshot.extras["planType"], "15")
+
+        let standardRoot: [String: Any] = [
+            "user": ["membership": ["level": "LEVEL_STANDARD"]],
+            "usage": ["used": "10", "limit": "100"],
+        ]
+        let standardSnapshot = try KimiOfficialProvider.parseUsageSnapshot(
+            root: standardRoot,
+            descriptor: ProviderDescriptor.defaultOfficialKimi(),
+            sourceLabel: "API"
+        )
+        XCTAssertEqual(standardSnapshot.extras["planType"], "LEVEL_STANDARD")
+
+        let unnamedRoot: [String: Any] = [
+            "user": ["membership": ["level": "LEVEL_UNSPECIFIED"]],
+            "usage": ["used": "10", "limit": "100"],
+        ]
+        let unnamedSnapshot = try KimiOfficialProvider.parseUsageSnapshot(
+            root: unnamedRoot,
+            descriptor: ProviderDescriptor.defaultOfficialKimi(),
+            sourceLabel: "API"
+        )
+        XCTAssertNil(unnamedSnapshot.extras["planType"])
+    }
+
+    func testOfficialKimiPrefersProfilePlanNameWhenUsagesOmitsMembership() async throws {
+        let keychain = makeTestKeychain()
+        var descriptor = ProviderDescriptor.defaultOfficialKimi()
+        descriptor.id = "kimi-profile-plan-\(UUID().uuidString)"
+        descriptor.officialConfig?.sourceMode = .api
+        let service = try XCTUnwrap(descriptor.auth.keychainService)
+        let account = try XCTUnwrap(descriptor.auth.keychainAccount)
+        XCTAssertTrue(keychain.saveToken("kimi-coding-api-key", service: service, account: account))
+
+        var requestedPaths: [String] = []
+        OfficialMockURLProtocol.requestHandler = { request in
+            let url = try XCTUnwrap(request.url)
+            requestedPaths.append(url.path)
+            let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            if url.path == "/coding/v1/me" {
+                return (response, Data(#"{"user_level":15,"user_level_name":"Andante"}"#.utf8))
+            }
+            XCTAssertEqual(url.path, "/coding/v1/usages")
+            let body = """
+            {
+              "usage": { "used": "40", "limit": "100" },
+              "limits": [
+                {
+                  "window": { "duration": 300, "timeUnit": "TIME_UNIT_MINUTE" },
+                  "detail": { "used": "10", "limit": "50" }
+                }
+              ]
+            }
+            """
+            return (response, Data(body.utf8))
+        }
+        defer { OfficialMockURLProtocol.requestHandler = nil }
+
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [OfficialMockURLProtocol.self]
+        let provider = KimiOfficialProvider(
+            descriptor: descriptor,
+            session: URLSession(configuration: configuration),
+            keychain: keychain,
+            cache: SnapshotTimestampOfficialSnapshotCache(),
+            gate: PassthroughOfficialFetchGate(),
+            planCache: KimiPlanMetadataCache(),
+            homeDirectory: { "/path/that/does/not/exist" }
+        )
+
+        let snapshot = try await provider.fetch(forceRefresh: true)
+        XCTAssertEqual(snapshot.extras["planType"], "Andante")
+        XCTAssertEqual(requestedPaths, ["/coding/v1/usages", "/coding/v1/me"])
     }
 
     func testOfficialKimiResponseParsesHourAndWeekTimeUnits() throws {

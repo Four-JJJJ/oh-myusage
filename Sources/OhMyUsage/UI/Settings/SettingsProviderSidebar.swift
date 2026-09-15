@@ -133,7 +133,7 @@ extension SettingsView {
     func beginRelayNewSiteDraft() {
         cancelActiveRelayTitleEdit()
         newRelaySiteDraft.selectedPresetID = nil
-        applyNewRelayTemplate("generic-newapi")
+        applyNewRelayTemplate(RelayAdapterRegistry.genericNewAPIAdapterID)
         newRelaySiteDraft.providerName = ""
         newRelaySiteDraft.baseURL = ""
         newRelaySiteDraft.credentialInput = ""
@@ -148,7 +148,7 @@ extension SettingsView {
                 .font(.system(size: 14, weight: .regular))
                 .frame(width: 12, height: 12, alignment: .center)
 
-            Text(viewModel.localizedText("NewAPI站点", "NewAPI Site"))
+            Text(viewModel.localizedText("添加站点", "Add Site"))
                 .font(.system(size: 12, weight: .regular))
         }
         .foregroundStyle(SettingsVisualTokens.Text.primary)
@@ -175,7 +175,10 @@ extension SettingsView {
     }
 
     var relayDefaultNewSiteTitle: String {
-        viewModel.localizedText("NewAPI站点", "NewAPI Site")
+        if newRelaySiteDraft.templateID == RelayAdapterRegistry.genericSub2APIAdapterID {
+            return viewModel.localizedText("Sub2API站点", "Sub2API Site")
+        }
+        return viewModel.localizedText("NewAPI站点", "NewAPI Site")
     }
 
     var relayNewSiteHeaderTitle: String {
@@ -1229,17 +1232,14 @@ extension SettingsView {
     var addNewAPISiteButton: some View {
         Button {
             newRelaySiteDraft.selectedPresetID = nil
-            applyNewRelayTemplate("generic-newapi")
+            applyNewRelayTemplate(RelayAdapterRegistry.genericNewAPIAdapterID)
             newRelaySiteDraft.baseURL = ""
             newRelaySiteDraft.credentialInput = ""
             newRelaySiteDraft.userID = ""
             newRelaySiteDraft.testState = .unverified
-            if newRelaySiteDraft.providerName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                newRelaySiteDraft.providerName = "NewAPI"
-            }
             dialogState.isNewAPISiteDialogPresented = true
         } label: {
-            Text(viewModel.language == .zhHans ? "添加 NewAPI 站点" : "Add NewAPI Site")
+            Text(viewModel.language == .zhHans ? "添加站点" : "Add Site")
                 .font(.system(size: 10, weight: .semibold))
                 .frame(maxWidth: .infinity, alignment: .center)
         }

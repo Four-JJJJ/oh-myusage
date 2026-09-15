@@ -412,54 +412,17 @@ extension SettingsView {
                 )
                 .padding(.top, 12)
             } else {
-                localUsageSubscriptionHourlyBars(points: points)
-                    .padding(.top, 12)
+                LocalUsageTrendHourlyBarsView(
+                    points: points,
+                    language: viewModel.language,
+                    localizedText: { viewModel.localizedText($0, $1) },
+                    appearance: .subscription()
+                )
+                .frame(width: 534, height: 64)
+                .padding(.top, 12)
             }
         }
         .frame(width: 534, height: 88, alignment: .topLeading)
-    }
-
-    private func localUsageSubscriptionHourlyBars(points: [LocalUsageTrendPoint]) -> some View {
-        GeometryReader { proxy in
-            let metric = localUsageTrendDisplayMetric(points: points)
-            let values = points.map { localUsageTrendValue($0, metric: metric) }
-            let maxValue = max(values.max() ?? 0, 1)
-            let count = max(points.count, 1)
-            let barWidth: CGFloat = 12
-            let maxBarHeight: CGFloat = 50
-            let minBarHeight: CGFloat = 4
-            let totalBarsWidth = CGFloat(count) * barWidth
-            let spacing = count > 1 ? max(0, (proxy.size.width - totalBarsWidth) / CGFloat(count - 1)) : 0
-
-            HStack(alignment: .bottom, spacing: spacing) {
-                ForEach(points) { point in
-                    let value = localUsageTrendValue(point, metric: metric)
-                    let ratio = maxValue > 0 ? CGFloat(value / maxValue) : 0
-                    let barHeight = value > 0
-                        ? max(minBarHeight, maxBarHeight * ratio)
-                        : minBarHeight
-
-                    VStack(alignment: .center, spacing: 4) {
-                        ZStack(alignment: .bottom) {
-                            SettingsSmoothedRoundedRectangle(cornerRadius: 4, smoothing: 0.6)
-                                .fill(Color.white.opacity(0.55))
-                                .frame(width: barWidth, height: barHeight)
-                        }
-                        .frame(width: barWidth, height: maxBarHeight, alignment: .bottom)
-
-                        Text(localUsageHourlyLabel(point.startAt))
-                            .font(.system(size: 10, weight: .regular))
-                            .foregroundStyle(Color.white.opacity(0.40))
-                            .lineLimit(1)
-                            .fixedSize(horizontal: true, vertical: false)
-                            .frame(width: 24, height: 10, alignment: .center)
-                    }
-                    .frame(width: barWidth, height: 64, alignment: .bottom)
-                }
-            }
-            .frame(width: proxy.size.width, height: 64, alignment: .bottomLeading)
-        }
-        .frame(width: 534, height: 64)
     }
 
     private func localUsageSubscriptionWeeklyTrendSection(
@@ -697,43 +660,23 @@ extension SettingsView {
                 )
                 .padding(.top, 12)
             } else {
-                localUsageHourlyTrendBars(points: displayPoints)
-                    .padding(.top, 12)
+                LocalUsageTrendHourlyBarsView(
+                    points: displayPoints,
+                    language: viewModel.language,
+                    localizedText: { viewModel.localizedText($0, $1) },
+                    appearance: .settings(
+                        filledBarColor: settingsTrendPrimaryColor,
+                        emptyBarColor: settingsTrendMutedColor,
+                        axisLabelColor: settingsHintColor,
+                        usesLightAppearance: settingsUsesLightAppearance
+                    )
+                )
+                .padding(.top, 12)
             }
 
             localUsageHourlyAxisLabels(points: displayPoints)
                 .padding(.top, 8)
         }
-    }
-
-    private func localUsageHourlyTrendBars(points: [LocalUsageTrendPoint]) -> some View {
-        GeometryReader { proxy in
-            let metric = localUsageTrendDisplayMetric(points: points)
-            let values = points.map { localUsageTrendValue($0, metric: metric) }
-            let maxValue = max(values.max() ?? 0, 1)
-            let count = max(points.count, 1)
-            let barWidth: CGFloat = 12
-            let maxBarHeight: CGFloat = 50
-            let minBarHeight: CGFloat = 6
-            let totalBarsWidth = CGFloat(count) * barWidth
-            let spacing = count > 1 ? max(0, (proxy.size.width - totalBarsWidth) / CGFloat(count - 1)) : 0
-
-            HStack(alignment: .bottom, spacing: spacing) {
-                ForEach(points) { point in
-                    let value = localUsageTrendValue(point, metric: metric)
-                    let ratio = maxValue > 0 ? CGFloat(value / maxValue) : 0
-                    let barHeight = value > 0
-                        ? max(minBarHeight, maxBarHeight * ratio)
-                        : minBarHeight
-
-                    Capsule()
-                        .fill(value > 0 ? settingsTrendPrimaryColor : settingsTrendMutedColor)
-                        .frame(width: barWidth, height: barHeight)
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
-        }
-        .frame(height: 50)
     }
 
     @ViewBuilder
@@ -988,17 +931,7 @@ extension SettingsView {
     }
 
     private func localUsageTrendResponseText(_ value: Int) -> String {
-        let compact = LocalTrendValueFormatter.compactNumber(max(0, value), language: viewModel.language)
-        switch viewModel.language {
-        case .zhHans:
-            if let last = compact.last, last == "万" || last == "亿" {
-                let number = String(compact.dropLast())
-                return "\(number) \(last)次"
-            }
-            return "\(compact) 次"
-        case .en:
-            return "\(compact) req"
-        }
+        LocalTrendValueFormatter.responseCountText(value, language: viewModel.language)
     }
 
     private func localUsageWeeklyDisplayPoints(_ points: [LocalUsageTrendPoint]) -> [LocalUsageTrendPoint] {

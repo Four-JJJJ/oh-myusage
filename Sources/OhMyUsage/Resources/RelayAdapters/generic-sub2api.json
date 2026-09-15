@@ -1,0 +1,35 @@
+{
+  "id": "generic-sub2api",
+  "displayName": "Generic Sub2API",
+  "match": {
+    "hostPatterns": ["*"],
+    "defaultDisplayName": "Generic Sub2API",
+    "defaultTokenChannelEnabled": false,
+    "defaultBalanceChannelEnabled": true
+  },
+  "setup": {
+    "requiredInputs": ["displayName", "baseURL", "balanceAuth"],
+    "balanceAuthHint": {
+      "zhHans": "填写 Sub2API 分组 API Key，支持直接粘贴 `Bearer sk-...` 或纯 `sk-...`。站点地址填根地址，不要带 `/v1`。",
+      "en": "Enter the Sub2API group API key. Both `Bearer sk-...` and the raw `sk-...` key are accepted. Use the site root URL without `/v1`."
+    }
+  },
+  "authStrategies": [
+    { "kind": "savedBearer" },
+    { "kind": "browserBearer" }
+  ],
+  "balanceRequest": {
+    "method": "GET",
+    "path": "/v1/usage",
+    "authHeader": "Authorization",
+    "authScheme": "Bearer"
+  },
+  "extract": {
+    "remaining": "coalesce(quota.remaining,remaining)",
+    "used": "coalesce(quota.used,subscription.monthly_usage_usd)",
+    "limit": "coalesce(quota.limit,subscription.monthly_limit_usd)",
+    "unit": "coalesce(quota.unit,unit,\"USD\")",
+    "accountLabel": "coalesce(planName,\"Sub2API\")"
+  },
+  "postprocessID": "sub2apiUsage"
+}

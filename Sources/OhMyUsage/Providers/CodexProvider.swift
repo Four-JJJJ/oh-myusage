@@ -526,10 +526,24 @@ final class CodexProvider: UsageProvider, @unchecked Sendable {
 
         let remaining = windows.map(\.remainingPercent).min()
         let used = windows.first(where: { $0.kind == .session })?.usedPercent ?? (remaining.map { 100 - $0 })
-        let plan = OfficialValueParser.string(root["plan_type"]) ?? "unknown"
+        let plan = OfficialValueParser.firstPlanLabel([
+            root["plan_type"],
+            root["planType"],
+            root["plan"],
+            (root["account"] as? [String: Any])?["plan_type"],
+            (root["account"] as? [String: Any])?["planType"],
+            (root["account"] as? [String: Any])?["plan"],
+            (root["organization"] as? [String: Any])?["plan_type"],
+            (root["organization"] as? [String: Any])?["planType"],
+            (root["subscription"] as? [String: Any])?["plan_type"],
+            (root["subscription"] as? [String: Any])?["planType"]
+        ])
         let credits = OfficialValueParser.double((root["credits"] as? [String: Any])?["balance"])
             ?? OfficialValueParser.double(response.value(forHTTPHeaderField: "x-codex-credits-balance"))
-        var extras: [String: String] = ["planType": plan]
+        var extras: [String: String] = [:]
+        if let plan {
+            extras["planType"] = plan
+        }
         if let credits {
             extras["creditsBalance"] = String(format: "%.2f", credits)
         }
@@ -549,14 +563,17 @@ final class CodexProvider: UsageProvider, @unchecked Sendable {
             accountLabel: accountLabel,
             extras: extras,
             rawMeta: [
-                "planType": plan,
+                "planType": plan ?? "",
                 "creditsBalance": extras["creditsBalance"] ?? ""
             ]
         )
     }
 
-    private static func buildNote(plan: String, windows: [UsageQuotaWindow], credits: Double?) -> String {
-        var parts = ["Plan \(plan)"]
+    private static func buildNote(plan: String?, windows: [UsageQuotaWindow], credits: Double?) -> String {
+        var parts: [String] = []
+        if let plan {
+            parts.append("Plan \(plan)")
+        }
         for window in windows.prefix(3) {
             parts.append("\(window.title) \(Int(window.remainingPercent.rounded()))%")
         }
@@ -669,7 +686,7 @@ final class CodexProvider: UsageProvider, @unchecked Sendable {
         let primaryRemaining = max(0, 100 - primaryUsed)
         let secondaryRemaining = max(0, 100 - secondaryUsed)
         let status: SnapshotStatus = min(primaryRemaining, secondaryRemaining) <= descriptor.threshold.lowRemaining ? .warning : .ok
-        let plan = account.account.planType ?? "unknown"
+        let plan = OfficialValueParser.nonPlaceholderString(account.account.planType)
 
         let windows = [
             UsageQuotaWindow(
@@ -698,19 +715,31 @@ final class CodexProvider: UsageProvider, @unchecked Sendable {
             limit: 100,
             unit: "%",
             updatedAt: Date(),
-            note: "Plan \(plan) | 5h \(Int(primaryRemaining))% | Weekly \(Int(secondaryRemaining))%",
+            note: [plan.map { "Plan \($0)" }, "5h \(Int(primaryRemaining))%", "Weekly \(Int(secondaryRemaining))%"]
+                .compactMap { $0 }
+                .joined(separator: " | "),
             quotaWindows: windows,
             sourceLabel: "CLI-RPC",
             accountLabel: account.account.email,
-            extras: [
-                "planType": plan,
-                "creditsBalance": limits.rateLimits.credits.balance
-            ],
-            rawMeta: [
-                "planType": plan,
-                "creditsBalance": limits.rateLimits.credits.balance,
-                "codex.accountLabel": account.account.email ?? ""
-            ]
+            extras: {
+                var extras: [String: String] = [
+                    "creditsBalance": limits.rateLimits.credits.balance
+                ]
+                if let plan {
+                    extras["planType"] = plan
+                }
+                return extras
+            }(),
+            rawMeta: {
+                var rawMeta: [String: String] = [
+                    "creditsBalance": limits.rateLimits.credits.balance,
+                    "codex.accountLabel": account.account.email ?? ""
+                ]
+                if let plan {
+                    rawMeta["planType"] = plan
+                }
+                return rawMeta
+            }()
         )
         Self.applyCodexIdentityMetadata(
             to: &snapshot,

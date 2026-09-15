@@ -105,7 +105,7 @@ final class GrokBotProvider: UsageProvider, @unchecked Sendable {
                 origin: nil,
                 body: nil
             ) {
-                membership = OfficialValueParser.string(summary["membershipType"]) ?? membership
+                membership = OfficialValueParser.planLabel(summary["membershipType"]) ?? membership
             }
         }
         return try Self.parseSnapshot(
@@ -198,7 +198,7 @@ final class GrokBotProvider: UsageProvider, @unchecked Sendable {
         let remainingPercent = max(0, 100 - usedPercent)
         let resetAt = parseTimestamp(sand["nextResetTimestampUtc"])
         let planName = CursorSessionAuth.displayPlanName(
-            grokPlanLabel: OfficialValueParser.string(sand["grokPlanLabel"]),
+            grokPlanLabel: OfficialValueParser.planLabel(sand["grokPlanLabel"]),
             membershipType: planNameOverride ?? credentials.membershipType
         )
 
@@ -232,7 +232,10 @@ final class GrokBotProvider: UsageProvider, @unchecked Sendable {
         }
 
         let remaining = windows.map(\.remainingPercent).min() ?? remainingPercent
-        var extras: [String: String] = ["planType": planName]
+        var extras: [String: String] = [:]
+        if OfficialValueParser.planLabel(planName) != nil {
+            extras["planType"] = planName
+        }
         extras["authSource"] = credentials.source.authSourceLabel
         if onDemandLimit > 0 {
             extras["onDemandUsed"] = formatUnits(onDemandUsed)
@@ -247,7 +250,13 @@ final class GrokBotProvider: UsageProvider, @unchecked Sendable {
             limit: 100,
             unit: "%",
             updatedAt: Date(),
-            note: "Plan \(planName) | " + windows.map { "\($0.title) \(Int($0.remainingPercent.rounded()))%" }.joined(separator: " | "),
+            note: {
+                let usageNote = windows.map { "\($0.title) \(Int($0.remainingPercent.rounded()))%" }.joined(separator: " | ")
+                if OfficialValueParser.planLabel(planName) != nil {
+                    return "Plan \(planName) | \(usageNote)"
+                }
+                return usageNote
+            }(),
             quotaWindows: windows,
             sourceLabel: "API",
             accountLabel: credentials.email,

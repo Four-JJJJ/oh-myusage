@@ -108,7 +108,15 @@ final class CopilotProvider: UsageProvider, @unchecked Sendable {
             throw ProviderError.invalidResponse("Copilot usage decode failed")
         }
 
-        let plan = OfficialValueParser.nonPlaceholderString(root["copilot_plan"] ?? root["access_type_sku"])
+        let plan = OfficialValueParser.firstPlanLabel([
+            root["copilot_plan"],
+            root["copilotPlan"],
+            root["access_type_sku"],
+            root["plan"],
+            root["sku"],
+            root["plan_type"],
+            root["planType"]
+        ])
         let accountLabel = resolveAccountLabel(root)
         let paidReset = OfficialValueParser.isoDate(
             OfficialValueParser.string(root["quota_reset_date"] ?? root["quota_reset_date_utc"])

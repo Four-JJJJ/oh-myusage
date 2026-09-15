@@ -167,10 +167,10 @@ struct CursorSessionAuth {
     }
 
     static func displayPlanName(grokPlanLabel: String?, membershipType: String?) -> String {
-        if let grokPlanLabel = OfficialValueParser.nonPlaceholderString(grokPlanLabel) {
+        if let grokPlanLabel = OfficialValueParser.planLabel(grokPlanLabel) {
             return grokPlanLabel
         }
-        guard let membership = OfficialValueParser.nonPlaceholderString(membershipType) else {
+        guard let membership = OfficialValueParser.planLabel(membershipType) else {
             return "unknown"
         }
         switch membership.lowercased() {

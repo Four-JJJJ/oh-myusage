@@ -214,7 +214,14 @@ final class TraeProvider: UsageProvider, @unchecked Sendable {
         let autocomplete = usageWindow(used: autocompleteUsed, limit: autocompleteLimit)
         let resetAt = OfficialValueParser.epochDate(seconds: entitlementBase["end_time"])
         let planType = PlanTypeDisplayFormatter.normalizedPlanType(
-            OfficialValueParser.string(pack["display_desc"]),
+            OfficialValueParser.firstPlanLabel([
+                pack["display_desc"],
+                pack["displayDesc"],
+                pack["planName"],
+                pack["plan_name"],
+                pack["specType"],
+                pack["spec_type"]
+            ]),
             providerType: .trae
         )
 

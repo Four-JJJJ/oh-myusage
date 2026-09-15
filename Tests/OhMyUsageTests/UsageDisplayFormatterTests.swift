@@ -195,6 +195,51 @@ final class UsageDisplayFormatterTests: XCTestCase {
         XCTAssertEqual(
             PlanTypeDisplayFormatter.resolvedPlanType(
                 providerType: .kimi,
+                extrasPlanType: "LEVEL_STANDARD",
+                rawPlanType: nil
+            ),
+            "Moderato"
+        )
+
+        XCTAssertEqual(
+            PlanTypeDisplayFormatter.resolvedPlanType(
+                providerType: .kimi,
+                extrasPlanType: "LEVEL_BASIC",
+                rawPlanType: nil
+            ),
+            "Adagio"
+        )
+
+        XCTAssertEqual(
+            PlanTypeDisplayFormatter.resolvedPlanType(
+                providerType: .kimi,
+                extrasPlanType: "15",
+                rawPlanType: nil
+            ),
+            "Andante"
+        )
+
+        XCTAssertEqual(
+            PlanTypeDisplayFormatter.resolvedPlanType(
+                providerType: .kimi,
+                extrasPlanType: "LEVEL_PREMIUM",
+                rawPlanType: nil
+            ),
+            "Vivace"
+        )
+
+        XCTAssertEqual(
+            PlanTypeDisplayFormatter.resolvedPlanType(
+                providerType: .kimi,
+                extrasPlanType: "LEVEL_STARTER",
+                rawPlanType: nil
+            ),
+            "Starter"
+        )
+
+        XCTAssertEqual(
+            PlanTypeDisplayFormatter.resolvedPlanType(
+                providerType: .kimi,
                 extrasPlanType: nil,
                 rawPlanType: "student plus"
             ),
@@ -253,6 +298,76 @@ final class UsageDisplayFormatterTests: XCTestCase {
             ),
             "Business Plan"
         )
+
+        XCTAssertEqual(
+            PlanTypeDisplayFormatter.resolvedPlanType(
+                providerType: .copilot,
+                extrasPlanType: "PLAN_PLUS",
+                rawPlanType: nil
+            ),
+            "Plus"
+        )
+
+        XCTAssertEqual(
+            PlanTypeDisplayFormatter.resolvedPlanType(
+                providerType: .cursor,
+                extrasPlanType: "pro_plus",
+                rawPlanType: nil
+            ),
+            "Pro+"
+        )
+
+        XCTAssertNil(
+            PlanTypeDisplayFormatter.resolvedPlanType(
+                providerType: .kimi,
+                extrasPlanType: "LEVEL_UNSPECIFIED",
+                rawPlanType: nil
+            )
+        )
+
+        XCTAssertNil(
+            PlanTypeDisplayFormatter.resolvedPlanType(
+                providerType: .gemini,
+                extrasPlanType: "unspecified",
+                rawPlanType: nil
+            )
+        )
+
+        XCTAssertEqual(
+            PlanTypeDisplayFormatter.resolvedPlanType(
+                providerType: .windsurf,
+                extrasPlanType: "PLAN_PRO",
+                rawPlanType: nil
+            ),
+            "Pro"
+        )
+
+        XCTAssertEqual(
+            PlanTypeDisplayFormatter.resolvedPlanType(
+                providerType: .qwen,
+                extrasPlanType: "STANDARD",
+                rawPlanType: nil
+            ),
+            "Standard"
+        )
+
+        XCTAssertEqual(
+            PlanTypeDisplayFormatter.resolvedPlanType(
+                providerType: .grok,
+                extrasPlanType: "SUPERGROK_PLUS",
+                rawPlanType: nil
+            ),
+            "SuperGrok Plus"
+        )
+
+        XCTAssertEqual(
+            PlanTypeDisplayFormatter.resolvedPlanType(
+                providerType: .grok,
+                extrasPlanType: "SUBSCRIPTION_TIER_SUPERGROK",
+                rawPlanType: nil
+            ),
+            "SuperGrok"
+        )
     }
 
     func testCompactNumberZhHansBoundaries() {
@@ -283,6 +398,13 @@ final class UsageDisplayFormatterTests: XCTestCase {
             LocalTrendValueFormatter.metricValueText(value: 2_981, metric: .responses, language: .en),
             "3K req"
         )
+    }
+
+    func testResponseCountTextMatchesTrendCapsuleFormatting() {
+        XCTAssertEqual(LocalTrendValueFormatter.responseCountText(8, language: .zhHans), "8 次")
+        XCTAssertEqual(LocalTrendValueFormatter.responseCountText(29_000, language: .zhHans), "2.9 万次")
+        XCTAssertEqual(LocalTrendValueFormatter.responseCountText(3, language: .en), "3 req")
+        XCTAssertEqual(LocalTrendValueFormatter.responseCountText(2_981, language: .en), "3K req")
     }
 
     func testTraeValueFormattingSupportsAdaptiveDollarAndAutocompleteCompaction() {

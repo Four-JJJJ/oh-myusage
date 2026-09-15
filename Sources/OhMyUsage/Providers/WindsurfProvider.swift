@@ -122,7 +122,15 @@ final class WindsurfProvider: UsageProvider, @unchecked Sendable {
               let planStatus = userStatus["planStatus"] as? [String: Any] else {
             throw ProviderError.invalidResponse("Windsurf usage decode failed")
         }
-        let plan = OfficialValueParser.string((planStatus["planInfo"] as? [String: Any])?["planName"]) ?? "unknown"
+        let planInfo = planStatus["planInfo"] as? [String: Any]
+        let plan = OfficialValueParser.firstPlanLabel([
+            planInfo?["planName"],
+            planInfo?["name"],
+            planInfo?["planType"],
+            planInfo?["tier"],
+            planStatus["planName"],
+            planStatus["plan"]
+        ])
         guard let dailyRemaining = OfficialValueParser.double(planStatus["dailyQuotaRemainingPercent"]),
               let weeklyRemaining = OfficialValueParser.double(planStatus["weeklyQuotaRemainingPercent"]) else {
             throw ProviderError.invalidResponse("missing Windsurf quota values")
@@ -160,7 +168,10 @@ final class WindsurfProvider: UsageProvider, @unchecked Sendable {
             )
         }
         let remaining = windows.map(\.remainingPercent).min() ?? 0
-        var extras = ["planType": plan]
+        var extras: [String: String] = [:]
+        if let plan {
+            extras["planType"] = plan
+        }
         if let overageMicros = OfficialValueParser.double(planStatus["overageBalanceMicros"]) {
             extras["overageBalance"] = String(format: "%.2f", overageMicros / 1_000_000)
         }
@@ -172,7 +183,8 @@ final class WindsurfProvider: UsageProvider, @unchecked Sendable {
             limit: 100,
             unit: "%",
             updatedAt: Date(),
-            note: "Plan \(plan) | Daily \(Int(dailyRemaining.rounded()))% | Weekly \(Int(weeklyRemaining.rounded()))%",
+            note: plan.map { "Plan \($0) | Daily \(Int(dailyRemaining.rounded()))% | Weekly \(Int(weeklyRemaining.rounded()))%" }
+                ?? "Daily \(Int(dailyRemaining.rounded()))% | Weekly \(Int(weeklyRemaining.rounded()))%",
             quotaWindows: windows,
             sourceLabel: "API",
             accountLabel: nil,

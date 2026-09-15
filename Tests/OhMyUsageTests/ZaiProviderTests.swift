@@ -71,7 +71,7 @@ final class ZaiProviderTests: XCTestCase {
         XCTAssertEqual(counter.value("quota"), 1)
         XCTAssertEqual(snapshot.quotaWindows.count, 2, "valid quota data must still be returned")
         XCTAssertEqual(snapshot.remaining ?? -1, 55, accuracy: 0.001)
-        XCTAssertEqual(snapshot.extras["planType"], "unknown")
+        XCTAssertNil(snapshot.extras["planType"])
         XCTAssertEqual(
             snapshot.diagnosticCode,
             "endpoint-misconfigured",

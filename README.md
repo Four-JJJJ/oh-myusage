@@ -9,6 +9,16 @@ oh-myusage 把官方订阅额度、模型使用窗口、第三方中转余额、
 
 [下载最新版本](https://github.com/Four-JJJJ/oh-myusage/releases/latest) · [安装说明](docs/DOWNLOAD.md) · [支持的服务](docs/PROVIDERS.md) · [扩展指南](docs/EXTENDING.md) · [发布清单](docs/RELEASE_CHECKLIST.md) · [English](docs/README.en.md)
 
+## V2.5.2 更新
+
+V2.5.2 让套餐名更可读，并补上 Sub2API 中转模板和本地用量的 24 小时趋势。
+
+| 方向 | 改进 |
+| --- | --- |
+| 套餐名 | Kimi 降级后也能从 `/me` 识别 Andante 等档位；Codex、Claude、Cursor、Copilot、Gemini、Grok、Windsurf、Trae、Qwen、Z.ai 等会把 `PLAN_` / `LEVEL_` 这类内部码显示成 Plus、Pro、SuperGrok；读不到就不显示，不再出现 `unknown` |
+| Sub2API | 新增通用 Sub2API 站点模板：填根地址和分组 API Key，读取额度、订阅或速率窗口 |
+| 本地用量 | 设置页本地历史用量新增 24 小时趋势图 |
+
 ## V2.5.1 更新
 
 V2.5.1 新增 Grok Bot 官方来源，并让菜单栏排序、订阅档位展示与设置保持一致。

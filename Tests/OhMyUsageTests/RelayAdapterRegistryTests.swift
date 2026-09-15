@@ -6,6 +6,7 @@ final class RelayAdapterRegistryTests: XCTestCase {
         let ids = Set(RelayAdapterRegistry.shared.builtInManifests().map(\.id))
 
         XCTAssertTrue(ids.contains("generic-newapi"))
+        XCTAssertTrue(ids.contains("generic-sub2api"))
         XCTAssertTrue(ids.contains("xiaomimimo-token-plan"))
         XCTAssertTrue(ids.contains("moonshot"))
     }
@@ -14,6 +15,13 @@ final class RelayAdapterRegistryTests: XCTestCase {
         let ids = RelayAdapterRegistry.shared.builtInManifests().map(\.id)
 
         XCTAssertEqual(ids.count, Set(ids).count)
+    }
+
+    func testGenericRelaySiteTemplateIDs() {
+        XCTAssertTrue(RelayAdapterRegistry.isGenericRelaySiteTemplate("generic-newapi"))
+        XCTAssertTrue(RelayAdapterRegistry.isGenericRelaySiteTemplate("generic-sub2api"))
+        XCTAssertFalse(RelayAdapterRegistry.isGenericRelaySiteTemplate("moonshot"))
+        XCTAssertFalse(RelayAdapterRegistry.isGenericRelaySiteTemplate(nil))
     }
 
     func testAvailableManifestsReusesLocalDirectoryScanWithinCacheTTL() throws {

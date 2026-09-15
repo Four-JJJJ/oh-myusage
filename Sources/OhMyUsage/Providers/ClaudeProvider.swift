@@ -225,7 +225,7 @@ final class ClaudeProvider: UsageProvider, @unchecked Sendable {
         }
         let refreshToken = OfficialValueParser.string(oauth["refreshToken"])
         let expiresAtMs = OfficialValueParser.double(oauth["expiresAt"])
-        let subscriptionType = OfficialValueParser.string(oauth["subscriptionType"])
+        let subscriptionType = OfficialValueParser.planLabel(oauth["subscriptionType"])
         let scopes = (oauth["scopes"] as? [String]) ?? []
         let inferenceOnly = !scopes.isEmpty && !scopes.contains("user:profile")
         return ClaudeCredentials(
@@ -736,7 +736,7 @@ final class ClaudeProvider: UsageProvider, @unchecked Sendable {
         let remaining = windows.map(\.remainingPercent).min()
         let note = buildClaudeNote(windows: windows, extraCost: extraCost, extraLimit: extraLimit, planHint: planHint)
         var extras: [String: String] = [:]
-        if let planHint {
+        if let planHint = OfficialValueParser.planLabel(planHint) {
             extras["planType"] = planHint
         }
         if let extraCost {
@@ -786,7 +786,7 @@ final class ClaudeProvider: UsageProvider, @unchecked Sendable {
 
     private static func buildClaudeNote(windows: [UsageQuotaWindow], extraCost: Double?, extraLimit: Double?, planHint: String?) -> String {
         var parts: [String] = []
-        if let planHint {
+        if let planHint = OfficialValueParser.planLabel(planHint) {
             parts.append("Plan \(planHint)")
         }
         for window in windows.prefix(3) {

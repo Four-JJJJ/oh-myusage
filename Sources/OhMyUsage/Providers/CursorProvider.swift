@@ -75,7 +75,16 @@ final class CursorProvider: UsageProvider, @unchecked Sendable {
         guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw ProviderError.invalidResponse("Cursor usage decode failed")
         }
-        let membership = OfficialValueParser.string(root["membershipType"]) ?? "unknown"
+        let membership = OfficialValueParser.firstPlanLabel([
+            root["membershipType"],
+            root["membership_type"],
+            root["stripeMembershipType"],
+            root["planType"],
+            root["plan_type"],
+            root["plan"],
+            root["planName"],
+            root["plan_name"]
+        ])
         let resetAt = OfficialValueParser.isoDate(OfficialValueParser.string(root["billingCycleEnd"]))
         let individual = root["individualUsage"] as? [String: Any]
 
@@ -147,6 +156,11 @@ final class CursorProvider: UsageProvider, @unchecked Sendable {
             throw ProviderError.invalidResponse("missing Cursor quota windows")
         }
         let remaining = windows.map(\.remainingPercent).min() ?? 0
+        let usageNote = windows.map { "\($0.title) \(Int($0.remainingPercent.rounded()))%" }.joined(separator: " | ")
+        var extras: [String: String] = [:]
+        if let membership {
+            extras["planType"] = membership
+        }
         return UsageSnapshot(
             source: descriptor.id,
             status: remaining <= descriptor.threshold.lowRemaining ? .warning : .ok,
@@ -155,11 +169,11 @@ final class CursorProvider: UsageProvider, @unchecked Sendable {
             limit: 100,
             unit: "%",
             updatedAt: Date(),
-            note: "Plan \(membership) | " + windows.map { "\($0.title) \(Int($0.remainingPercent.rounded()))%" }.joined(separator: " | "),
+            note: membership.map { "Plan \($0) | \(usageNote)" } ?? usageNote,
             quotaWindows: windows,
             sourceLabel: "API",
             accountLabel: accountLabel,
-            extras: ["planType": membership],
+            extras: extras,
             rawMeta: [:]
         )
     }

@@ -240,8 +240,8 @@ struct RelayProviderEditorDraft: Equatable {
 
         let seed = RelaySettingsDraftSeed(provider: provider)
         if selectedRelayTemplateInputs[provider.id] == nil {
-            if seed.preferredAdapterID == "generic-newapi" {
-                selectedRelayTemplateInputs[provider.id] = "generic-newapi"
+            if RelayAdapterRegistry.isGenericRelaySiteTemplate(seed.preferredAdapterID) {
+                selectedRelayTemplateInputs[provider.id] = seed.preferredAdapterID
             }
         }
         if providerNameInputs[provider.id] == nil {

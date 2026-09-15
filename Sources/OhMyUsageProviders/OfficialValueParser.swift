@@ -32,6 +32,58 @@ public enum OfficialValueParser {
         return placeholderValues.contains(text.lowercased()) ? nil : text
     }
 
+    /// Plan/tier labels from official APIs: accept strings or integer codes,
+    /// and drop placeholders such as `unknown` / `LEVEL_UNSPECIFIED`.
+    public static func planLabel(_ value: Any?) -> String? {
+        if value is Bool {
+            return nil
+        }
+        if let number = value as? NSNumber, CFGetTypeID(number) == CFBooleanGetTypeID() {
+            return nil
+        }
+        if let text = nonPlaceholderString(value) {
+            return isUnusablePlanToken(text) ? nil : text
+        }
+        if let number = int(value) {
+            let text = String(number)
+            return isUnusablePlanToken(text) ? nil : text
+        }
+        return nil
+    }
+
+    public static func firstPlanLabel(_ values: [Any?]) -> String? {
+        for value in values {
+            if let label = planLabel(value) {
+                return label
+            }
+        }
+        return nil
+    }
+
+    private static func isUnusablePlanToken(_ text: String) -> Bool {
+        var compact = text.uppercased()
+            .replacingOccurrences(of: "_", with: "")
+            .replacingOccurrences(of: "-", with: "")
+            .replacingOccurrences(of: " ", with: "")
+        let prefixes = [
+            "MEMBERSHIPLEVEL", "MEMBERSHIPTYPE", "MEMBERSHIP",
+            "SUBSCRIPTIONTYPE", "SUBSCRIPTION",
+            "PLANTYPE", "PLAN", "TIER", "LEVEL"
+        ]
+        var stripped = true
+        while stripped {
+            stripped = false
+            for prefix in prefixes where compact.hasPrefix(prefix) {
+                compact = String(compact.dropFirst(prefix.count))
+                stripped = true
+                break
+            }
+        }
+        return compact.isEmpty || [
+            "UNSPECIFIED", "UNKNOWN", "NONE", "NULL", "NIL", "NA", "0"
+        ].contains(compact)
+    }
+
     public static func isoDate(_ raw: String?) -> Date? {
         guard let raw else { return nil }
         let formatter = ISO8601DateFormatter()

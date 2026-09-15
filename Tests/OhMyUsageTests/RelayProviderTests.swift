@@ -217,6 +217,30 @@ final class RelayProviderTests: XCTestCase {
         XCTAssertEqual(manifest.postprocessID, .quotaDisplayStatus)
     }
 
+    func testGenericSub2APIManifestUsesAPIKeyAndUsageEndpoint() {
+        let manifest = RelayAdapterRegistry.shared.manifest(
+            for: "https://sub2api.example.com",
+            preferredID: "generic-sub2api"
+        )
+
+        XCTAssertEqual(manifest.id, "generic-sub2api")
+        XCTAssertEqual(manifest.match.defaultTokenChannelEnabled, false)
+        XCTAssertEqual(manifest.match.defaultBalanceChannelEnabled, true)
+        XCTAssertEqual(manifest.setup?.requiredInputs, [.displayName, .baseURL, .balanceAuth])
+        XCTAssertFalse(manifest.setup?.requiredInputs.contains(.userID) ?? true)
+        XCTAssertEqual(manifest.balanceRequest.path, "/v1/usage")
+        XCTAssertNil(manifest.balanceRequest.userIDHeader)
+        XCTAssertNil(manifest.tokenRequest)
+        XCTAssertEqual(manifest.postprocessID, .sub2apiUsage)
+        XCTAssertEqual(manifest.displayMode, .balance)
+        XCTAssertNotNil(manifest.setup?.diagnosticHints?.zhHans)
+    }
+
+    func testRegistryFallsBackToGenericNewAPIForUnknownHost() {
+        let manifest = RelayAdapterRegistry.shared.manifest(for: "https://unknown-relay.example.net")
+        XCTAssertEqual(manifest.id, "generic-newapi")
+    }
+
     func testRegistryMatchesDeepseekManifest() {
         let manifest = RelayAdapterRegistry.shared.manifest(for: "https://platform.deepseek.com")
         XCTAssertEqual(manifest.id, "deepseek")
@@ -852,6 +876,118 @@ final class RelayProviderTests: XCTestCase {
         XCTAssertEqual(snapshot.limit ?? -1, 120, accuracy: 0.000001)
         XCTAssertEqual(snapshot.unit, "$")
         XCTAssertEqual(snapshot.rawMeta["account.quotaPerUnit"], "1.0")
+    }
+
+    func testGenericSub2APIFetchReadsWalletBalanceWithoutStatusOrUserID() async throws {
+        let snapshot = try await fetchGenericSub2APISnapshot(
+            payload: #"{"remaining":12.5,"unit":"USD","planName":"Wallet"}"#
+        )
+
+        XCTAssertEqual(snapshot.remaining ?? -1, 12.5, accuracy: 0.000001)
+        XCTAssertEqual(snapshot.used ?? -1, 0, accuracy: 0.000001)
+        XCTAssertEqual(snapshot.limit ?? -1, 12.5, accuracy: 0.000001)
+        XCTAssertEqual(snapshot.unit, "USD")
+        XCTAssertEqual(snapshot.accountLabel, "Wallet")
+        XCTAssertEqual(snapshot.rawMeta["account.sub2apiMode"], "wallet")
+        XCTAssertNil(snapshot.rawMeta["account.userID"])
+        XCTAssertTrue(snapshot.quotaWindows.isEmpty)
+    }
+
+    func testGenericSub2APIFetchReadsQuotaMode() async throws {
+        let snapshot = try await fetchGenericSub2APISnapshot(
+            payload: #"{"quota":{"remaining":40,"used":60,"limit":100,"unit":"USD"}}"#
+        )
+
+        XCTAssertEqual(snapshot.remaining ?? -1, 40, accuracy: 0.000001)
+        XCTAssertEqual(snapshot.used ?? -1, 60, accuracy: 0.000001)
+        XCTAssertEqual(snapshot.limit ?? -1, 100, accuracy: 0.000001)
+        XCTAssertEqual(snapshot.accountLabel, "API Key 配额")
+        XCTAssertEqual(snapshot.rawMeta["account.sub2apiMode"], "quota")
+    }
+
+    func testGenericSub2APIFetchReadsSubscriptionWindows() async throws {
+        let payload = """
+        {
+          "remaining": 8,
+          "unit": "USD",
+          "planName": "Claude",
+          "subscription": {
+            "daily_usage_usd": 2,
+            "daily_limit_usd": 10,
+            "weekly_usage_usd": 5,
+            "weekly_limit_usd": 20,
+            "monthly_usage_usd": 12,
+            "monthly_limit_usd": 40
+          }
+        }
+        """
+        let snapshot = try await fetchGenericSub2APISnapshot(payload: payload)
+
+        XCTAssertEqual(snapshot.remaining ?? -1, 8, accuracy: 0.000001)
+        XCTAssertEqual(snapshot.used ?? -1, 12, accuracy: 0.000001)
+        XCTAssertEqual(snapshot.limit ?? -1, 40, accuracy: 0.000001)
+        XCTAssertEqual(snapshot.accountLabel, "Claude")
+        XCTAssertEqual(snapshot.rawMeta["account.sub2apiMode"], "subscription")
+        XCTAssertEqual(snapshot.quotaWindows.count, 3)
+        XCTAssertEqual(snapshot.quotaWindows.first?.title, "Daily")
+        XCTAssertEqual(snapshot.quotaWindows.first?.usedPercent ?? -1, 20, accuracy: 0.001)
+    }
+
+    func testGenericSub2APIFetchTreatsNegativeRemainingAsUnlimited() async throws {
+        let payload = """
+        {
+          "remaining": -1,
+          "unit": "USD",
+          "planName": "订阅",
+          "subscription": {
+            "daily_usage_usd": 1,
+            "daily_limit_usd": 10
+          }
+        }
+        """
+        let snapshot = try await fetchGenericSub2APISnapshot(payload: payload)
+
+        XCTAssertNil(snapshot.remaining)
+        XCTAssertNil(snapshot.used)
+        XCTAssertNil(snapshot.limit)
+        XCTAssertEqual(snapshot.accountLabel, "订阅")
+        XCTAssertTrue(snapshot.note.contains("无限制"))
+        XCTAssertEqual(snapshot.quotaWindows.count, 1)
+    }
+
+    func testGenericSub2APIFetchPicksTightestRateLimitWindow() async throws {
+        let payload = """
+        {
+          "rate_limits": [
+            {"window":"5h","remaining":8,"used":2,"limit":10},
+            {"window":"7d","remaining":20,"used":80,"limit":100}
+          ]
+        }
+        """
+        let snapshot = try await fetchGenericSub2APISnapshot(payload: payload)
+
+        XCTAssertEqual(snapshot.remaining ?? -1, 20, accuracy: 0.000001)
+        XCTAssertEqual(snapshot.used ?? -1, 80, accuracy: 0.000001)
+        XCTAssertEqual(snapshot.limit ?? -1, 100, accuracy: 0.000001)
+        XCTAssertEqual(snapshot.accountLabel, "速率限制")
+        XCTAssertEqual(snapshot.rawMeta["account.sub2apiMode"], "rate_limit")
+        XCTAssertEqual(snapshot.quotaWindows.count, 2)
+    }
+
+    func testGenericSub2APIFetchRejectsErrorPayloadWithoutStatusLookup() async {
+        do {
+            _ = try await fetchGenericSub2APISnapshot(
+                payload: #"{"error":{"message":"invalid api key"}}"#
+            )
+            XCTFail("Expected auth failure")
+        } catch let error as ProviderError {
+            guard case .unauthorizedDetail(let message) = error else {
+                return XCTFail("Unexpected error \(error)")
+            }
+            XCTAssertTrue(message.contains("invalid api key"))
+        } catch {
+            XCTFail("Unexpected error \(error)")
+        }
     }
 
     func testGenericNewAPIOverrideMigrationAppliesRawExpressions() {
@@ -3090,6 +3226,47 @@ final class RelayProviderTests: XCTestCase {
             staticHeaders: nil
         )
         return descriptor
+    }
+
+    private func fetchGenericSub2APISnapshot(payload: String) async throws -> UsageSnapshot {
+        let service = "OhMyUsageTests-\(UUID().uuidString)"
+        let keychain = makeTestKeychain()
+        XCTAssertTrue(
+            keychain.saveToken(
+                "sk-test",
+                service: service,
+                account: "sub2api.example.com/system-token"
+            )
+        )
+
+        RelayMockURLProtocol.requestHandler = { request in
+            XCTAssertEqual(request.httpMethod, "GET")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer sk-test")
+            XCTAssertNil(request.value(forHTTPHeaderField: "New-Api-User"))
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            switch request.url?.path {
+            case "/v1/usage":
+                return (response, Data(payload.utf8))
+            default:
+                XCTFail("Unexpected path \(request.url?.path ?? "nil")")
+                return (response, Data(#"{}"#.utf8))
+            }
+        }
+        defer { RelayMockURLProtocol.requestHandler = nil }
+
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [RelayMockURLProtocol.self]
+        let session = URLSession(configuration: config)
+        let provider = RelayProvider(
+            descriptor: makeRelayDescriptor(
+                service: service,
+                adapterID: "generic-sub2api",
+                baseURL: "https://sub2api.example.com"
+            ),
+            session: session,
+            keychain: keychain
+        )
+        return try await provider.fetch()
     }
 
     private func relayIntentName(_ intent: BrowserCredentialAccessIntent) -> String {

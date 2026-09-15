@@ -301,6 +301,7 @@ public struct RelayExtractManifest: Codable, Equatable, Sendable {
 
 public enum RelayPostprocessID: String, Codable, Equatable, Sendable {
     case quotaDisplayStatus
+    case sub2apiUsage
 }
 
 public enum RelayDisplayMode: String, Codable, Equatable, Sendable {

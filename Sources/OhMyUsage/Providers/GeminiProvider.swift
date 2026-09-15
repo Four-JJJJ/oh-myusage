@@ -163,7 +163,7 @@ final class GeminiProvider: UsageProvider, @unchecked Sendable {
             body: loadCodeAssistBody(projectID: settings.selectedProject)
         )
         let resolvedProjectID = resolveProjectID(settings: settings, codeAssistRoot: codeAssist)
-        let plan = Self.parsePlan(from: codeAssist) ?? "unknown"
+        let plan = Self.parsePlan(from: codeAssist) ?? ""
 
         var projectLabel = resolvedProjectID
         if let projectID = resolvedProjectID {
@@ -635,7 +635,7 @@ final class GeminiProvider: UsageProvider, @unchecked Sendable {
     ) throws -> UsageSnapshot {
         try parseQuotaSnapshot(
             root: root,
-            plan: parsePlan(from: codeAssistRoot) ?? "unknown",
+            plan: parsePlan(from: codeAssistRoot) ?? "",
             descriptor: descriptor,
             sourceLabel: sourceLabel,
             accountLabel: accountLabel,
@@ -684,7 +684,10 @@ final class GeminiProvider: UsageProvider, @unchecked Sendable {
         }
 
         let remaining = windows.map(\.remainingPercent).min() ?? 0
-        var extras: [String: String] = ["planType": plan]
+        var extras: [String: String] = [:]
+        if let displayPlan = OfficialValueParser.nonPlaceholderString(plan) {
+            extras["planType"] = displayPlan
+        }
         if let projectLabel, !projectLabel.isEmpty {
             extras["project"] = projectLabel
         }
@@ -698,7 +701,7 @@ final class GeminiProvider: UsageProvider, @unchecked Sendable {
             limit: 100,
             unit: "%",
             updatedAt: Date(),
-            note: buildNote(plan: plan, windows: windows, projectLabel: projectLabel),
+            note: buildNote(plan: OfficialValueParser.nonPlaceholderString(plan), windows: windows, projectLabel: projectLabel),
             quotaWindows: windows,
             sourceLabel: sourceLabel,
             accountLabel: accountLabel,
@@ -710,15 +713,18 @@ final class GeminiProvider: UsageProvider, @unchecked Sendable {
     private static func parsePlan(from root: [String: Any]) -> String? {
         let currentTier = root["currentTier"] as? [String: Any]
         let paidTier = root["paidTier"] as? [String: Any]
-        let raw = firstNonEmptyString([
+        let raw = OfficialValueParser.firstPlanLabel([
             root["tierId"],
             root["tier"],
             root["plan"],
             root["codeAssistTier"],
+            root["subscriptionTier"],
             currentTier?["id"],
             currentTier?["name"],
+            currentTier?["displayName"],
             paidTier?["id"],
             paidTier?["name"],
+            paidTier?["displayName"],
         ])
         guard let raw else { return nil }
         switch raw.lowercased() {
@@ -888,14 +894,19 @@ final class GeminiProvider: UsageProvider, @unchecked Sendable {
         return nil
     }
 
-    private static func buildNote(plan: String, windows: [UsageQuotaWindow], projectLabel: String?) -> String {
+    private static func buildNote(plan: String?, windows: [UsageQuotaWindow], projectLabel: String?) -> String {
         let details = windows
             .map { "\($0.title) \(Int($0.remainingPercent.rounded()))%" }
             .joined(separator: " | ")
-        if let projectLabel, !projectLabel.isEmpty {
-            return "Plan \(plan) | \(projectLabel) | \(details)"
+        var parts: [String] = []
+        if let plan {
+            parts.append("Plan \(plan)")
         }
-        return "Plan \(plan) | \(details)"
+        if let projectLabel, !projectLabel.isEmpty {
+            parts.append(projectLabel)
+        }
+        parts.append(details)
+        return parts.joined(separator: " | ")
     }
 
     private static func buildRawModelMeta(entries: [GeminiQuotaEntry]) -> [String: String] {

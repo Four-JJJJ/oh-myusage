@@ -174,6 +174,45 @@ final class SettingsDraftModelsTests: XCTestCase {
         XCTAssertEqual(seed.unit, "quota")
     }
 
+    func testRelayDraftSeedsGenericSub2APIDefaultsWithoutUserID() {
+        let provider = ProviderDescriptor.makeOpenRelay(
+            name: "Demo Sub2API",
+            baseURL: "https://sub2api.example.com",
+            preferredAdapterID: "generic-sub2api"
+        )
+
+        let draft = RelaySettingsDraft(provider: provider)
+        let seed = RelaySettingsDraftSeed(provider: provider)
+
+        XCTAssertEqual(draft.preferredAdapterID, "generic-sub2api")
+        XCTAssertFalse(draft.tokenUsageEnabled)
+        XCTAssertTrue(draft.accountEnabled)
+        XCTAssertEqual(draft.authHeader, "Authorization")
+        XCTAssertEqual(draft.authScheme, "Bearer")
+        XCTAssertEqual(draft.userID, "")
+        XCTAssertEqual(draft.endpointPath, "/v1/usage")
+        XCTAssertEqual(draft.remainingJSONPath, "coalesce(quota.remaining,remaining)")
+        XCTAssertEqual(seed.preferredAdapterID, "generic-sub2api")
+        XCTAssertEqual(seed.endpointPath, "/v1/usage")
+        XCTAssertEqual(seed.userID, "")
+        XCTAssertFalse(RelayAdapterRegistry.shared.manifest(id: "generic-sub2api")?.setup?.requiredInputs.contains(.userID) ?? true)
+    }
+
+    func testRelayProviderEditorDraftSeedsGenericSub2APITemplate() {
+        let provider = ProviderDescriptor.makeOpenRelay(
+            name: "Demo Sub2API",
+            baseURL: "https://sub2api.example.com",
+            preferredAdapterID: "generic-sub2api"
+        )
+
+        var state = RelayProviderEditorDraft()
+        state.seed(from: provider)
+
+        XCTAssertEqual(state.selectedRelayTemplateInputs[provider.id], "generic-sub2api")
+        XCTAssertEqual(state.userIDInputs[provider.id], "")
+        XCTAssertEqual(state.endpointPathInputs[provider.id], "/v1/usage")
+    }
+
     func testRelayDescriptorResolverUsesInjectedRegistryForViewConfig() {
         let manifest = RelayAdapterManifest(
             id: "draft-template",

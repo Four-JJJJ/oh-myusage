@@ -451,7 +451,17 @@ final class ZaiProvider: UsageProvider, @unchecked Sendable {
         let entries = ((subscriptionRoot["data"] as? [Any]) ?? []).compactMap { $0 as? [String: Any] }
         let subscription = entries.first(where: { ($0["inCurrentPeriod"] as? Bool) == true }) ?? entries.first
         return ZaiSubscriptionMetadata(
-            planName: OfficialValueParser.string(subscription?["productName"]),
+            planName: OfficialValueParser.firstPlanLabel([
+                subscription?["productName"],
+                subscription?["product_name"],
+                subscription?["planName"],
+                subscription?["plan_name"],
+                subscription?["displayName"],
+                subscription?["display_name"],
+                subscription?["name"],
+                subscription?["tier"],
+                subscription?["level"]
+            ]),
             nextRenewTime: parseDateOnly(OfficialValueParser.string(subscription?["nextRenewTime"]))
         )
     }
@@ -461,7 +471,7 @@ final class ZaiProvider: UsageProvider, @unchecked Sendable {
         quotaRoot: [String: Any],
         descriptor: ProviderDescriptor
     ) throws -> UsageSnapshot {
-        let plan = subscription?.planName ?? "unknown"
+        let plan = OfficialValueParser.nonPlaceholderString(subscription?.planName)
         let monthlyReset = subscription?.nextRenewTime
         let limits = ((quotaRoot["data"] as? [String: Any])?["limits"] as? [Any])?.compactMap { $0 as? [String: Any] } ?? []
 
@@ -519,6 +529,11 @@ final class ZaiProvider: UsageProvider, @unchecked Sendable {
         }
 
         let remaining = windows.map(\.remainingPercent).min() ?? 0
+        let usageNote = windows.map { "\($0.title) \(Int($0.remainingPercent.rounded()))%" }.joined(separator: " | ")
+        var extras: [String: String] = [:]
+        if let plan {
+            extras["planType"] = plan
+        }
         return UsageSnapshot(
             source: descriptor.id,
             status: remaining <= descriptor.threshold.lowRemaining ? .warning : .ok,
@@ -527,11 +542,11 @@ final class ZaiProvider: UsageProvider, @unchecked Sendable {
             limit: 100,
             unit: "%",
             updatedAt: Date(),
-            note: "Plan \(plan) | " + windows.map { "\($0.title) \(Int($0.remainingPercent.rounded()))%" }.joined(separator: " | "),
+            note: plan.map { "Plan \($0) | \(usageNote)" } ?? usageNote,
             quotaWindows: windows,
             sourceLabel: "API",
             accountLabel: nil,
-            extras: ["planType": plan],
+            extras: extras,
             rawMeta: [:]
         )
     }

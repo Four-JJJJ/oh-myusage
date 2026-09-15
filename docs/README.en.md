@@ -4,6 +4,12 @@ A macOS menu bar app for monitoring AI plan limits, credits, relay balances, and
 
 [Download Latest Release](https://github.com/Four-JJJJ/oh-myusage/releases/latest) · [Install Guide](DOWNLOAD.md) · [Supported Services](PROVIDERS.md) · [中文说明](../README.md)
 
+## V2.5.2
+
+- Make plan names readable across official providers: map `PLAN_` / `LEVEL_` codes to Plus, Pro, SuperGrok, and Kimi music-term tiers; hide placeholders such as `unknown`
+- Add a generic Sub2API relay template for group API keys and `/v1/usage`
+- Show a 24-hour trend chart in local usage history
+
 ## V2.5.1
 
 - Add official Grok Bot usage from the Grok Bot desktop app or Cursor session
@@ -60,6 +66,7 @@ Built-in templates currently include:
 - `platform.deepseek.com`
 - `dragoncode.codes`
 - generic New API compatible sites
+- generic Sub2API compatible sites
 
 ### 3. Practical credential modes
 

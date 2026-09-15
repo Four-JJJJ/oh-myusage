@@ -30,7 +30,9 @@ extension SettingsView {
 
     var newAPICustomSection: some View {
         let selectedPreset = relayBuiltInPresets.first(where: { $0.id == newRelaySiteDraft.selectedPresetID })
-        let selectedManifest = selectedPreset?.manifest ?? relaySiteTemplates.first?.manifest
+        let selectedManifest = selectedPreset?.manifest
+            ?? relaySiteTemplates.first(where: { $0.id == newRelaySiteDraft.templateID })?.manifest
+            ?? relaySiteTemplates.first?.manifest
         let selectedRequiredInputs = selectedManifest.map {
             relayRequiredInputs(
                 for: $0,
@@ -47,9 +49,16 @@ extension SettingsView {
                 .font(settingsLabelFont)
                 .foregroundStyle(settingsHintColor)
 
-            Text(relaySiteTemplates.first?.displayName ?? "NewAPI")
-                .font(settingsBodyFont)
-                .foregroundStyle(settingsBodyColor)
+            Picker("", selection: Binding(
+                get: { newRelaySiteDraft.templateID },
+                set: { applyGenericRelaySiteTemplate($0) }
+            )) {
+                ForEach(relaySiteTemplates) { preset in
+                    Text(relayGenericSiteTypeTitle(for: preset.id)).tag(preset.id)
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.menu)
 
             HStack(spacing: 8) {
                 if showNameField {
@@ -98,7 +107,7 @@ extension SettingsView {
 
     var newAPISiteDialog: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(viewModel.language == .zhHans ? "添加 NewAPI 站点" : "Add NewAPI Site")
+            Text(viewModel.language == .zhHans ? "添加站点" : "Add Site")
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(settingsBodyColor)
 
@@ -228,19 +237,28 @@ extension SettingsView {
                 )
             }
             .sorted { lhs, rhs in
-                switch (lhs.id == "generic-newapi", rhs.id == "generic-newapi") {
+                switch (
+                    RelayAdapterRegistry.isGenericRelaySiteTemplate(lhs.id),
+                    RelayAdapterRegistry.isGenericRelaySiteTemplate(rhs.id)
+                ) {
                 case (true, false):
                     return false
                 case (false, true):
                     return true
                 default:
+                    if lhs.id == RelayAdapterRegistry.genericNewAPIAdapterID {
+                        return true
+                    }
+                    if rhs.id == RelayAdapterRegistry.genericNewAPIAdapterID {
+                        return false
+                    }
                     return lhs.displayName.localizedCaseInsensitiveCompare(rhs.displayName) == .orderedAscending
                 }
             }
     }
 
     var relaySiteTemplates: [RelayTemplatePreset] {
-        relayTemplatePresets.filter { $0.id == "generic-newapi" }
+        relayTemplatePresets.filter { RelayAdapterRegistry.isGenericRelaySiteTemplate($0.id) }
     }
 
     var relayBuiltInPresets: [RelayTemplatePreset] {
@@ -277,18 +295,38 @@ extension SettingsView {
         return normalizedHost.isEmpty ? nil : "https://\(normalizedHost)"
     }
 
-    func applyNewRelayTemplate(_ templateID: String) {
+    func relayGenericSiteTypeTitle(for templateID: String) -> String {
+        switch templateID {
+        case RelayAdapterRegistry.genericSub2APIAdapterID:
+            return "Sub2API"
+        default:
+            return "NewAPI"
+        }
+    }
+
+    func applyNewRelayTemplate(_ templateID: String, preserveDraftInputs: Bool = false) {
+        let preservedBaseURL = newRelaySiteDraft.baseURL
+        let preservedName = newRelaySiteDraft.providerName
         newRelaySiteDraft.templateID = templateID
         newRelaySiteDraft.testState = .unverified
         guard let preset = relaySiteTemplates.first(where: { $0.id == templateID }) else { return }
-        if let suggestedBaseURL = preset.suggestedBaseURL {
+        if preserveDraftInputs {
+            newRelaySiteDraft.baseURL = preservedBaseURL
+            newRelaySiteDraft.providerName = preservedName
+        } else if let suggestedBaseURL = preset.suggestedBaseURL {
             newRelaySiteDraft.baseURL = suggestedBaseURL
         } else {
             newRelaySiteDraft.baseURL = ""
         }
-        if newRelaySiteDraft.selectedPresetID == nil {
+        if newRelaySiteDraft.selectedPresetID == nil, !preserveDraftInputs {
             newRelaySiteDraft.providerName = ""
         }
+    }
+
+    func applyGenericRelaySiteTemplate(_ templateID: String) {
+        applyNewRelayTemplate(templateID, preserveDraftInputs: true)
+        newRelaySiteDraft.credentialInput = ""
+        newRelaySiteDraft.userID = ""
     }
 
     func applyRelayPreset(_ preset: RelayTemplatePreset) {

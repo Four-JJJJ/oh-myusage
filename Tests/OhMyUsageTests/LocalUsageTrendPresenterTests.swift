@@ -128,6 +128,52 @@ final class LocalUsageTrendPresenterTests: XCTestCase {
         XCTAssertEqual(state.staleFallbackText, "Refresh failed, showing cached data: read failed")
     }
 
+    func testPointTooltipIncludesTokenBreakdownAndHourRange() {
+        let startAt = Date(timeIntervalSince1970: 1_704_067_200)
+        let tooltip = LocalUsageTrendPresenter.pointTooltip(
+            for: LocalUsageTrendPoint(
+                id: "h23",
+                startAt: startAt,
+                totalTokens: 65_300,
+                responses: 8,
+                inputTokens: 40_000,
+                outputTokens: 12_300,
+                cacheReadTokens: 10_000,
+                cacheWriteTokens: 3_000
+            ),
+            language: .zhHans,
+            localizedText: { zhHans, _ in zhHans }
+        )
+
+        XCTAssertEqual(tooltip.title, LocalUsageTrendPresenter.hourRangeTitle(startAt: startAt))
+        XCTAssertEqual(
+            tooltip.rows.map(\.id),
+            ["total", "input", "output", "cacheRead", "cacheWrite", "responses"]
+        )
+        XCTAssertEqual(tooltip.rows.map(\.label), ["总Token", "输入", "输出", "缓存命中", "缓存写入", "请求"])
+        XCTAssertEqual(tooltip.rows.map(\.value), ["6.5万", "4万", "1.2万", "1万", "3000", "8 次"])
+    }
+
+    func testPointTooltipUsesEnglishLabelsAndCompactValues() {
+        let tooltip = LocalUsageTrendPresenter.pointTooltip(
+            for: LocalUsageTrendPoint(
+                id: "h1",
+                startAt: Date(timeIntervalSince1970: 1),
+                totalTokens: 2_981,
+                responses: 12,
+                inputTokens: 2_000,
+                outputTokens: 700,
+                cacheReadTokens: 200,
+                cacheWriteTokens: 81
+            ),
+            language: .en,
+            localizedText: { _, english in english }
+        )
+
+        XCTAssertEqual(tooltip.rows.map(\.label), ["Total", "Input", "Output", "Cache Hit", "Cache Write", "Requests"])
+        XCTAssertEqual(tooltip.rows.map(\.value), ["3K", "2K", "700", "200", "81", "12 req"])
+    }
+
     func testHasDataReadsSummaryPeriodsAndTrendPoints() {
         XCTAssertFalse(LocalUsageTrendPresenter.hasData(Self.emptySummary()))
 

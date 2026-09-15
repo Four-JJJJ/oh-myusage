@@ -581,8 +581,8 @@ final class QwenProvider: UsageProvider, @unchecked Sendable {
     /// 订阅信息里的套餐档位：specType/specCode（lite/standard/pro），取第一个非空值并首字母大写。
     private static func planLabel(from containers: [[String: Any]]) -> String? {
         for container in containers {
-            for key in ["specType", "specCode", "planType", "commodityName"] {
-                if let raw = OfficialValueParser.nonPlaceholderString(container[key]) {
+            for key in ["specType", "specCode", "planType", "commodityName", "specName", "skuName", "productName", "displayName"] {
+                if let raw = OfficialValueParser.planLabel(container[key]) {
                     return raw.prefix(1).uppercased() + raw.dropFirst()
                 }
             }

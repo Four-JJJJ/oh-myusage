@@ -180,7 +180,8 @@ enum PlanTypeDisplayFormatter {
     ]
 
     private static let hiddenValues: Set<String> = [
-        "-", "unknown", "undefined", "n/a", "na", "none", "null"
+        "-", "--", "unknown", "undefined", "n/a", "na", "none", "null",
+        "nil", "unspecified", "(null)", "(unknown)"
     ]
 
     static func supportsPlanType(providerType: ProviderType) -> Bool {
@@ -198,16 +199,20 @@ enum PlanTypeDisplayFormatter {
             guard !cleaned.isEmpty else {
                 return nil
             }
-            if hiddenValues.contains(cleaned.lowercased()) {
+            if isHiddenPlanValue(cleaned) {
                 return nil
             }
             return cleaned
         }
 
-        if hiddenValues.contains(raw.lowercased()) {
+        if isHiddenPlanValue(raw) {
             return nil
         }
-        return raw
+        let stripped = stripPlanEnumPrefix(raw)
+        if stripped.isEmpty || isHiddenPlanValue(stripped) {
+            return nil
+        }
+        return stripped
     }
 
     static func resolvedPlanType(
@@ -225,21 +230,92 @@ enum PlanTypeDisplayFormatter {
         return normalizedDisplayPlanType(resolved, providerType: providerType)
     }
 
+    private static func isHiddenPlanValue(_ value: String) -> Bool {
+        hiddenValues.contains(value.lowercased())
+    }
+
+    private static func stripPlanEnumPrefix(_ value: String) -> String {
+        let prefixes = [
+            "MEMBERSHIP_LEVEL_", "MEMBERSHIP_TYPE_", "MEMBERSHIP_",
+            "SUBSCRIPTION_TYPE_", "SUBSCRIPTION_",
+            "PLAN_TYPE_", "PLAN_", "TIER_", "LEVEL_"
+        ]
+        var current = value
+        while true {
+            let uppercase = current.uppercased()
+            var matched = false
+            for prefix in prefixes where uppercase.hasPrefix(prefix) {
+                current = String(current.dropFirst(prefix.count))
+                    .trimmingCharacters(in: CharacterSet(charactersIn: "_- "))
+                matched = true
+                break
+            }
+            if !matched || current.isEmpty {
+                break
+            }
+        }
+        return current
+    }
+
     private static func normalizedDisplayPlanType(_ value: String, providerType: ProviderType) -> String {
         switch providerType {
-        case .codex, .claude, .gemini, .copilot, .ollamaCloud:
-            return titleCaseASCIIWords(value)
-        case .cursor:
-            return normalizedCursorPlanType(value)
         case .kimi:
             return normalizedKimiPlanType(value)
-        default:
+        case .cursor:
+            return normalizedCursorPlanType(value)
+        case .grok, .grokBot:
+            return normalizedGrokPlanType(value)
+        case .zai, .amp, .microsoftCopilot:
             return value
+        case .trae:
+            return mappedCommonPlanType(value) ?? value
+        default:
+            return mappedCommonPlanType(value)
+                ?? titleCaseASCIIWords(value.replacingOccurrences(of: "_", with: " "))
         }
     }
 
+    private static func mappedCommonPlanType(_ value: String) -> String? {
+        switch compactPlanKey(value) {
+        case "FREE", "HOBBY":
+            return "Free"
+        case "PLUS", "PLUSPLAN", "CHATGPTPLUS":
+            return "Plus"
+        case "PRO":
+            return "Pro"
+        case "PROPLUS", "PRO+":
+            return "Pro+"
+        case "MAX":
+            return "Max"
+        case "ULTRA":
+            return "Ultra"
+        case "TEAM", "TEAMS":
+            return "Teams"
+        case "BUSINESS", "BIZ":
+            return "Business"
+        case "ENTERPRISE":
+            return "Enterprise"
+        case "STANDARD":
+            return "Standard"
+        case "LITE":
+            return "Lite"
+        case "TRIAL":
+            return "Trial"
+        case "INDIVIDUAL":
+            return "Individual"
+        default:
+            return nil
+        }
+    }
+
+    private static func compactPlanKey(_ value: String) -> String {
+        let uppercase = value.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        let separators = CharacterSet(charactersIn: " _-")
+        return uppercase.components(separatedBy: separators).filter { !$0.isEmpty }.joined()
+    }
+
     private static func normalizedCursorPlanType(_ value: String) -> String {
-        switch normalizeCursorPlanKey(value) {
+        switch compactPlanKey(value) {
         case "FREE", "HOBBY":
             return "Free"
         case "PRO":
@@ -255,26 +331,40 @@ enum PlanTypeDisplayFormatter {
         case "ENTERPRISE":
             return "Enterprise"
         default:
-            return titleCaseASCIIWords(value)
+            return titleCaseASCIIWords(value.replacingOccurrences(of: "_", with: " "))
         }
     }
 
-    private static func normalizeCursorPlanKey(_ value: String) -> String {
-        let uppercase = value.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
-        let separators = CharacterSet(charactersIn: " _-")
-        return uppercase.components(separatedBy: separators).filter { !$0.isEmpty }.joined()
+    private static func normalizedGrokPlanType(_ value: String) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        switch compactPlanKey(trimmed) {
+        case "SUPERGROKPLUS", "GROKPLUS", "GROK+", "SUPERGROK+":
+            return "SuperGrok Plus"
+        case "SUPERGROK", "GROKPRO":
+            return "SuperGrok"
+        default:
+            break
+        }
+        let lower = trimmed.lowercased()
+        if lower.hasPrefix("cursor") || lower.hasPrefix("supergrok") {
+            return trimmed
+        }
+        return mappedCommonPlanType(trimmed) ?? trimmed
     }
 
     private static func normalizedKimiPlanType(_ value: String) -> String {
         let normalizedKey = normalizeKimiPlanKey(value)
+        // Current `/coding/v1/usages` enums (LEVEL_BASIC / LEVEL_STANDARD / …)
+        // plus the older numeric `user_level` codes (10 / 15 / 20 / 25 / 27).
         let mapping: [String: String] = [
             "FREE": "Adagio",
             "10": "Adagio",
             "ADAGIO": "Adagio",
+            "BASIC": "Adagio",
             "TRIAL": "Andante",
             "15": "Andante",
             "ANDANTE": "Andante",
-            "BASIC": "Moderato",
+            "STANDARD": "Moderato",
             "20": "Moderato",
             "MODERATO": "Moderato",
             "INTERMEDIATE": "Allegretto",
@@ -282,9 +372,30 @@ enum PlanTypeDisplayFormatter {
             "ALLEGRETTO": "Allegretto",
             "ADVANCED": "Allegro",
             "27": "Allegro",
-            "ALLEGRO": "Allegro"
+            "ALLEGRO": "Allegro",
+            "PREMIUM": "Vivace",
+            "VIVACE": "Vivace"
         ]
-        return mapping[normalizedKey] ?? value
+        if let mapped = mapping[normalizedKey] {
+            return mapped
+        }
+        let stripped = strippedKimiPlanLabel(value)
+        if stripped == stripped.uppercased(),
+           stripped.rangeOfCharacter(from: .letters) != nil {
+            return titleCaseASCIIWords(stripped.replacingOccurrences(of: "_", with: " "))
+        }
+        return value
+    }
+
+    private static func strippedKimiPlanLabel(_ value: String) -> String {
+        var body = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        let uppercase = body.uppercased()
+        if uppercase.hasPrefix("MEMBERSHIP_LEVEL_") {
+            body = String(body.dropFirst("MEMBERSHIP_LEVEL_".count))
+        } else if uppercase.hasPrefix("LEVEL_") {
+            body = String(body.dropFirst("LEVEL_".count))
+        }
+        return body.replacingOccurrences(of: "_", with: " ")
     }
 
     private static func normalizeKimiPlanKey(_ value: String) -> String {
@@ -364,6 +475,20 @@ enum LocalTrendValueFormatter {
             return "\(compactValue)次"
         case (.responses, .en):
             return "\(compactValue) req"
+        }
+    }
+
+    static func responseCountText(_ value: Int, language: AppLanguage) -> String {
+        let compact = compactNumber(max(0, value), language: language)
+        switch language {
+        case .zhHans:
+            if let last = compact.last, last == "万" || last == "亿" {
+                let number = String(compact.dropLast())
+                return "\(number) \(last)次"
+            }
+            return "\(compact) 次"
+        case .en:
+            return "\(compact) req"
         }
     }
 

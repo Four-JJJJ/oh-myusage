@@ -374,6 +374,21 @@ extension SettingsView {
 
         settingsConfigurationSection(title: viewModel.localizedText("配置", "Configuration")) {
             settingsConfigurationRows {
+                if newRelaySiteDraft.selectedPresetID == nil {
+                    relayCompactConfigRow(title: viewModel.localizedText("站点类型", "Site Type")) {
+                        relayPillControl(
+                            selection: newRelaySiteDraft.templateID,
+                            options: [
+                                (RelayAdapterRegistry.genericNewAPIAdapterID, "NewAPI"),
+                                (RelayAdapterRegistry.genericSub2APIAdapterID, "Sub2API")
+                            ],
+                            width: 176
+                        ) { selection in
+                            applyGenericRelaySiteTemplate(selection)
+                        }
+                    }
+                }
+
                 relayCompactConfigRow(title: viewModel.localizedText("用量偏好", "Usage Preference")) {
                     relayPillControl(
                         selection: OfficialQuotaDisplayMode.remaining.id,
@@ -534,7 +549,7 @@ extension SettingsView {
             ?? provider.relayManifest
             ?? RelayAdapterRegistry.shared.manifest(for: provider.baseURL ?? "", preferredID: selectedTemplateID)
         let seed = RelaySettingsDraftSeed(provider: provider, preferredAdapterID: selectedTemplateID, manifest: selectedTemplate)
-        let currentPreset = providerAdapterID == "generic-newapi"
+        let currentPreset = RelayAdapterRegistry.isGenericRelaySiteTemplate(providerAdapterID)
             ? nil
             : relayBuiltInPresets.first(where: { $0.id == providerAdapterID })?.manifest
         let tokenChannelEnabled = relayEditorDraft.tokenUsageEnabledInputs[provider.id]
@@ -546,7 +561,9 @@ extension SettingsView {
         let defaultUserID = seed.userID
         let showUserIDField = showBalanceCredential && relayTemplateNeedsManualUserID(selectedTemplate)
         let currentBaseURL = relayEditorDraft.baseURLInputs[provider.id] ?? seed.baseURL
-        let usesGenericTemplate = (relayEditorDraft.selectedRelayTemplateInputs[provider.id] ?? providerAdapterID) == "generic-newapi"
+        let usesGenericTemplate = RelayAdapterRegistry.isGenericRelaySiteTemplate(
+            relayEditorDraft.selectedRelayTemplateInputs[provider.id] ?? providerAdapterID
+        )
         let showNameField = true
         let showBaseURLField = usesGenericTemplate || requiresBaseURLInput(for: selectedTemplate, currentBaseURL: currentBaseURL)
         let tokenSaveButtonTitle = viewModel.language == .zhHans ? "保存" : "Save"
@@ -560,8 +577,11 @@ extension SettingsView {
         let balanceFieldTitle = relayCredentialFieldName(isAccount: true, templateKind: balanceCredentialTemplate.kind)
         let quotaPlaceholder = quotaCredentialTemplate.placeholder
         let balancePlaceholder: String = {
-            if selectedTemplate.id == "generic-newapi", viewModel.language == .zhHans {
+            if selectedTemplate.id == RelayAdapterRegistry.genericNewAPIAdapterID, viewModel.language == .zhHans {
                 return "粘帖Access Token"
+            }
+            if selectedTemplate.id == RelayAdapterRegistry.genericSub2APIAdapterID, viewModel.language == .zhHans {
+                return "粘贴 API Key，例如 sk-..."
             }
             return balanceCredentialTemplate.placeholder
         }()
@@ -571,8 +591,11 @@ extension SettingsView {
             setupHint: relaySetupHint(for: selectedTemplate, field: .quotaAuth)
         )
         let balanceHintLines: [String] = {
-            if selectedTemplate.id == "generic-newapi", viewModel.language == .zhHans {
+            if selectedTemplate.id == RelayAdapterRegistry.genericNewAPIAdapterID, viewModel.language == .zhHans {
                 return ["这里填写Access Token通过个人设置-安全设置-系统访问令牌, 生成令牌"]
+            }
+            if selectedTemplate.id == RelayAdapterRegistry.genericSub2APIAdapterID, viewModel.language == .zhHans {
+                return ["填写 Sub2API 分组 API Key；站点地址填根地址，不要带 /v1。"]
             }
             return relayCredentialHintLines(
                 for: provider,
@@ -637,11 +660,20 @@ extension SettingsView {
                 } else {
                     thirdPartyConfigRow(title: viewModel.text(.relayTemplate)) {
                         Picker("", selection: Binding(
-                            get: { relayEditorDraft.selectedRelayTemplateInputs[provider.id] ?? "generic-newapi" },
-                            set: { relayEditorDraft.selectedRelayTemplateInputs[provider.id] = $0 }
+                            get: {
+                                relayEditorDraft.selectedRelayTemplateInputs[provider.id]
+                                    ?? providerAdapterID
+                            },
+                            set: { newID in
+                                relayEditorDraft.selectedRelayTemplateInputs[provider.id] = newID
+                                if let manifest = relaySiteTemplates.first(where: { $0.id == newID })?.manifest,
+                                   !relayTemplateNeedsManualUserID(manifest) {
+                                    relayEditorDraft.userIDInputs[provider.id] = ""
+                                }
+                            }
                         )) {
                             ForEach(relaySiteTemplates) { preset in
-                                Text(preset.displayName).tag(preset.id)
+                                Text(relayGenericSiteTypeTitle(for: preset.id)).tag(preset.id)
                             }
                         }
                         .labelsHidden()
@@ -744,8 +776,8 @@ extension SettingsView {
                                 ? maskedSecretDots(length: savedBalanceTokenLength)
                                 : balancePlaceholder
 
-                            if selectedTemplate.id == "generic-newapi", let accountAuth {
-                                // Phase 1 试点：generic-newapi 余额凭证行走 spec 驱动的通用 CredentialFieldRow，
+                            if RelayAdapterRegistry.isGenericRelaySiteTemplate(selectedTemplate.id), let accountAuth {
+                                // Phase 1 试点：通用站点余额凭证行走 spec 驱动的通用 CredentialFieldRow，
                                 // 保存仍走同一 facade 入口，行为与原内联实现逐位一致。
                                 let spec = CredentialFieldSpec(
                                     kind: .relayBalanceAuth,
