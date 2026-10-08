@@ -52,25 +52,8 @@ enum MenuSubtitlePresenter {
         }
     }
 
-    static func relayQuotaSubtitle(
-        snapshot: UsageSnapshot?,
-        language: AppLanguage,
-        showExpirationTime: Bool = true
-    ) -> String? {
-        guard showExpirationTime else {
-            return nil
-        }
-        let relayMetadata = RelaySnapshotDisplayMetadata(snapshot: snapshot)
-        guard let raw = relayMetadata.tokenPlanCurrentPeriodEnd else {
-            return nil
-        }
-        switch language {
-        case .zhHans:
-            return "有效期至 \(raw) (UTC)"
-        case .en:
-            return "Valid until \(raw) (UTC)"
-        }
-    }
+    // Absolute plan end dates are no longer rendered under the provider name.
+    // Expiry is shown as a day countdown on the metric clock row instead.
 
     static func codexTeamAliasMap(from snapshots: [UsageSnapshot]) -> [String: String] {
         var teamIDsByEmail: [String: Set<String>] = [:]

@@ -25,6 +25,8 @@ struct MenuQuotaMetric: Identifiable, Equatable {
     var valueTextOverride: String?
     var detailTextOverride: String? = nil
     var kind: UsageQuotaKind?
+    /// When true, `resetAt` is a plan/subscription expiry and renders as "X天到期".
+    var resetIsExpiry: Bool = false
 }
 
 struct MenuQuotaMetricDisplayPresentation: Identifiable, Equatable {
@@ -45,6 +47,7 @@ struct MenuQuotaMetricDisplayPresentation: Identifiable, Equatable {
     var isBlockedByDepletedQuota: Bool
     /// Retained so menu clock ticks can refresh `resetText` without rebuilding cards.
     var resetAt: Date? = nil
+    var resetIsExpiry: Bool = false
 }
 
 enum MenuQuotaPresenter {
@@ -66,6 +69,7 @@ enum MenuQuotaPresenter {
         }
 
         let windows = snapshot.quotaWindows.sorted { metricRank($0.kind) < metricRank($1.kind) }
+        let resetIsExpiry = quotaResetIsExpiry(provider: provider, snapshot: snapshot)
         if provider.relayDisplayMode == .quotaPercent {
             let relayMetadata = RelaySnapshotDisplayMetadata(
                 snapshot: snapshot,
@@ -90,7 +94,8 @@ enum MenuQuotaPresenter {
                         relayMetadata: relayMetadata,
                         language: language
                     ),
-                    kind: quotaMetricKind(for: window, provider: provider)
+                    kind: quotaMetricKind(for: window, provider: provider),
+                    resetIsExpiry: resetIsExpiry
                 )
             }
         }
@@ -99,15 +104,16 @@ enum MenuQuotaPresenter {
             MenuQuotaMetric(
                 id: window.id,
                 title: metricTitle(for: window, provider: provider, language: language, localization: localization),
-                    displayPercent: provider.displaysUsedQuota ? clamp(window.usedPercent) : clamp(window.remainingPercent),
-                    healthPercent: clamp(window.remainingPercent),
-                    resetAt: provider.showsExpirationTimeInMenuBar ? window.resetAt : nil,
-                    isAvailable: true,
-                    valueTextOverride: nil,
-                    detailTextOverride: nil,
-                    kind: quotaMetricKind(for: window, provider: provider)
-                )
-            }
+                displayPercent: provider.displaysUsedQuota ? clamp(window.usedPercent) : clamp(window.remainingPercent),
+                healthPercent: clamp(window.remainingPercent),
+                resetAt: provider.showsExpirationTimeInMenuBar ? window.resetAt : nil,
+                isAvailable: true,
+                valueTextOverride: nil,
+                detailTextOverride: nil,
+                kind: quotaMetricKind(for: window, provider: provider),
+                resetIsExpiry: resetIsExpiry
+            )
+        }
     }
 
     static func visibleMetrics(
@@ -158,12 +164,19 @@ enum MenuQuotaPresenter {
                 resetText = "-"
             } else {
                 resetAt = metric.resetAt
-                resetText = CountdownFormatter.text(
-                    to: metric.resetAt,
-                    now: now,
-                    placeholder: "-",
-                    language: language
-                )
+                resetText = metric.resetIsExpiry
+                    ? CountdownFormatter.expiryText(
+                        to: metric.resetAt,
+                        now: now,
+                        placeholder: "-",
+                        language: language
+                    )
+                    : CountdownFormatter.text(
+                        to: metric.resetAt,
+                        now: now,
+                        placeholder: "-",
+                        language: language
+                    )
             }
 
             return MenuQuotaMetricDisplayPresentation(
@@ -179,7 +192,8 @@ enum MenuQuotaPresenter {
                     in: blockageCandidates,
                     disconnected: disconnected
                 ),
-                resetAt: resetAt
+                resetAt: resetAt,
+                resetIsExpiry: metric.resetIsExpiry
             )
         }
     }
@@ -515,6 +529,26 @@ enum MenuQuotaPresenter {
             return localization.totalUsage
         }
         return rawTitle
+    }
+
+    private static func quotaResetIsExpiry(
+        provider: ProviderDescriptor,
+        snapshot: UsageSnapshot?
+    ) -> Bool {
+        if provider.usesXiaomimimoTokenPlanQuota {
+            return true
+        }
+        guard provider.isRelay else { return false }
+        let relayMetadata = RelaySnapshotDisplayMetadata(
+            snapshot: snapshot,
+            fallbackAdapterID: provider.relayConfig?.adapterID
+        )
+        guard let end = relayMetadata.tokenPlanCurrentPeriodEnd?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+              !end.isEmpty else {
+            return false
+        }
+        return true
     }
 
     private static func quotaValueTextOverride(

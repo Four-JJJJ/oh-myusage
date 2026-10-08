@@ -70,7 +70,7 @@ final class MenuSubtitlePresenterTests: XCTestCase {
         )
     }
 
-    func testRelayQuotaSubtitleFormatsTokenPlanEndDate() {
+    func testRelayQuotaSubtitleNoLongerShowsAbsoluteExpiryDate() {
         let snapshot = UsageSnapshot(
             source: "relay",
             status: .ok,
@@ -86,15 +86,12 @@ final class MenuSubtitlePresenterTests: XCTestCase {
             ]
         )
 
-        XCTAssertEqual(
-            MenuSubtitlePresenter.relayQuotaSubtitle(snapshot: snapshot, language: .zhHans),
-            "有效期至 2026-05-09T00:00:00Z (UTC)"
-        )
+        // Expiry is rendered as "X天到期" on the metric clock row, not under the name.
         XCTAssertNil(
-            MenuSubtitlePresenter.relayQuotaSubtitle(
+            MenuSubtitlePresenter.officialAccountSubtitle(
+                providerType: .relay,
                 snapshot: snapshot,
-                language: .zhHans,
-                showExpirationTime: false
+                showAccountEmail: true
             )
         )
     }

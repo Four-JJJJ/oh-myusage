@@ -85,12 +85,19 @@ enum MenuDashboardStateBuilder {
         language: AppLanguage
     ) {
         for index in metrics.indices {
-            metrics[index].resetText = CountdownFormatter.text(
-                to: metrics[index].resetAt,
-                now: now,
-                placeholder: "-",
-                language: language
-            )
+            metrics[index].resetText = metrics[index].resetIsExpiry
+                ? CountdownFormatter.expiryText(
+                    to: metrics[index].resetAt,
+                    now: now,
+                    placeholder: "-",
+                    language: language
+                )
+                : CountdownFormatter.text(
+                    to: metrics[index].resetAt,
+                    now: now,
+                    placeholder: "-",
+                    language: language
+                )
         }
     }
 
@@ -227,13 +234,7 @@ enum MenuDashboardStateBuilder {
                 now: now
             )
             let baseSubtitle: String?
-            if provider.isRelay {
-                baseSubtitle = MenuSubtitlePresenter.relayQuotaSubtitle(
-                    snapshot: snapshot,
-                    language: language,
-                    showExpirationTime: provider.showsExpirationTimeInMenuBar
-                )
-            } else if provider.family == .official {
+            if provider.family == .official && !provider.isRelay {
                 baseSubtitle = MenuSubtitlePresenter.officialAccountSubtitle(
                     providerType: provider.type,
                     snapshot: snapshot,
@@ -241,11 +242,9 @@ enum MenuDashboardStateBuilder {
                     codexTeamAliases: codexTeamAliases
                 )
             } else {
-                baseSubtitle = MenuSubtitlePresenter.relayQuotaSubtitle(
-                    snapshot: snapshot,
-                    language: language,
-                    showExpirationTime: provider.showsExpirationTimeInMenuBar
-                )
+                // Expiry countdown lives on the metric clock row ("X天到期"),
+                // not as an absolute date under the provider name.
+                baseSubtitle = nil
             }
 
             return .percentage(
