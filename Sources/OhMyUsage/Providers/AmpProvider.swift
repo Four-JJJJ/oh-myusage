@@ -64,9 +64,9 @@ final class AmpProvider: UsageProvider, @unchecked Sendable {
             throw ProviderError.invalidResponse("Amp response missing displayText")
         }
 
-        let freeMatch = displayText.regexCaptures(pattern: #"\$([0-9][0-9,]*(?:\.[0-9]+)?)\/\$([0-9][0-9,]*(?:\.[0-9]+)?) remaining"#)
-        let rateMatch = displayText.regexCaptures(pattern: #"replenishes \+\$([0-9][0-9,]*(?:\.[0-9]+)?)\/hour"#)
-        let creditsMatch = displayText.regexCaptures(pattern: #"Individual credits: \$([0-9][0-9,]*(?:\.[0-9]+)?) remaining"#)
+        let freeMatch = ProviderTextParsing.regexCaptures(in: displayText, pattern: #"\$([0-9][0-9,]*(?:\.[0-9]+)?)\/\$([0-9][0-9,]*(?:\.[0-9]+)?) remaining"#)
+        let rateMatch = ProviderTextParsing.regexCaptures(in: displayText, pattern: #"replenishes \+\$([0-9][0-9,]*(?:\.[0-9]+)?)\/hour"#)
+        let creditsMatch = ProviderTextParsing.regexCaptures(in: displayText, pattern: #"Individual credits: \$([0-9][0-9,]*(?:\.[0-9]+)?) remaining"#)
 
         var windows: [UsageQuotaWindow] = []
         var extras: [String: String] = [:]
@@ -134,17 +134,5 @@ final class AmpProvider: UsageProvider, @unchecked Sendable {
 
     private static func parseMoney(_ raw: String) -> Double? {
         Double(raw.replacingOccurrences(of: ",", with: ""))
-    }
-}
-
-private extension String {
-    func regexCaptures(pattern: String) -> [String] {
-        guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
-        let range = NSRange(startIndex..<endIndex, in: self)
-        guard let match = regex.firstMatch(in: self, range: range) else { return [] }
-        return (0..<match.numberOfRanges).compactMap { index in
-            guard let range = Range(match.range(at: index), in: self) else { return nil }
-            return String(self[range])
-        }
     }
 }

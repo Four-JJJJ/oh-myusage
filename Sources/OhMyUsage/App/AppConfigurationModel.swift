@@ -1,3 +1,4 @@
+import OhMyUsageProviders
 import Foundation
 import OhMyUsageApplication
 import OhMyUsageDomain
@@ -395,6 +396,11 @@ final class AppConfigurationModel {
 
     func removeProvider(providerID: String) {
         let host = requireHost()
+        host.providerRefreshModel.invalidateRefreshes(providerID: providerID)
+        host.removeLocalUsageHistoryEntries(providerID: providerID)
+        host.removeUsageAnalyticsEntries(providerID: providerID)
+        OfficialProviderFetchRuntime.invalidateCaches()
+        host.persistedSnapshotCache?.remove(providerID: providerID)
         host.config.providers.removeAll { $0.id == providerID }
         if host.config.statusBarProviderID == providerID {
             host.config.statusBarProviderID = AppConfig.defaultStatusBarProviderID(from: host.config.providers)
@@ -404,6 +410,7 @@ final class AppConfigurationModel {
             state.snapshots.removeValue(forKey: providerID)
             state.errors.removeValue(forKey: providerID)
             state.consecutiveFailures.removeValue(forKey: providerID)
+            state.retryNotBefore.removeValue(forKey: providerID)
             state.activeAlerts.remove("low:\(providerID)")
             state.activeAlerts.remove("fail:\(providerID)")
             state.activeAlerts.remove("auth:\(providerID)")
@@ -929,12 +936,15 @@ final class AppConfigurationModel {
                 state.snapshots.removeValue(forKey: providerID)
                 state.errors.removeValue(forKey: providerID)
                 state.consecutiveFailures.removeValue(forKey: providerID)
+                state.retryNotBefore.removeValue(forKey: providerID)
                 state.activeAlerts.remove("low:\(providerID)")
                 state.activeAlerts.remove("fail:\(providerID)")
                 state.activeAlerts.remove("auth:\(providerID)")
             }
         }
         for providerID in providerIDs {
+            host.providerRefreshModel.invalidateRefreshes(providerID: providerID)
+            OfficialProviderFetchRuntime.invalidateCaches()
             host.persistedSnapshotCache?.remove(providerID: providerID)
         }
     }

@@ -34,6 +34,62 @@ final class UsageAnalyticsRepositoryTests: XCTestCase {
         XCTAssertEqual(interval.end, try fixedDate("2026-05-17T00:00:00Z"))
     }
 
+    func testCacheRestoreDeduplicatesAndRejectsUnknownSchemaAndOversize() throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = usageAnalyticsCacheURL(root: root)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let filter = UsageAnalyticsFilter(mode: .all, selectedModelID: nil, range: .last7Days)
+        let old = Date(timeIntervalSince1970: 1_000)
+        let new = Date(timeIntervalSince1970: 2_000)
+        let entries = [old, new].map { date in UsageAnalyticsCacheEntry(filter: filter,
+            snapshot: .empty(filter: filter, generatedAt: date), sourceFingerprint: nil,
+            refreshedAt: date, lastFingerprintCheckedAt: nil) }
+        let encoded = try JSONEncoder().encode(entries)
+        let rows = try JSONSerialization.jsonObject(with: encoded)
+        let data = try JSONSerialization.data(withJSONObject: ["entries": rows])
+        try data.write(to: url)
+        XCTAssertEqual(UsageAnalyticsSnapshotCacheStore(baseDirectoryURL: root).entry(for: filter)?.refreshedAt, new)
+        XCTAssertNil(UsageAnalyticsSnapshotCacheStore(baseDirectoryURL: root, maxRestoreBytes: 1).entry(for: filter))
+        try JSONSerialization.data(withJSONObject: ["schemaVersion": 999, "entries": rows]).write(to: url)
+        XCTAssertNil(UsageAnalyticsSnapshotCacheStore(baseDirectoryURL: root).entry(for: filter))
+        try Data("{broken".utf8).write(to: url)
+        XCTAssertNil(UsageAnalyticsSnapshotCacheStore(baseDirectoryURL: root).entry(for: filter))
+    }
+
+    func testQueuedPersistenceKeepsLatestValue() throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let filter = UsageAnalyticsFilter(mode: .all, selectedModelID: nil, range: .last7Days)
+        let store = UsageAnalyticsSnapshotCacheStore(baseDirectoryURL: root)
+        let first = Date(timeIntervalSince1970: 1_000)
+        let last = Date(timeIntervalSince1970: 2_000)
+        store.save(snapshot: .empty(filter: filter, generatedAt: first), sourceFingerprint: nil)
+        store.save(snapshot: .empty(filter: filter, generatedAt: last), sourceFingerprint: nil)
+        store.flush()
+        XCTAssertEqual(UsageAnalyticsSnapshotCacheStore(baseDirectoryURL: root).entry(for: filter)?.snapshot.generatedAt, last)
+    }
+
+    func testCacheRestoreRejectsOverDefaultBudgetAndWriteFailureIsSanitized() throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = usageAnalyticsCacheURL(root: root)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(repeating: 32, count: 32 * 1024 * 1024 + 1).write(to: url)
+        let filter = UsageAnalyticsFilter(mode: .all, selectedModelID: nil, range: .last7Days)
+        XCTAssertNil(UsageAnalyticsSnapshotCacheStore(baseDirectoryURL: root).entry(for: filter))
+        let invalidRoot = root.appendingPathComponent("not-a-directory")
+        try Data().write(to: invalidRoot)
+        let diagnostic = expectation(description: "sanitized write failure")
+        let store = UsageAnalyticsSnapshotCacheStore(baseDirectoryURL: invalidRoot, diagnosticHandler: { category in
+            switch category { case .writeFailed: diagnostic.fulfill() }
+        })
+        store.save(snapshot: .empty(filter: filter), sourceFingerprint: nil)
+        store.flush()
+        wait(for: [diagnostic], timeout: 1)
+        XCTAssertTrue(store.lastPersistenceFailed)
+    }
+
     func testCacheStoreRestoresSnapshotFromDiskForFilter() throws {
         let root = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
             .appendingPathComponent("usage-analytics-cache-\(UUID().uuidString)", isDirectory: true)
@@ -61,6 +117,7 @@ final class UsageAnalyticsRepositoryTests: XCTestCase {
 
         let writer = UsageAnalyticsSnapshotCacheStore(baseDirectoryURL: root, nowProvider: { now })
         writer.save(snapshot: snapshot, sourceFingerprint: fingerprint)
+        writer.flush()
 
         let reader = UsageAnalyticsSnapshotCacheStore(baseDirectoryURL: root, nowProvider: { now })
         let entry = try XCTUnwrap(reader.entry(for: filter))
@@ -80,6 +137,7 @@ final class UsageAnalyticsRepositoryTests: XCTestCase {
         let store = UsageAnalyticsSnapshotCacheStore(baseDirectoryURL: root, nowProvider: { now })
 
         store.save(snapshot: snapshot, sourceFingerprint: nil)
+        store.flush()
 
         let payload = try String(contentsOf: usageAnalyticsCacheURL(root: root), encoding: .utf8)
         XCTAssertFalse(payload.contains("\n"), "usage analytics cache should be compact JSON without pretty-print newlines")
@@ -97,10 +155,12 @@ final class UsageAnalyticsRepositoryTests: XCTestCase {
         let store = UsageAnalyticsSnapshotCacheStore(baseDirectoryURL: root, nowProvider: { now })
 
         store.save(snapshot: snapshot, sourceFingerprint: nil)
+        store.flush()
         let cacheURL = usageAnalyticsCacheURL(root: root)
         let firstModifiedAt = try modificationDate(at: cacheURL)
         Thread.sleep(forTimeInterval: 1.1)
         store.save(snapshot: snapshot, sourceFingerprint: nil)
+        store.flush()
         let secondModifiedAt = try modificationDate(at: cacheURL)
 
         XCTAssertEqual(firstModifiedAt, secondModifiedAt)
@@ -118,6 +178,7 @@ final class UsageAnalyticsRepositoryTests: XCTestCase {
         let store = UsageAnalyticsSnapshotCacheStore(baseDirectoryURL: root, nowProvider: { now })
 
         store.save(snapshot: snapshot, sourceFingerprint: nil)
+        store.flush()
 
         now = refreshedAt.addingTimeInterval(30)
         XCTAssertFalse(
@@ -151,6 +212,7 @@ final class UsageAnalyticsRepositoryTests: XCTestCase {
         let store = UsageAnalyticsSnapshotCacheStore(baseDirectoryURL: root, nowProvider: { refreshedAt })
 
         store.save(snapshot: snapshot, sourceFingerprint: nil)
+        store.flush()
 
         XCTAssertFalse(
             store.isEntryTemporallyFresh(
@@ -314,6 +376,40 @@ final class UsageAnalyticsRepositoryTests: XCTestCase {
         XCTAssertEqual(first.kimi, second.kimi)
     }
 
+    func testMalformedCCSwitchIsPartialEvenWithCompleteCursorOverride() throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let url = root.appendingPathComponent("malformed.db")
+        try Data("not sqlite".utf8).write(to: url)
+        let now = try fixedDate("2099-05-16T12:00:00Z")
+        let reader = CCSwitchUsageLogReader(databasePath: url.path)
+        XCTAssertEqual(reader.readUsageLogs(since: .distantPast, until: now).sourceStatus, .failed)
+        let repository = UsageAnalyticsRepository(ccSwitchReader: reader, nowProvider: { now },
+            localSourceFingerprintProvider: { _ in Self.localSourceFingerprint(seed: 1) })
+        let snapshot = repository.snapshot(filter: .init(mode: .all, selectedModelID: nil, range: .last24Hours),
+            cursorOverride: .init(events: [], source: .dashboard, isPartial: false, diagnostics: []))
+        XCTAssertEqual(snapshot.isPartial, true)
+        let absent = CCSwitchUsageLogReader(databasePath: root.appendingPathComponent("absent.db").path)
+        XCTAssertEqual(absent.readUsageLogs(since: .distantPast, until: now).sourceStatus, .absent)
+    }
+
+    func testCCSwitchMissingColumnsIsFailedAndPartial() throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let url = root.appendingPathComponent("missing-columns.db")
+        try runSQLite(databasePath: url.path, sql: "CREATE TABLE proxy_request_logs (request_id TEXT);")
+        let now = try fixedDate("2099-05-16T12:00:00Z")
+        let reader = CCSwitchUsageLogReader(databasePath: url.path)
+        XCTAssertEqual(reader.readUsageLogs(since: .distantPast, until: now).sourceStatus, .failed)
+        let repository = UsageAnalyticsRepository(ccSwitchReader: reader, nowProvider: { now },
+            localSourceFingerprintProvider: { _ in Self.localSourceFingerprint(seed: 1) })
+        let snapshot = repository.snapshot(filter: .init(mode: .all, selectedModelID: nil, range: .last24Hours),
+            cursorOverride: .init(events: [], source: .dashboard, isPartial: false, diagnostics: []))
+        XCTAssertEqual(snapshot.isPartial, true)
+    }
+
     func testSnapshotReadsOnlyRequestedRangeFromCCSwitch() throws {
         let root = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
             .appendingPathComponent("usage-analytics-range-\(UUID().uuidString)", isDirectory: true)
@@ -353,11 +449,18 @@ final class UsageAnalyticsRepositoryTests: XCTestCase {
         )
 
         let snapshot = repository.snapshot(
-            filter: UsageAnalyticsFilter(mode: .all, selectedModelID: nil, range: .last24Hours)
+            filter: UsageAnalyticsFilter(mode: .all, selectedModelID: nil, range: .last24Hours),
+            cursorOverride: .init(events: [], source: .local, isPartial: false, diagnostics: [])
         )
 
         XCTAssertEqual(rowReadCount, 1)
         XCTAssertEqual(snapshot.totals.totalTokens, 30)
+        repository.invalidateRawCache()
+        _ = repository.snapshot(
+            filter: UsageAnalyticsFilter(mode: .all, selectedModelID: nil, range: .last24Hours),
+            cursorOverride: .init(events: [], source: .local, isPartial: false, diagnostics: [])
+        )
+        XCTAssertEqual(rowReadCount, 2, "reset must invalidate cached raw source data immediately")
     }
 
     func testSnapshotDeduplicatesBySourcePriorityAndBuildsProviderAndModelStats() throws {

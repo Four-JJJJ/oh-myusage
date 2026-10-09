@@ -5,17 +5,20 @@ public struct UsageAnalyticsFileFingerprint: Codable, Equatable, Sendable {
     public var fileCount: Int
     public var totalSize: UInt64
     public var latestModificationTime: Date?
+    public var metadataDigest: String?
 
     public init(
         roots: [String],
         fileCount: Int,
         totalSize: UInt64,
-        latestModificationTime: Date?
+        latestModificationTime: Date?,
+        metadataDigest: String? = nil
     ) {
         self.roots = roots
         self.fileCount = fileCount
         self.totalSize = totalSize
         self.latestModificationTime = latestModificationTime
+        self.metadataDigest = metadataDigest
     }
 
     public static let empty = UsageAnalyticsFileFingerprint(
@@ -105,6 +108,7 @@ public struct UsageAnalyticsCacheEntry: Codable, Equatable, Sendable {
 public final class UsageAnalyticsSnapshotCacheStore: @unchecked Sendable {
     private struct CachePayload: Codable {
         var entries: [UsageAnalyticsCacheEntry]
+        var schemaVersion: Int? = 1
     }
 
     private let fileManager: FileManager
@@ -114,6 +118,16 @@ public final class UsageAnalyticsSnapshotCacheStore: @unchecked Sendable {
     private let nowProvider: () -> Date
     private let maxEntries: Int
     private let lock = NSLock()
+    private let ioQueue = DispatchQueue(label: "OhMyUsage.analytics-cache-io", qos: .utility)
+    private let maxRestoreBytes: Int
+    private var touchedFilters = Set<UsageAnalyticsFilter>()
+    private var pendingPersistence: [UsageAnalyticsCacheEntry]?
+    private var persistenceScheduled = false
+    private var persistenceFailure = false
+    public enum IODiagnostic: Sendable { case writeFailed }
+    private let diagnosticHandler: (@Sendable (IODiagnostic) -> Void)?
+    private var restorationCompleted = false
+    private var ignoreRestoration = false
     private var entries: [UsageAnalyticsFilter: UsageAnalyticsCacheEntry] = [:]
     private var lastPersistedCacheData: Data?
     private var lastPersistedEntries: [UsageAnalyticsCacheEntry]?
@@ -122,8 +136,13 @@ public final class UsageAnalyticsSnapshotCacheStore: @unchecked Sendable {
         baseDirectoryURL: URL? = nil,
         fileManager: FileManager = .default,
         nowProvider: @escaping () -> Date = Date.init,
-        maxEntries: Int? = nil
+        maxEntries: Int? = nil,
+        maxRestoreBytes: Int = 32 * 1024 * 1024,
+        restoreAsynchronously: Bool? = nil,
+        diagnosticHandler: (@Sendable (IODiagnostic) -> Void)? = nil
     ) {
+        self.diagnosticHandler = diagnosticHandler
+        self.maxRestoreBytes = min(128 * 1024 * 1024, max(1, maxRestoreBytes))
         self.fileManager = fileManager
         self.nowProvider = nowProvider
         self.maxEntries = max(1, maxEntries ?? RuntimeDiagnosticsLimits.usageAnalyticsCacheMaxEntries)
@@ -132,7 +151,26 @@ public final class UsageAnalyticsSnapshotCacheStore: @unchecked Sendable {
         self.fileURL = rootDirectory
             .appendingPathComponent("OhMyUsage", isDirectory: true)
             .appendingPathComponent("usage_analytics_cache.json")
-        restoreFromDisk()
+        if restoreAsynchronously ?? (baseDirectoryURL == nil) {
+            ioQueue.async { [self] in restoreFromDisk() }
+        } else {
+            restoreFromDisk()
+        }
+    }
+
+    public var lastPersistenceFailed: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return persistenceFailure
+    }
+
+    public func removeAll() {
+        lock.lock()
+        ignoreRestoration = true
+        entries.removeAll()
+        touchedFilters.removeAll()
+        schedulePersistenceLocked()
+        lock.unlock()
     }
 
     public func entry(for filter: UsageAnalyticsFilter) -> UsageAnalyticsCacheEntry? {
@@ -148,6 +186,7 @@ public final class UsageAnalyticsSnapshotCacheStore: @unchecked Sendable {
     ) {
         let now = nowProvider()
         lock.lock()
+        if !restorationCompleted { touchedFilters.insert(snapshot.filter) }
         entries[snapshot.filter] = UsageAnalyticsCacheEntry(
             filter: snapshot.filter,
             snapshot: snapshot,
@@ -156,7 +195,7 @@ public final class UsageAnalyticsSnapshotCacheStore: @unchecked Sendable {
             lastFingerprintCheckedAt: sourceFingerprint == nil ? nil : now
         )
         pruneLocked()
-        persistLocked()
+        schedulePersistenceLocked()
         lock.unlock()
     }
 
@@ -167,11 +206,11 @@ public final class UsageAnalyticsSnapshotCacheStore: @unchecked Sendable {
     ) {
         lock.lock()
         if var entry = entries[filter] {
+            if !restorationCompleted { touchedFilters.insert(filter) }
             entry.sourceFingerprint = sourceFingerprint
-            entry.refreshedAt = validatedAt
             entry.lastFingerprintCheckedAt = validatedAt
             entries[filter] = entry
-            persistLocked()
+            schedulePersistenceLocked()
         }
         lock.unlock()
     }
@@ -208,24 +247,70 @@ public final class UsageAnalyticsSnapshotCacheStore: @unchecked Sendable {
         )
     }
 
-    private func restoreFromDisk() {
-        guard fileManager.fileExists(atPath: fileURL.path),
-              let data = try? Data(contentsOf: fileURL),
-              let payload = try? decoder.decode(CachePayload.self, from: data) else {
-            return
+    /// Waits for queued cache I/O; intended for shutdown and deterministic tests, not UI refresh.
+    public func flush() { ioQueue.sync {} }
+
+    public func waitForPendingIO() async {
+        await withCheckedContinuation { continuation in
+            ioQueue.async { continuation.resume() }
         }
-        lock.lock()
-        entries = Dictionary(uniqueKeysWithValues: payload.entries.map { ($0.filter, $0) })
-        pruneLocked()
-        let persistedEntries = sortedEntriesLocked()
-        lastPersistedEntries = persistedEntries
-        lastPersistedCacheData = try? encoder.encode(CachePayload(entries: persistedEntries))
-        lock.unlock()
     }
 
-    private func persistLocked() {
+    private func restoreFromDisk() {
+        defer {
+            lock.lock()
+            restorationCompleted = true
+            touchedFilters.removeAll()
+            lock.unlock()
+        }
+        guard let attributes = try? fileManager.attributesOfItem(atPath: fileURL.path),
+              let size = attributes[.size] as? NSNumber,
+              size.intValue <= maxRestoreBytes,
+              let data = boundedCacheData(),
+              let payload = try? decoder.decode(CachePayload.self, from: data),
+              payload.schemaVersion == nil || payload.schemaVersion == 1 else { return }
+        lock.lock()
+        defer { lock.unlock() }
+        guard !ignoreRestoration else { return }
+        for entry in payload.entries {
+            guard entry.filter == entry.snapshot.filter,
+                  entry.refreshedAt.timeIntervalSince1970.isFinite,
+                  entry.snapshot.generatedAt.timeIntervalSince1970.isFinite,
+                  !touchedFilters.contains(entry.filter) else { continue }
+            if let existing = entries[entry.filter], existing.refreshedAt >= entry.refreshedAt { continue }
+            entries[entry.filter] = entry
+        }
+        pruneLocked()
+    }
+
+    private func boundedCacheData() -> Data? {
+        guard let handle = try? FileHandle(forReadingFrom: fileURL) else { return nil }
+        defer { try? handle.close() }
+        guard let data = try? handle.read(upToCount: maxRestoreBytes + 1), data.count <= maxRestoreBytes else { return nil }
+        return data
+    }
+
+    private func schedulePersistenceLocked() {
+        pendingPersistence = sortedEntriesLocked()
+        guard !persistenceScheduled else { return }
+        persistenceScheduled = true
+        ioQueue.async { [self] in
+            while true {
+                lock.lock()
+                guard let snapshot = pendingPersistence else {
+                    persistenceScheduled = false
+                    lock.unlock()
+                    return
+                }
+                pendingPersistence = nil
+                lock.unlock()
+                persist(snapshot)
+            }
+        }
+    }
+
+    private func persist(_ persistedEntries: [UsageAnalyticsCacheEntry]) {
         do {
-            let persistedEntries = sortedEntriesLocked()
             if persistedEntries == lastPersistedEntries,
                fileManager.fileExists(atPath: fileURL.path) {
                 return
@@ -244,7 +329,14 @@ public final class UsageAnalyticsSnapshotCacheStore: @unchecked Sendable {
             try data.write(to: fileURL, options: .atomic)
             lastPersistedEntries = persistedEntries
             lastPersistedCacheData = data
+            lock.lock()
+            persistenceFailure = false
+            lock.unlock()
         } catch {
+            lock.lock()
+            persistenceFailure = true
+            lock.unlock()
+            diagnosticHandler?(.writeFailed)
             return
         }
     }

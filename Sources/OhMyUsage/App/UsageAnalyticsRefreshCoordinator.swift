@@ -8,6 +8,9 @@ final class UsageAnalyticsRefreshCoordinator {
         _ claudeAllConfigDirs: [String]
     ) -> UsageAnalyticsSnapshot
 
+    private let repository: UsageAnalyticsRepository
+    private let usesDefaultFingerprintLoader: Bool
+    private let usesDefaultSnapshotLoader: Bool
     private let sourceFingerprintLoader: SourceFingerprintLoader
     private let snapshotLoader: SnapshotLoader
     private let cacheStore: UsageAnalyticsSnapshotCacheStore
@@ -17,11 +20,14 @@ final class UsageAnalyticsRefreshCoordinator {
 
     init(
         repository: UsageAnalyticsRepository = UsageAnalyticsRepository(),
-        cacheStore: UsageAnalyticsSnapshotCacheStore = UsageAnalyticsSnapshotCacheStore(),
+        cacheStore: UsageAnalyticsSnapshotCacheStore = UsageAnalyticsSnapshotCacheStore(restoreAsynchronously: true),
         nowProvider: @escaping () -> Date = Date.init,
         sourceFingerprintLoader: SourceFingerprintLoader? = nil,
         snapshotLoader: SnapshotLoader? = nil
     ) {
+        self.repository = repository
+        self.usesDefaultFingerprintLoader = sourceFingerprintLoader == nil
+        self.usesDefaultSnapshotLoader = snapshotLoader == nil
         self.cacheStore = cacheStore
         self.nowProvider = nowProvider
         self.sourceFingerprintLoader = sourceFingerprintLoader ?? { claudeAllConfigDirs in
@@ -33,6 +39,22 @@ final class UsageAnalyticsRefreshCoordinator {
                 claudeAllConfigDirs: claudeAllConfigDirs
             )
         }
+    }
+
+    func reset() {
+        refreshGeneration += 1
+        refreshTask?.cancel()
+        refreshTask = nil
+        cacheStore.removeAll()
+        repository.invalidateRawCache()
+    }
+
+    func flushPersistence() async {
+        refreshGeneration += 1
+        refreshTask?.cancel()
+        await refreshTask?.value
+        refreshTask = nil
+        await cacheStore.waitForPendingIO()
     }
 
     func refreshUsageAnalyticsIfNeeded(
@@ -57,14 +79,28 @@ final class UsageAnalyticsRefreshCoordinator {
         let generation = refreshGeneration
         let cacheStore = cacheStore
         let sourceFingerprintLoader = sourceFingerprintLoader
+        let repository = repository
+        let usesDefaultFingerprintLoader = usesDefaultFingerprintLoader
+        let usesDefaultSnapshotLoader = usesDefaultSnapshotLoader
         let snapshotLoader = snapshotLoader
         let nowProvider = nowProvider
         onLoadingChange(force || !hasCachedSnapshot)
 
         refreshTask = Task { @MainActor [weak self] in
-            let fingerprint = await Task.detached(priority: .utility) {
-                sourceFingerprintLoader(claudeAllConfigDirs)
-            }.value
+            await cacheStore.waitForPendingIO()
+            guard !Task.isCancelled else { return }
+            if !hasCachedSnapshot, let restored = cacheStore.entry(for: filter)?.snapshot {
+                onSnapshotChange(restored)
+            }
+            let fingerprintWorker = Task.detached(priority: .utility) {
+                if force && usesDefaultFingerprintLoader {
+                    return repository.sourceFingerprint(claudeAllConfigDirs: claudeAllConfigDirs, bypassCache: true)
+                }
+                return sourceFingerprintLoader(claudeAllConfigDirs)
+            }
+            let fingerprint = await withTaskCancellationHandler {
+                await fingerprintWorker.value
+            } onCancel: { fingerprintWorker.cancel() }
 
             guard !Task.isCancelled else { return }
             guard let self, generation == self.refreshGeneration else { return }
@@ -73,6 +109,8 @@ final class UsageAnalyticsRefreshCoordinator {
             if !force,
                let entry = cacheStore.entry(for: filter),
                entry.sourceFingerprint == fingerprint,
+               entry.snapshot.isPartial == false,
+               validationDate.timeIntervalSince(entry.snapshot.generatedAt) < 60,
                cacheStore.isEntryTemporallyFresh(
                    for: filter,
                    now: validationDate,
@@ -92,9 +130,25 @@ final class UsageAnalyticsRefreshCoordinator {
                 onLoadingChange(true)
             }
 
-            let snapshot = await Task.detached(priority: .utility) {
-                snapshotLoader(filter, claudeAllConfigDirs)
-            }.value
+            let snapshot: UsageAnalyticsSnapshot
+            if usesDefaultSnapshotLoader {
+                do {
+                    snapshot = try await repository.snapshotAsync(filter: filter,
+                        claudeAllConfigDirs: claudeAllConfigDirs, bypassCache: force)
+                } catch {
+                    guard !Task.isCancelled else { return }
+                    onLoadingChange(false)
+                    refreshTask = nil
+                    return
+                }
+            } else {
+                let snapshotWorker = Task.detached(priority: .utility) {
+                    snapshotLoader(filter, claudeAllConfigDirs)
+                }
+                snapshot = await withTaskCancellationHandler {
+                    await snapshotWorker.value
+                } onCancel: { snapshotWorker.cancel() }
+            }
 
             guard !Task.isCancelled else { return }
             guard generation == self.refreshGeneration else { return }

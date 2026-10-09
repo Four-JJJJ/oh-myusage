@@ -2,6 +2,21 @@ import XCTest
 @testable import OhMyUsage
 
 final class LocalUsageTrendPresenterTests: XCTestCase {
+    func testPartialSummaryShowsBilingualNoticeWithoutHidingChart() {
+        let summary = Self.summaryWithData().markedApproximateFallback(using: nil)
+        for english in [true, false] {
+            let presentation = LocalUsageTrendPresenter.presentation(
+                providerType: .cursor, scope: .allAccounts,
+                historyState: Self.historyState(summary: summary), summary: summary,
+                localizedText: { english ? $1 : $0 }, formatInteger: Self.integerText,
+                dateText: Self.dateText
+            )
+            XCTAssertEqual(presentation.displaySummary, summary)
+            XCTAssertEqual(presentation.staleFallbackText, english
+                ? "Data may be incomplete; use for trend reference only" : "数据可能不完整，仅供趋势参考")
+        }
+    }
+
     func testPresentationShowsLoadingStatusWithoutDisplaySummaryWhenSummaryIsEmpty() {
         let state = LocalUsageTrendPresenter.presentation(
             providerType: .codex,

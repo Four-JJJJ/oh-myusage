@@ -54,6 +54,8 @@ final class SingleInstanceLock {
 @MainActor
 final class AppLifecycleDelegate: NSObject, NSApplicationDelegate {
     private var statusBarController: StatusBarController?
+    private var viewModel: AppViewModel?
+    private var isWaitingForCacheFlush = false
     private var activationObserver: NSObjectProtocol?
     private let postUpdateReleaseNotesStore: any PostUpdateReleaseNotesStoring = PostUpdateReleaseNotesStore()
 
@@ -75,12 +77,35 @@ final class AppLifecycleDelegate: NSObject, NSApplicationDelegate {
         startActivationBridgeObservation()
         SettingsScenePhantomWindowGuard.shared.start()
         let viewModel = AppViewModel()
+        self.viewModel = viewModel
         statusBarController = StatusBarController(viewModel: viewModel)
         presentPostUpdateReleaseNotesIfNeeded(currentVersion: viewModel.currentAppVersion)
     }
 
     func applicationWillTerminate(_ notification: Notification) {
         stopActivationBridgeObservation()
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard let viewModel else { return .terminateNow }
+        guard !isWaitingForCacheFlush else { return .terminateLater }
+        isWaitingForCacheFlush = true
+        Task { @MainActor [weak self] in
+            await viewModel.flushDisplayCachesForShutdown()
+            self?.finishCacheFlush(sender)
+        }
+        // Display caches are reconstructible: never hold quitting indefinitely on a slow disk.
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(2))
+            self?.finishCacheFlush(sender)
+        }
+        return .terminateLater
+    }
+
+    private func finishCacheFlush(_ app: NSApplication) {
+        guard isWaitingForCacheFlush else { return }
+        isWaitingForCacheFlush = false
+        app.reply(toApplicationShouldTerminate: true)
     }
 
     /// Intercept the system Settings menu / ⌘, so macOS does not show the

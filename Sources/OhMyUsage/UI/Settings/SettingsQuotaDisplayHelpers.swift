@@ -1,7 +1,7 @@
 import AppKit
 import OhMyUsageDomain
 import SwiftUI
-import OhMyUsageProviders
+import OhMyUsagePresentation
 
 extension SettingsView {
     @ViewBuilder
@@ -205,7 +205,7 @@ extension SettingsView {
 
     func officialMonitorSubtitle(snapshot: UsageSnapshot?) -> String? {
         guard viewModel.showOfficialAccountEmailInMenuBar else { return nil }
-        return OfficialValueParser.nonPlaceholderString(snapshot?.accountLabel)
+        return AccountLabelPresentation.displayable(snapshot?.accountLabel)
     }
 
     func officialMonitorPlanType(providerType: ProviderType, snapshot: UsageSnapshot?) -> String? {

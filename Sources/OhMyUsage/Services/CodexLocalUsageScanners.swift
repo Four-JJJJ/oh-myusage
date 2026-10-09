@@ -172,7 +172,7 @@ struct CodexIdentityLogEventScanner {
         var unattributedTokens = 0
         var conversationIdentity: [String: ConversationIdentity] = [:]
 
-        while true {
+        while !Task.isCancelled {
             let stepResult = sqlite3_step(statement)
             guard stepResult == SQLITE_ROW else {
                 break
@@ -328,7 +328,7 @@ enum CodexLocalUsageJSONLScanner {
         var buffer = Data()
         var droppingOversizedLine = false
 
-        while true {
+        while !Task.isCancelled {
             let chunk = try? handle.read(upToCount: 64 * 1024)
             guard let chunk else {
                 break
@@ -353,7 +353,7 @@ enum CodexLocalUsageJSONLScanner {
                 buffer.append(chunk)
             }
 
-            while let range = buffer.range(of: newline) {
+            while !Task.isCancelled, let range = buffer.range(of: newline) {
                 let lineData = buffer.subdata(in: 0..<range.lowerBound)
                 buffer.removeSubrange(0..<range.upperBound)
 

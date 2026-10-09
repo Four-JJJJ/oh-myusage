@@ -80,6 +80,10 @@ final class AppProviderRefreshModel {
         refreshScheduler = makeRefreshScheduler()
     }
 
+    func invalidateRefreshes(providerID: String? = nil) {
+        coordinator.invalidateRefreshes(providerID: providerID)
+    }
+
     func stopPolling() {
         refreshScheduler?.stop()
     }
@@ -246,15 +250,7 @@ final class AppProviderRefreshModel {
     /// Runs off the main actor so the refresh path is never blocked by file IO.
     private func persistSnapshotToCache(descriptor: ProviderDescriptor, snapshot: UsageSnapshot) {
         guard let cache = host?.persistedSnapshotCache else { return }
-        let providerID = descriptor.id
-        let generation = cache.currentGeneration(for: providerID)
-        Task.detached(priority: .utility) {
-            cache.save(
-                providerID: providerID,
-                snapshot: snapshot,
-                expectedGeneration: generation
-            )
-        }
+        cache.enqueueSave(providerID: descriptor.id, snapshot: snapshot)
     }
 
     private func makeRefreshScheduler() -> ProviderRefreshScheduler {
@@ -296,6 +292,7 @@ final class AppProviderRefreshModel {
                 }
                 return false
             },
+            retryNotBeforeProvider: { [weak self] in self?.providerState.retryNotBefore[$0] },
             isNetworkOnline: isNetworkOnline,
             refreshAction: { [weak self] providerID, forceRefresh in
                 guard let self,

@@ -1,4 +1,6 @@
 import Foundation
+import CryptoKit
+import OSLog
 import OhMyUsageApplication
 import OhMyUsageDomain
 
@@ -26,6 +28,7 @@ struct LocalUsageSourceFingerprint: Codable, Equatable, Sendable {
     var fileCount: Int
     var totalSize: UInt64
     var latestModificationTime: Date?
+    var metadataDigest: String? = nil
 }
 
 struct LocalUsageHistoryEntry: Codable, Equatable, Sendable {
@@ -36,6 +39,8 @@ struct LocalUsageHistoryEntry: Codable, Equatable, Sendable {
     var lastFingerprintCheckedAt: Date?
     var lastError: String?
     var isStaleFallback: Bool
+    var lastAttemptAt: Date? = nil
+    var retryNotBefore: Date? = nil
 }
 
 struct LocalUsageHistoryState: Equatable, Sendable {
@@ -57,6 +62,7 @@ struct LocalUsageFileSnapshot: Equatable, Hashable, Sendable {
     var path: String
     var fileSize: UInt64
     var modifiedAtRef: TimeInterval?
+    var fileIdentity: UInt64? = nil
 }
 
 final class LocalUsageFileEnumerationCache: @unchecked Sendable {
@@ -72,6 +78,7 @@ final class LocalUsageFileEnumerationCache: @unchecked Sendable {
         var isDirectory: Bool
         var fileSize: UInt64?
         var modifiedAtRef: TimeInterval?
+        var fileIdentity: UInt64? = nil
     }
 
     private struct Entry {
@@ -120,6 +127,7 @@ final class LocalUsageFileEnumerationCache: @unchecked Sendable {
             fileManager: fileManager,
             includeFile: includeFile
         )
+        guard !Task.isCancelled else { return entry.files }
 
         lock.lock()
         entries[key] = entry
@@ -137,6 +145,7 @@ final class LocalUsageFileEnumerationCache: @unchecked Sendable {
 
     private func isValid(entry: Entry, fileManager: FileManager) -> Bool {
         for snapshot in entry.pathSnapshots {
+            if Task.isCancelled { return false }
             if Self.pathSnapshot(atPath: snapshot.path, fileManager: fileManager) != snapshot {
                 return false
             }
@@ -154,6 +163,7 @@ final class LocalUsageFileEnumerationCache: @unchecked Sendable {
         var files: [LocalUsageFileSnapshot] = []
 
         for root in roots {
+            if Task.isCancelled { break }
             let rootURL = URL(fileURLWithPath: root)
             let rootSnapshot = Self.pathSnapshot(atPath: root, fileManager: fileManager)
             pathSnapshots.append(rootSnapshot)
@@ -187,6 +197,7 @@ final class LocalUsageFileEnumerationCache: @unchecked Sendable {
             }
 
             for case let fileURL as URL in enumerator {
+                if Task.isCancelled { break }
                 guard let values = try? fileURL.resourceValues(
                     forKeys: [
                         .isDirectoryKey,
@@ -221,7 +232,8 @@ final class LocalUsageFileEnumerationCache: @unchecked Sendable {
                 let snapshot = LocalUsageFileSnapshot(
                     path: fileURL.path,
                     fileSize: size,
-                    modifiedAtRef: values.contentModificationDate?.timeIntervalSinceReferenceDate
+                    modifiedAtRef: values.contentModificationDate?.timeIntervalSinceReferenceDate,
+                    fileIdentity: Self.fileIdentity(atPath: fileURL.path)
                 )
                 pathSnapshots.append(Self.pathSnapshot(from: fileURL, values: values))
                 if Self.modifiedAtRef(snapshot.modifiedAtRef, isAtOrAfter: cutoff) {
@@ -253,7 +265,8 @@ final class LocalUsageFileEnumerationCache: @unchecked Sendable {
         return LocalUsageFileSnapshot(
             path: path,
             fileSize: snapshot.fileSize ?? 0,
-            modifiedAtRef: snapshot.modifiedAtRef
+            modifiedAtRef: snapshot.modifiedAtRef,
+            fileIdentity: snapshot.fileIdentity
         )
     }
 
@@ -280,7 +293,8 @@ final class LocalUsageFileEnumerationCache: @unchecked Sendable {
             exists: true,
             isDirectory: isDirectory.boolValue,
             fileSize: isDirectory.boolValue ? nil : size.map { UInt64(truncating: $0) },
-            modifiedAtRef: modifiedAt?.timeIntervalSinceReferenceDate
+            modifiedAtRef: modifiedAt?.timeIntervalSinceReferenceDate,
+            fileIdentity: (attributes?[.systemFileNumber] as? NSNumber)?.uint64Value
         )
     }
 
@@ -293,8 +307,13 @@ final class LocalUsageFileEnumerationCache: @unchecked Sendable {
             exists: true,
             isDirectory: values.isDirectory == true,
             fileSize: values.isDirectory == true ? nil : UInt64(max(0, values.fileSize ?? 0)),
-            modifiedAtRef: values.contentModificationDate?.timeIntervalSinceReferenceDate
+            modifiedAtRef: values.contentModificationDate?.timeIntervalSinceReferenceDate,
+            fileIdentity: fileIdentity(atPath: url.path)
         )
+    }
+
+    private static func fileIdentity(atPath path: String) -> UInt64? {
+        ((try? FileManager.default.attributesOfItem(atPath: path))?[.systemFileNumber] as? NSNumber)?.uint64Value
     }
 
     private func pruneIfNeeded() {
@@ -315,6 +334,7 @@ final class LocalUsageParsedFileCache<Value>: @unchecked Sendable {
     private struct Entry {
         var snapshot: LocalUsageFileSnapshot
         var values: [Value]
+        var parsedAt: Date
     }
 
     private let lock = NSLock()
@@ -337,7 +357,8 @@ final class LocalUsageParsedFileCache<Value>: @unchecked Sendable {
         let key = CacheKey(path: snapshot.path, context: context)
 
         lock.lock()
-        if let entry = entries[key], entry.snapshot == snapshot {
+        if let entry = entries[key], entry.snapshot == snapshot,
+           Date().timeIntervalSince(entry.parsedAt) < 30 * 60 {
             let values = entry.values
             markAccessedLocked(key)
             lock.unlock()
@@ -347,6 +368,7 @@ final class LocalUsageParsedFileCache<Value>: @unchecked Sendable {
         lock.unlock()
 
         let parsed = parse()
+        guard !Task.isCancelled else { return parsed }
 
         lock.lock()
         // Another caller may have populated the same key while parsing happened
@@ -356,7 +378,7 @@ final class LocalUsageParsedFileCache<Value>: @unchecked Sendable {
             lock.unlock()
             return parsed
         }
-        entries[key] = Entry(snapshot: snapshot, values: parsed)
+        entries[key] = Entry(snapshot: snapshot, values: parsed, parsedAt: Date())
         cachedValueCount += parsed.count
         markAccessedLocked(key)
         pruneIfNeeded()
@@ -394,21 +416,41 @@ final class LocalUsageParsedFileCache<Value>: @unchecked Sendable {
     }
 }
 
+/// Explicit filter identities prevent different parsers sharing an incompatible inventory.
+enum LocalUsageSourceInventory {
+    enum Descriptor: String {
+        case codexSessionJSONL
+        case kimiWireJSONL
+
+        func includes(_ url: URL) -> Bool {
+            switch self {
+            case .codexSessionJSONL: return url.pathExtension.lowercased() == "jsonl"
+            case .kimiWireJSONL: return url.lastPathComponent == "wire.jsonl"
+            }
+        }
+    }
+
+    private static let cache = LocalUsageFileEnumerationCache(maxEntries: 8)
+
+    static func files(descriptor: Descriptor, roots: [String], fileManager: FileManager = .default) -> [LocalUsageFileSnapshot] {
+        cache.files(identifier: descriptor.rawValue, roots: roots, cutoff: .distantPast,
+                    fileManager: fileManager, includeFile: descriptor.includes)
+    }
+}
+
 enum LocalUsageSourceFingerprintBuilder {
     static func codexFingerprint(scope: LocalUsageTrendScope) -> LocalUsageSourceFingerprint {
         let codexRoot = "\(NSHomeDirectory())/.codex"
         switch scope {
         case .allAccounts:
-            return fingerprint(
-                roots: [
+            let roots = [
                     "\(codexRoot)/sessions",
                     "\(codexRoot)/archived_sessions"
-                ],
-                includeFile: { $0.pathExtension.lowercased() == "jsonl" }
-            )
+                ]
+            return fingerprint(roots: roots, inventory: LocalUsageSourceInventory.files(descriptor: .codexSessionJSONL, roots: roots))
         case .currentAccount:
             return fingerprint(
-                roots: ["\(codexRoot)/logs_2.sqlite"],
+                roots: ["\(codexRoot)/logs_2.sqlite", "\(codexRoot)/logs_2.sqlite-wal"],
                 includeFile: { _ in true }
             )
         }
@@ -457,10 +499,11 @@ enum LocalUsageSourceFingerprintBuilder {
         fingerprint(
             roots: [
                 "\(NSHomeDirectory())/Library/Application Support/Cursor/User/globalStorage/state.vscdb",
+                "\(NSHomeDirectory())/Library/Application Support/Cursor/User/globalStorage/state.vscdb-wal",
                 "\(NSHomeDirectory())/.cursor/projects"
             ],
             includeFile: { url in
-                url.lastPathComponent == "state.vscdb" || url.pathExtension.lowercased() == "jsonl"
+                ["state.vscdb", "state.vscdb-wal"].contains(url.lastPathComponent) || url.pathExtension.lowercased() == "jsonl"
             }
         )
     }
@@ -499,6 +542,7 @@ enum LocalUsageSourceFingerprintBuilder {
         var accumulator = FingerprintAccumulator()
 
         for root in normalizedRoots {
+            if Task.isCancelled { break }
             let rootURL = URL(fileURLWithPath: root)
             var isDirectory: ObjCBool = false
             guard fileManager.fileExists(atPath: root, isDirectory: &isDirectory) else {
@@ -507,7 +551,7 @@ enum LocalUsageSourceFingerprintBuilder {
 
             if !isDirectory.boolValue {
                 if includeFile(rootURL) {
-                    accumulator.add(rootURL)
+                    accumulator.add(rootURL, fileManager: fileManager)
                 }
                 continue
             }
@@ -521,7 +565,8 @@ enum LocalUsageSourceFingerprintBuilder {
             }
 
             for case let fileURL as URL in enumerator where includeFile(fileURL) {
-                accumulator.add(fileURL)
+                if Task.isCancelled { break }
+                accumulator.add(fileURL, fileManager: fileManager)
             }
         }
 
@@ -529,27 +574,54 @@ enum LocalUsageSourceFingerprintBuilder {
             roots: normalizedRoots,
             fileCount: accumulator.fileCount,
             totalSize: accumulator.totalSize,
-            latestModificationTime: accumulator.latestModificationTime
+            latestModificationTime: accumulator.latestModificationTime,
+            metadataDigest: accumulator.digest
         )
+    }
+
+    static func fingerprint(roots: [String], inventory: [LocalUsageFileSnapshot]) -> LocalUsageSourceFingerprint {
+        var accumulator = FingerprintAccumulator()
+        for file in inventory {
+            accumulator.add(path: file.path, size: file.fileSize, modifiedAt: file.modifiedAtRef.map(Date.init(timeIntervalSinceReferenceDate:)), inode: file.fileIdentity)
+        }
+        return LocalUsageSourceFingerprint(
+            roots: roots.map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath).standardizedFileURL.path }.sorted(),
+            fileCount: accumulator.fileCount, totalSize: accumulator.totalSize,
+            latestModificationTime: accumulator.latestModificationTime, metadataDigest: accumulator.digest)
     }
 
     private struct FingerprintAccumulator {
         var fileCount = 0
         var totalSize: UInt64 = 0
         var latestModificationTime: Date?
+        var metadataTuples: [String] = []
 
-        mutating func add(_ fileURL: URL) {
+        var digest: String {
+            let data = Data(metadataTuples.sorted().joined(separator: "\n").utf8)
+            return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        }
+
+        mutating func add(_ fileURL: URL, fileManager: FileManager) {
             guard let values = try? fileURL.resourceValues(
                 forKeys: [.isRegularFileKey, .fileSizeKey, .contentModificationDateKey]
             ), values.isRegularFile == true else {
                 return
             }
 
-            fileCount += 1
-            if let fileSize = values.fileSize, fileSize > 0 {
-                totalSize += UInt64(fileSize)
+            let attributes = try? fileManager.attributesOfItem(atPath: fileURL.path)
+            add(path: fileURL.standardizedFileURL.path, size: UInt64(max(0, values.fileSize ?? 0)),
+                modifiedAt: values.contentModificationDate, inode: (attributes?[.systemFileNumber] as? NSNumber)?.uint64Value)
+        }
+
+        mutating func add(path: String, size: UInt64, modifiedAt: Date?, inode: UInt64?) {
+            let tuple = [path, String(size), String(modifiedAt?.timeIntervalSinceReferenceDate ?? 0), inode.map(String.init) ?? ""]
+            // JSON framing avoids ambiguity for paths containing delimiters or newlines.
+            if let data = try? JSONEncoder().encode(tuple), let text = String(data: data, encoding: .utf8) {
+                metadataTuples.append(text)
             }
-            if let modifiedAt = values.contentModificationDate,
+            fileCount += 1
+            totalSize += size
+            if let modifiedAt,
                latestModificationTime == nil || modifiedAt > (latestModificationTime ?? .distantPast) {
                 latestModificationTime = modifiedAt
             }
@@ -582,24 +654,34 @@ enum LocalUsageSourceFingerprintBuilder {
 @MainActor
 final class LocalUsageHistoryRepository {
     typealias FingerprintProvider = @Sendable () -> LocalUsageSourceFingerprint
+    typealias AsyncLoader = @Sendable (_ sourceFingerprint: LocalUsageSourceFingerprint) async throws -> LocalUsageHistoryLoadResult
     typealias Loader = @Sendable (_ sourceFingerprint: LocalUsageSourceFingerprint) throws -> LocalUsageHistoryLoadResult
 
-    private struct CachePayload: Codable {
-        var entries: [LocalUsageHistoryEntry]
-    }
 
     private let fileURL: URL
     private let fileManager: FileManager
     private let nowProvider: () -> Date
     private var entries: [LocalUsageHistoryQuery: LocalUsageHistoryEntry] = [:]
     private var loadingTasks: [LocalUsageHistoryQuery: Task<Void, Never>] = [:]
-    private var lastPersistedCacheData: Data?
-    private var lastPersistedEntries: [LocalUsageHistoryEntry]?
+    private let io: LocalUsageHistoryCacheIO
+    private let asynchronousIO: Bool
+    private var touchedQueries: Set<LocalUsageHistoryQuery> = []
+    private var restoreTask: Task<Void, Never>?
+    private var restoreRevision = 0
+    private var restoreInFlight = false
+    private var removedProvidersDuringRestore: Set<String> = []
+    private var taskTokens: [LocalUsageHistoryQuery: UUID] = [:]
+    var onRestore: (@MainActor () -> Void)?
 
     init(
         fileManager: FileManager = .default,
         baseDirectoryURL: URL? = nil,
-        nowProvider: @escaping () -> Date = Date.init
+        nowProvider: @escaping () -> Date = Date.init,
+        asynchronousIO: Bool = true,
+        beforeCacheRead: @escaping @Sendable () -> Void = {},
+        cacheDiagnostic: @escaping @Sendable (String) -> Void = { category in
+            Logger(subsystem: "OhMyUsage", category: "LocalUsageHistoryCache").notice("cache event: \(category, privacy: .public)")
+        }
     ) {
         self.fileManager = fileManager
         self.nowProvider = nowProvider
@@ -612,6 +694,9 @@ final class LocalUsageHistoryRepository {
         self.fileURL = rootDirectory
             .appendingPathComponent("OhMyUsage", isDirectory: true)
             .appendingPathComponent("local_usage_history_cache.json")
+        self.asynchronousIO = asynchronousIO
+        self.io = LocalUsageHistoryCacheIO(fileURL: fileURL, fileManager: fileManager,
+            beforeRead: beforeCacheRead, diagnostic: cacheDiagnostic)
         restoreFromDisk()
     }
 
@@ -621,7 +706,7 @@ final class LocalUsageHistoryRepository {
             summary: entry?.summary,
             error: entry?.lastError,
             isLoading: loadingTasks[query] != nil,
-            lastRefreshedAt: entry?.refreshedAt,
+            lastRefreshedAt: entry?.summary == nil ? nil : entry?.refreshedAt,
             sourceFingerprint: entry?.sourceFingerprint,
             lastFingerprintCheckedAt: entry?.lastFingerprintCheckedAt,
             isStaleFallback: entry?.isStaleFallback ?? false
@@ -635,36 +720,56 @@ final class LocalUsageHistoryRepository {
         fingerprintProbeInterval: TimeInterval = RuntimeDiagnosticsLimits.localUsageTrendFingerprintProbeInterval,
         fingerprintProvider: @escaping FingerprintProvider,
         loader: @escaping Loader,
+        asyncLoader: AsyncLoader? = nil,
         onStateChange: @escaping @MainActor () -> Void
     ) {
         prune(now: nowProvider())
         guard loadingTasks[query] == nil else { return }
 
         let now = nowProvider()
+        if !force, let deadline = entries[query]?.retryNotBefore, now < deadline { return }
         if !force,
            let entry = entries[query],
+           entry.lastError == nil,
            let summary = entry.summary,
            now.timeIntervalSince(entry.refreshedAt) < ttl,
+           now.timeIntervalSince(entry.refreshedAt) < maximumLoadAge(for: query),
            isSummaryTemporallyFresh(summary, now: now),
            !shouldProbeFingerprint(entry: entry, now: now, interval: fingerprintProbeInterval) {
             return
         }
 
+        let token = UUID()
+        taskTokens[query] = token
         loadingTasks[query] = Task { @MainActor [weak self] in
             guard let self else { return }
+            defer {
+                if taskTokens[query] == token {
+                    loadingTasks.removeValue(forKey: query)
+                    taskTokens.removeValue(forKey: query)
+                }
+            }
+            await restoreTask?.value
+            guard !Task.isCancelled, taskTokens[query] == token else { return }
+            if restoreInFlight { touchedQueries.insert(query) }
             onStateChange()
 
-            let fingerprint = await Task.detached(priority: .utility) {
+            let fingerprintWorker = Task.detached(priority: .utility) {
                 fingerprintProvider()
-            }.value
+            }
+            let fingerprint = await withTaskCancellationHandler {
+                await fingerprintWorker.value
+            } onCancel: { fingerprintWorker.cancel() }
+            guard !Task.isCancelled, taskTokens[query] == token else { onStateChange(); return }
 
             if !force,
                var entry = entries[query],
                let summary = entry.summary,
+               entry.lastError == nil,
                entry.sourceFingerprint == fingerprint,
+               nowProvider().timeIntervalSince(entry.refreshedAt) < maximumLoadAge(for: query),
                isSummaryTemporallyFresh(summary, now: nowProvider()) {
                 let validatedAt = nowProvider()
-                entry.refreshedAt = validatedAt
                 entry.lastFingerprintCheckedAt = validatedAt
                 entry.lastError = nil
                 entry.isStaleFallback = false
@@ -676,11 +781,20 @@ final class LocalUsageHistoryRepository {
                 return
             }
 
-            let result = await Task.detached(priority: .utility) {
-                Result<LocalUsageHistoryLoadResult, Error> {
-                    try loader(fingerprint)
-                }
-            }.value
+            let loaderWorker = Task.detached(priority: .utility) {
+                do {
+                    try Task.checkCancellation()
+                    let result: LocalUsageHistoryLoadResult
+                    if let asyncLoader { result = try await asyncLoader(fingerprint) }
+                    else { result = try loader(fingerprint) }
+                    try Task.checkCancellation()
+                    return Result<LocalUsageHistoryLoadResult, Error>.success(result)
+                } catch { return Result<LocalUsageHistoryLoadResult, Error>.failure(error) }
+            }
+            let result = await withTaskCancellationHandler {
+                await loaderWorker.value
+            } onCancel: { loaderWorker.cancel() }
+            guard !Task.isCancelled, taskTokens[query] == token else { onStateChange(); return }
 
             loadingTasks.removeValue(forKey: query)
             let refreshedAt = nowProvider()
@@ -693,11 +807,13 @@ final class LocalUsageHistoryRepository {
                     sourceFingerprint: loadResult.sourceFingerprint,
                     lastFingerprintCheckedAt: refreshedAt,
                     lastError: nil,
-                    isStaleFallback: false
+                    isStaleFallback: false,
+                    lastAttemptAt: refreshedAt
                 )
             case .failure(let error):
                 if var existing = entries[query], existing.summary != nil {
-                    existing.refreshedAt = refreshedAt
+                    existing.lastAttemptAt = refreshedAt
+                    existing.retryNotBefore = refreshedAt.addingTimeInterval(30)
                     existing.lastFingerprintCheckedAt = refreshedAt
                     existing.lastError = error.localizedDescription
                     existing.isStaleFallback = true
@@ -710,7 +826,9 @@ final class LocalUsageHistoryRepository {
                         sourceFingerprint: fingerprint,
                         lastFingerprintCheckedAt: refreshedAt,
                         lastError: error.localizedDescription,
-                        isStaleFallback: false
+                        isStaleFallback: false,
+                        lastAttemptAt: refreshedAt,
+                        retryNotBefore: refreshedAt.addingTimeInterval(30)
                     )
                 }
             }
@@ -724,38 +842,89 @@ final class LocalUsageHistoryRepository {
     }
 
     func restoreFromDisk() {
-        guard fileManager.fileExists(atPath: fileURL.path),
-              let data = try? Data(contentsOf: fileURL),
-              let payload = try? decoder.decode(CachePayload.self, from: data) else {
+        restoreRevision += 1
+        let revision = restoreRevision
+        restoreInFlight = true
+        if !asynchronousIO {
+            mergeRestored(io.restore())
+            touchedQueries.removeAll(keepingCapacity: false)
+            restoreInFlight = false
             return
         }
-        entries = Dictionary(uniqueKeysWithValues: payload.entries.map { ($0.query, $0) })
+        restoreTask = Task { @MainActor [weak self, io] in
+            let restored = await withCheckedContinuation { continuation in
+                io.queue.async { continuation.resume(returning: io.restore()) }
+            }
+            guard let self, self.restoreRevision == revision else { return }
+            self.mergeRestored(restored)
+            self.touchedQueries.removeAll(keepingCapacity: false)
+            self.restoreInFlight = false
+        }
+    }
+
+    private func mergeRestored(_ restored: [LocalUsageHistoryEntry]) {
+        for entry in restored where !touchedQueries.contains(entry.query) && !removedProvidersDuringRestore.contains(entry.query.providerID) {
+            if let existing = entries[entry.query], existing.refreshedAt >= entry.refreshedAt { continue }
+            entries[entry.query] = entry
+        }
         prune(now: nowProvider())
-        let persistedEntries = sortedEntries()
-        lastPersistedEntries = persistedEntries
-        lastPersistedCacheData = try? encoder.encode(CachePayload(entries: persistedEntries))
+        if !removedProvidersDuringRestore.isEmpty {
+            removedProvidersDuringRestore.removeAll(keepingCapacity: false)
+            persist()
+        }
+        onRestore?()
     }
 
     func persist() {
-        do {
-            let persistedEntries = sortedEntries()
-            if persistedEntries == lastPersistedEntries,
-               fileManager.fileExists(atPath: fileURL.path) {
-                return
-            }
-            let payload = CachePayload(entries: persistedEntries)
-            let data = try encoder.encode(payload)
-            if data == lastPersistedCacheData,
-               fileManager.fileExists(atPath: fileURL.path) {
-                lastPersistedEntries = persistedEntries
-                return
-            }
-            try ensureDirectoryExists()
-            try data.write(to: fileURL, options: .atomic)
-            lastPersistedEntries = persistedEntries
-            lastPersistedCacheData = data
-        } catch {
-            return
+        let snapshot = sortedEntries()
+        if asynchronousIO {
+            io.enqueue(snapshot)
+        } else {
+            io.persist(snapshot)
+        }
+    }
+
+    func cancelRefresh(for query: LocalUsageHistoryQuery) {
+        loadingTasks.removeValue(forKey: query)?.cancel()
+        taskTokens.removeValue(forKey: query)
+    }
+
+    func cancelAllRefreshes() {
+        for task in loadingTasks.values { task.cancel() }
+        loadingTasks.removeAll(keepingCapacity: false)
+        taskTokens.removeAll(keepingCapacity: false)
+    }
+
+    func removeEntries(providerID: String) {
+        if restoreInFlight { removedProvidersDuringRestore.insert(providerID) }
+        for query in Array(loadingTasks.keys) where query.providerID == providerID { cancelRefresh(for: query) }
+        entries = entries.filter { $0.key.providerID != providerID }
+        touchedQueries = touchedQueries.filter { $0.providerID != providerID }
+        // Persist only after the pending restore merges unrelated providers.
+        if !restoreInFlight { persist() }
+    }
+
+    func reset() {
+        restoreRevision += 1
+        restoreInFlight = false
+        removedProvidersDuringRestore.removeAll(keepingCapacity: false)
+        cancelAllRefreshes()
+        entries.removeAll(keepingCapacity: false)
+        touchedQueries.removeAll(keepingCapacity: false)
+        persist()
+    }
+
+    func shutdown() async {
+        cancelAllRefreshes()
+        await flushPersistence()
+    }
+
+    /// Await this at orderly shutdown/tests; abrupt termination can lose queued cache writes.
+    func flushPersistence() async {
+        guard asynchronousIO else { return }
+        await restoreTask?.value
+        await withCheckedContinuation { continuation in
+            io.queue.async { continuation.resume() }
         }
     }
 
@@ -775,7 +944,7 @@ final class LocalUsageHistoryRepository {
                     if lhs.refreshedAt != rhs.refreshedAt {
                         return lhs.refreshedAt > rhs.refreshedAt
                     }
-                    return lhs.query.providerID < rhs.query.providerID
+                    return sortKey(lhs.query) < sortKey(rhs.query)
                 }
                 .prefix(maxEntries)
                 .map(\.query)
@@ -788,8 +957,12 @@ final class LocalUsageHistoryRepository {
             if lhs.refreshedAt != rhs.refreshedAt {
                 return lhs.refreshedAt > rhs.refreshedAt
             }
-            return lhs.query.providerID < rhs.query.providerID
+            return sortKey(lhs.query) < sortKey(rhs.query)
         }
+    }
+
+    private func sortKey(_ query: LocalUsageHistoryQuery) -> String {
+        [query.providerType.rawValue, query.providerID, query.scope.rawValue, query.identityKey].joined(separator: "\u{0}")
     }
 
     private func shouldProbeFingerprint(
@@ -802,26 +975,119 @@ final class LocalUsageHistoryRepository {
         return now.timeIntervalSince(reference) >= max(5, interval)
     }
 
+    private func maximumLoadAge(for query: LocalUsageHistoryQuery) -> TimeInterval {
+        query.providerType == .cursor ? 60 : 30 * 60
+    }
+
     private func isSummaryTemporallyFresh(_ summary: LocalUsageSummary, now: Date) -> Bool {
         Calendar.current.isDate(summary.generatedAt, equalTo: now, toGranularity: .hour)
     }
 
-    private func ensureDirectoryExists() throws {
-        let directory = fileURL.deletingLastPathComponent()
-        if !fileManager.fileExists(atPath: directory.path) {
-            try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+}
+
+private final class LocalUsageHistoryCacheIO: @unchecked Sendable {
+    struct Payload: Codable {
+        var schemaVersion: Int? = 2
+        var entries: [LocalUsageHistoryEntry]
+    }
+
+    let queue = DispatchQueue(label: "OhMyUsage.localUsageHistory.cache", qos: .utility)
+    private let fileURL: URL
+    private let fileManager: FileManager
+    private let beforeRead: @Sendable () -> Void
+    private let diagnostic: @Sendable (String) -> Void
+    private var lastPersistedEntries: [LocalUsageHistoryEntry]?
+    private let pendingLock = NSLock()
+    private var pending: [LocalUsageHistoryEntry]?
+    private var writeScheduled = false
+    // 24 slimmed entries fit well below this budget, including model breakdowns.
+    static let maximumBytes = 16 * 1024 * 1024
+
+    init(fileURL: URL, fileManager: FileManager,
+         beforeRead: @escaping @Sendable () -> Void, diagnostic: @escaping @Sendable (String) -> Void) {
+        self.fileURL = fileURL
+        self.fileManager = fileManager
+        self.beforeRead = beforeRead
+        self.diagnostic = diagnostic
+    }
+
+    func enqueue(_ entries: [LocalUsageHistoryEntry]) {
+        pendingLock.lock()
+        pending = entries
+        let schedule = !writeScheduled
+        writeScheduled = true
+        pendingLock.unlock()
+        guard schedule else { return }
+        queue.async { [self] in
+            while true {
+                pendingLock.lock()
+                guard let snapshot = pending else {
+                    writeScheduled = false
+                    pendingLock.unlock()
+                    return
+                }
+                pending = nil
+                pendingLock.unlock()
+                persist(snapshot)
+            }
         }
     }
 
-    private var encoder: JSONEncoder {
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        return encoder
-    }
-
-    private var decoder: JSONDecoder {
+    func restore() -> [LocalUsageHistoryEntry] {
+        beforeRead()
+        guard let handle = try? FileHandle(forReadingFrom: fileURL) else { return [] }
+        defer { try? handle.close() }
+        guard let data = try? handle.read(upToCount: Self.maximumBytes + 1), data.count <= Self.maximumBytes else {
+            diagnostic("restoreSizeOrReadFailure")
+            return []
+        }
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        return decoder
+        guard let payload = try? decoder.decode(Payload.self, from: data),
+              payload.schemaVersion == nil || payload.schemaVersion == 2 else {
+            diagnostic("restoreSchemaOrDecodeFailure")
+            return []
+        }
+        var restored: [LocalUsageHistoryQuery: LocalUsageHistoryEntry] = [:]
+        for entry in payload.entries where Self.isValid(entry) {
+            // First wins ties; newest successful refresh wins duplicate keys.
+            if let old = restored[entry.query], old.refreshedAt >= entry.refreshedAt { continue }
+            restored[entry.query] = entry
+        }
+        if restored.count < payload.entries.count { diagnostic("restoreDiscardedEntries") }
+        return Array(restored.values)
+    }
+
+    func persist(_ entries: [LocalUsageHistoryEntry]) {
+        guard entries != lastPersistedEntries || !fileManager.fileExists(atPath: fileURL.path) else { return }
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        do {
+            let data = try encoder.encode(Payload(entries: entries))
+            guard data.count <= Self.maximumBytes else { return }
+            try fileManager.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try data.write(to: fileURL, options: .atomic)
+            lastPersistedEntries = entries
+        } catch {
+            diagnostic("persistFailure")
+            // This reconstructible display cache never invalidates the in-memory result.
+            return
+        }
+    }
+
+    private static func isValid(_ entry: LocalUsageHistoryEntry) -> Bool {
+        guard !entry.query.providerID.isEmpty, !entry.query.identityKey.isEmpty,
+              entry.refreshedAt.timeIntervalSinceReferenceDate.isFinite,
+              entry.sourceFingerprint.map({ $0.fileCount >= 0 && $0.roots.count <= 1024 }) ?? true else { return false }
+        guard let summary = entry.summary else { return true }
+        let periods = [summary.today, summary.yesterday, summary.last30Days]
+        return summary.generatedAt.timeIntervalSinceReferenceDate.isFinite &&
+            periods.allSatisfy {
+                $0.totalTokens >= 0 && $0.responses >= 0 && $0.inputTokens >= 0 && $0.outputTokens >= 0 &&
+                $0.cacheReadTokens >= 0 && $0.cacheWriteTokens >= 0 && $0.byModel.count <= 1024 &&
+                $0.byModel.allSatisfy { $0.totalTokens >= 0 && $0.responses >= 0 }
+            } &&
+            summary.hourly24.count <= 48 && summary.daily7.count <= 32 &&
+            (summary.hourly24 + summary.daily7).allSatisfy { $0.totalTokens >= 0 && $0.responses >= 0 }
     }
 }

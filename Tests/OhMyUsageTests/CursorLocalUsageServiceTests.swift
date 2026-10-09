@@ -57,7 +57,7 @@ final class CursorLocalUsageServiceTests: XCTestCase {
         XCTAssertEqual(events.first?.totalTokens, 90)
     }
 
-    func testFetchEventsFallsBackToLocalTokensWhenDashboardIsEmpty() throws {
+    func testFetchEventsFallsBackToLocalTokensWhenDashboardIsEmpty() async throws {
         let databaseURL = temporaryDirectory.appendingPathComponent("state.vscdb")
         try createCursorDatabase(at: databaseURL.path)
         let now = try fixedDate("2026-05-16T12:00:00Z")
@@ -83,6 +83,114 @@ final class CursorLocalUsageServiceTests: XCTestCase {
         XCTAssertEqual(events.first?.inputTokens, 40)
         XCTAssertEqual(events.first?.outputTokens, 10)
         XCTAssertEqual(events.first?.modelID, "composer-2")
+        XCTAssertTrue(try service.fetchSummary().isApproximateFallback)
+        let asyncSummary = try await service.fetchSummaryAsync()
+        XCTAssertTrue(asyncSummary.isApproximateFallback)
+    }
+
+    func testDashboardUsesRawRowCountAfterFiltering() throws {
+        let valid: [String: Any] = ["id": "first", "timestamp": "2026-05-16T10:00:00Z", "tokenUsage": ["inputTokens": 1]]
+        var rows = Array(repeating: valid, count: 199)
+        rows.append(["tokenUsage": ["inputTokens": 0]])
+        let first = try JSONSerialization.data(withJSONObject: ["usageEvents": rows])
+        let last = try JSONSerialization.data(withJSONObject: ["usageEvents": [
+            ["id": "second", "timestamp": "2026-05-16T11:00:00Z", "tokenUsage": ["inputTokens": 2]]
+        ]])
+        let client = CursorDashboardUsageClient(requestSender: { request in
+            let body = try JSONSerialization.jsonObject(with: request.httpBody!) as! [String: Any]
+            return (body["page"] as? Int) == 1 ? first : last
+        })
+        let result = try client.fetchResult(since: .distantPast, until: .distantFuture,
+                                            auth: .init(databasePath: "fixture", accessToken: "fixture", userID: "fixture"))
+        XCTAssertEqual(result.events.count, 200)
+        XCTAssertEqual(result.events.last?.signature, "cursor|second")
+        XCTAssertFalse(result.isPartial)
+    }
+
+    func testDashboardFullInvalidRowsStillRequestNextPage() throws {
+        let first = try JSONSerialization.data(withJSONObject: ["usageEvents": Array(repeating: ["tokenUsage": ["inputTokens": 0]], count: 200)])
+        let last = try JSONSerialization.data(withJSONObject: ["usageEvents": [["id": "next", "timestamp": "2026-05-16T11:00:00Z", "tokenUsage": ["inputTokens": 1]]]])
+        let client = CursorDashboardUsageClient(requestSender: { request in
+            let body = try JSONSerialization.jsonObject(with: request.httpBody!) as! [String: Any]
+            return (body["page"] as? Int) == 1 ? first : last
+        })
+        let result = try client.fetchResult(since: .distantPast, until: .distantFuture,
+                                            auth: .init(databasePath: "fixture", accessToken: "fixture", userID: "fixture"))
+        XCTAssertEqual(result.events.count, 1)
+        XCTAssertFalse(result.isPartial)
+    }
+
+    func testDashboardRepeatedPageAndLimitReportPartial() throws {
+        let page = try JSONSerialization.data(withJSONObject: ["usageEvents": Array(repeating: ["id": "one", "timestamp": "2026-05-16T11:00:00Z", "tokenUsage": ["inputTokens": 1]], count: 200)])
+        let auth = CursorLocalAuth(databasePath: "fixture", accessToken: "fixture", userID: "fixture")
+        let repeated = try CursorDashboardUsageClient(requestSender: { _ in page })
+            .fetchResult(since: .distantPast, until: .distantFuture, auth: auth)
+        XCTAssertTrue(repeated.isPartial)
+        XCTAssertEqual(repeated.events.count, 200)
+        let limited = try CursorDashboardUsageClient(maxPages: 1, requestSender: { _ in page })
+            .fetchResult(since: .distantPast, until: .distantFuture, auth: auth)
+        XCTAssertTrue(limited.isPartial)
+    }
+
+    func testAsyncDashboardCancellationStopsRequests() async throws {
+        let client = CursorDashboardUsageClient(asyncRequestSender: { _ in
+            try await Task.sleep(for: .seconds(20))
+            return Data()
+        })
+        let task = Task {
+            try await client.fetchResultAsync(since: .distantPast, until: .distantFuture,
+                auth: .init(databasePath: "fixture", accessToken: "fixture", userID: "fixture"))
+        }
+        task.cancel()
+        do { _ = try await task.value; XCTFail("expected cancellation") }
+        catch { XCTAssertTrue(error is CancellationError) }
+    }
+
+    private actor RequestProbe {
+        var count = 0
+        func increment() { count += 1 }
+    }
+
+    func testAsyncEquivalentRequestsShareFlightAndOneCancelledWaiterDoesNotCancelOther() async throws {
+        let probe = RequestProbe()
+        let data = try JSONSerialization.data(withJSONObject: ["usageEvents": [["id": "one", "timestamp": "2026-05-16T11:00:00Z", "tokenUsage": ["inputTokens": 1]]]])
+        let client = CursorDashboardUsageClient(asyncRequestSender: { _ in
+            await probe.increment()
+            try await Task.sleep(for: .milliseconds(150))
+            return data
+        })
+        let auth = CursorLocalAuth(databasePath: "fixture", accessToken: "fixture", userID: "fixture")
+        let first = Task { try await client.fetchResultAsync(since: .distantPast, until: .distantFuture, auth: auth) }
+        let second = Task { try await client.fetchResultAsync(since: .distantPast, until: .distantFuture, auth: auth) }
+        try await Task.sleep(for: .milliseconds(50))
+        let cancelledAt = Date()
+        first.cancel()
+        do { _ = try await first.value; XCTFail("expected cancelled waiter") } catch { XCTAssertTrue(error is CancellationError) }
+        XCTAssertLessThan(Date().timeIntervalSince(cancelledAt), 0.08)
+        let surviving = try await second.value
+        XCTAssertEqual(surviving.events.count, 1)
+        do { _ = try await first.value; XCTFail("expected cancelled waiter") } catch { XCTAssertTrue(error is CancellationError) }
+        let count = await probe.count
+        XCTAssertEqual(count, 1)
+    }
+
+    func testInvalidAndLaterFailureAreNotReportedAsComplete() throws {
+        XCTAssertThrowsError(try CursorDashboardUsageClient.parsePage(Data("{}".utf8)))
+        let data = try JSONSerialization.data(withJSONObject: ["usageEvents": Array(repeating: ["id": "one", "timestamp": "2026-05-16T11:00:00Z", "tokenUsage": ["inputTokens": 1]], count: 200)])
+        let client = CursorDashboardUsageClient(requestSender: { request in
+            let body = try JSONSerialization.jsonObject(with: request.httpBody!) as! [String: Any]
+            if (body["page"] as? Int) == 1 { return data }
+            throw URLError(.notConnectedToInternet)
+        })
+        let result = try client.fetchResult(since: .distantPast, until: .distantFuture,
+            auth: .init(databasePath: "fixture", accessToken: "fixture", userID: "fixture"))
+        XCTAssertTrue(result.isPartial)
+        XCTAssertEqual(result.events.count, 200)
+        let empty = try CursorDashboardUsageClient(requestSender: { _ in Data("{\"usageEvents\":[]}".utf8) })
+            .fetchResult(since: .distantPast, until: .distantFuture,
+                auth: .init(databasePath: "fixture", accessToken: "fixture", userID: "fixture"))
+        XCTAssertTrue(empty.events.isEmpty)
+        XCTAssertFalse(empty.isPartial)
     }
 
     private func createCursorDatabase(at path: String) throws {

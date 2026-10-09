@@ -118,11 +118,11 @@ final class KiroProvider: UsageProvider, @unchecked Sendable {
         let clean = text.replacingOccurrences(of: #"\u{001B}\[[0-9;]*[A-Za-z]"#, with: "", options: .regularExpression)
         var windows: [UsageQuotaWindow] = []
 
-        let bonus = clean.regexCaptures(pattern: #"Bonus credits:\s*([\d.,]+)/([\d.,]+)"#)
+        let bonus = ProviderTextParsing.regexCaptures(in: clean, pattern: #"Bonus credits:\s*([\d.,]+)/([\d.,]+)"#)
         if bonus.count >= 3,
            let used = parseNumeric(bonus[1]), let total = parseNumeric(bonus[2]), total > 0 {
             let remainingPercent = max(0, (total - used) / total * 100)
-            let days = clean.regexCaptures(pattern: #"expires in (\d+) days"#)
+            let days = ProviderTextParsing.regexCaptures(in: clean, pattern: #"expires in (\d+) days"#)
             let resetAt = days.count >= 2 ? Date().addingTimeInterval((Double(days[1]) ?? 0) * 24 * 3600) : nil
             windows.append(
                 UsageQuotaWindow(
@@ -147,7 +147,7 @@ final class KiroProvider: UsageProvider, @unchecked Sendable {
             let total = creditsUsage.total
             let remainingPercent = max(0, (total - used) / total * 100)
             var resetAt: Date?
-            let reset = clean.regexCaptures(pattern: #"resets on (\d{2}/\d{2})"#)
+            let reset = ProviderTextParsing.regexCaptures(in: clean, pattern: #"resets on (\d{2}/\d{2})"#)
             if reset.count >= 2 {
                 let comps = reset[1].split(separator: "/").compactMap { Int($0) }
                 if comps.count == 2 {
@@ -422,7 +422,7 @@ final class KiroProvider: UsageProvider, @unchecked Sendable {
 
     private static func parseFirstUsagePair(in text: String, patterns: [String]) -> (used: Double, total: Double)? {
         for pattern in patterns {
-            let captures = text.regexCaptures(pattern: pattern)
+            let captures = ProviderTextParsing.regexCaptures(in: text, pattern: pattern)
             guard captures.count >= 3,
                   let used = parseNumeric(captures[1]),
                   let total = parseNumeric(captures[2]),
@@ -570,17 +570,7 @@ final class KiroProvider: UsageProvider, @unchecked Sendable {
     }
 }
 
-private extension String {
-    func regexCaptures(pattern: String) -> [String] {
-        guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
-        let range = NSRange(startIndex..<endIndex, in: self)
-        guard let match = regex.firstMatch(in: self, range: range) else { return [] }
-        return (0..<match.numberOfRanges).compactMap { index in
-            guard let range = Range(match.range(at: index), in: self) else { return nil }
-            return String(self[range])
-        }
-    }
-}
+
 
 private struct KiroUsageBreakdown {
     var type: String?

@@ -1,3 +1,4 @@
+import OhMyUsageApplication
 import AppKit
 import OhMyUsageDomain
 import SwiftUI
@@ -1599,38 +1600,14 @@ extension SettingsView {
             dropTargetProviderID = targetProviderID
             dropTargetInsertAfter = insertAfter
 
-            var ids = previewProviderIDs ?? enabledProviderIDs
-            guard let sourceIndex = ids.firstIndex(of: draggingProviderID),
-                  let targetIndex = ids.firstIndex(of: targetProviderID) else {
-                return
-            }
-
-            let destinationIndex = Self.destinationIndex(
-                sourceIndex: sourceIndex,
-                targetIndex: targetIndex,
+            previewProviderIDs = ProviderSidebarReorderPolicy.preview(
+                ids: previewProviderIDs ?? enabledProviderIDs,
+                draggingID: draggingProviderID,
+                targetID: targetProviderID,
                 insertAfter: insertAfter
             )
-
-            if sourceIndex == destinationIndex || sourceIndex + 1 == destinationIndex {
-                previewProviderIDs = ids
-                return
-            }
-
-            ids.remove(at: sourceIndex)
-            let adjustedDestination = sourceIndex < destinationIndex ? destinationIndex - 1 : destinationIndex
-            ids.insert(draggingProviderID, at: adjustedDestination)
-            previewProviderIDs = ids
         }
 
-        private static func destinationIndex(
-            sourceIndex: Int,
-            targetIndex: Int,
-            insertAfter: Bool
-        ) -> Int {
-            if sourceIndex < targetIndex {
-                return insertAfter ? targetIndex + 1 : targetIndex
-            }
-            return insertAfter ? targetIndex + 1 : targetIndex
-        }
+
     }
 }

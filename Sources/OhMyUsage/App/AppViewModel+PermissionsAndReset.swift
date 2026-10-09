@@ -1,4 +1,5 @@
 import Foundation
+import OhMyUsageProviders
 
 @MainActor
 extension AppViewModel {
@@ -8,6 +9,9 @@ extension AppViewModel {
                 stopPollingAndTransientTasks: {
                     self.permissionModel.cancelTransientTasks()
                     self.providerRefreshModel.stopPolling()
+                    self.providerRefreshModel.invalidateRefreshes()
+                    self.resetLocalUsageHistoryCache()
+                    self.resetUsageAnalyticsCache()
                     self.officialProfilesModel.cancelTransientFeedback()
                     self.codexOAuthImportTask?.cancel()
                     self.codexOAuthImportTask = nil
@@ -33,6 +37,7 @@ extension AppViewModel {
                         state.snapshots.removeAll()
                         state.errors.removeAll()
                         state.consecutiveFailures.removeAll()
+                        state.retryNotBefore.removeAll()
                         state.activeAlerts.removeAll()
                         state.thirdPartyBalanceBaselineTracker.removeAll()
                         state.lastUpdatedAt = nil
@@ -42,6 +47,7 @@ extension AppViewModel {
                 resetPersistentState: {
                     self.launchAtLoginService.reset()
                     self.credentialAccessService.resetAllStoredCredentials()
+                    OfficialProviderFetchRuntime.invalidateCaches()
                     self.persistedSnapshotCache?.removeAll()
                     self.codexProfileStore.reset()
                     self.codexSlotStore.reset()

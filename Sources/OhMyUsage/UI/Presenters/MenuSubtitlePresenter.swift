@@ -1,7 +1,7 @@
 import OhMyUsageApplication
 import Foundation
 import OhMyUsageDomain
-import OhMyUsageProviders
+import OhMyUsagePresentation
 
 enum MenuSubtitlePresenter {
     static func officialAccountSubtitle(
@@ -13,7 +13,7 @@ enum MenuSubtitlePresenter {
     ) -> String? {
         let accountValue: String? = {
             guard showAccountEmail,
-                  let value = OfficialValueParser.nonPlaceholderString(snapshot?.accountLabel) else {
+                  let value = AccountLabelPresentation.displayable(snapshot?.accountLabel) else {
                 return nil
             }
             return value

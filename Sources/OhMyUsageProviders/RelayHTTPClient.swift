@@ -30,7 +30,9 @@ public struct RelayHTTPClient {
         do {
             (data, response) = try await session.data(for: req)
         } catch let error as URLError {
-            throw ProviderError.timeout(error.localizedDescription)
+            if error.code == .cancelled { throw CancellationError() }
+            if error.code == .timedOut { throw ProviderError.timeout(error.localizedDescription) }
+            throw error
         }
         guard let http = response as? HTTPURLResponse else {
             throw ProviderError.invalidResponse("non-http response")
@@ -45,6 +47,9 @@ public struct RelayHTTPClient {
             throw ProviderError.unauthorized
         }
         if http.statusCode == 429 {
+            if let deadline = ProviderRateLimitError.parseRetryAfter(http.value(forHTTPHeaderField: "Retry-After")) {
+                throw ProviderRateLimitError(retryNotBefore: deadline)
+            }
             throw ProviderError.rateLimited
         }
         if http.statusCode == 408 || (500...599).contains(http.statusCode) {
@@ -82,6 +87,9 @@ public struct RelayHTTPClient {
             throw ProviderError.unauthorized
         }
         if http.statusCode == 429 {
+            if let deadline = ProviderRateLimitError.parseRetryAfter(http.value(forHTTPHeaderField: "Retry-After")) {
+                throw ProviderRateLimitError(retryNotBefore: deadline)
+            }
             throw ProviderError.rateLimited
         }
         guard (200...299).contains(http.statusCode) else {

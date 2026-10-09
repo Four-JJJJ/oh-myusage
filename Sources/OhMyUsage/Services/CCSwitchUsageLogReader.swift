@@ -59,6 +59,8 @@ struct CCSwitchUsageRecord: Equatable, Sendable {
 }
 
 struct CCSwitchUsageReadResult: Equatable, Sendable {
+    enum SourceStatus: Equatable, Sendable { case absent, complete, failed }
+    var sourceStatus: SourceStatus = .complete
     var records: [CCSwitchUsageRecord]
     var diagnostics: [String]
 }
@@ -101,6 +103,7 @@ final class CCSwitchUsageLogReader: @unchecked Sendable {
     func readUsageLogs(since: Date, until: Date) -> CCSwitchUsageReadResult {
         guard fileManager.fileExists(atPath: databasePath) else {
             return CCSwitchUsageReadResult(
+                sourceStatus: .absent,
                 records: [],
                 diagnostics: ["未安装 cc-switch，已仅使用各官方应用的本地用量日志"]
             )
@@ -110,27 +113,30 @@ final class CCSwitchUsageLogReader: @unchecked Sendable {
         guard sqlite3_open_v2(databasePath, &database, SQLITE_OPEN_READONLY, nil) == SQLITE_OK,
               let database else {
             return CCSwitchUsageReadResult(
+                sourceStatus: .failed,
                 records: [],
-                diagnostics: ["无法只读打开 cc-switch 请求日志：\(databasePath)"]
+                diagnostics: ["无法只读打开 cc-switch 请求日志"]
             )
         }
         defer { sqlite3_close(database) }
 
         var diagnostics: [String] = []
+        var readFailed = false
         var records: [CCSwitchUsageRecord] = []
 
         if tableExists("proxy_request_logs", database: database) {
-            records.append(contentsOf: readProxyLogs(database: database, since: since, until: until))
+            records.append(contentsOf: readProxyLogs(database: database, since: since, until: until, readFailed: &readFailed))
         } else {
             diagnostics.append("cc-switch 数据库缺少 proxy_request_logs 表")
         }
 
         if tableExists("usage_daily_rollups", database: database) {
-            let rollups = readDailyRollups(database: database, since: since, until: until)
+            let rollups = readDailyRollups(database: database, since: since, until: until, readFailed: &readFailed)
             records.append(contentsOf: Self.rollupsWithoutCoveredDetailDays(rollups, details: records))
         }
 
-        return CCSwitchUsageReadResult(records: records, diagnostics: diagnostics)
+        if readFailed || Task.isCancelled { diagnostics.append("cc-switch 请求日志读取未完成") }
+        return CCSwitchUsageReadResult(sourceStatus: diagnostics.isEmpty ? .complete : .failed, records: records, diagnostics: diagnostics)
     }
 
     func sourceFingerprint() -> LocalUsageSourceFingerprint {
@@ -145,7 +151,7 @@ final class CCSwitchUsageLogReader: @unchecked Sendable {
         )
     }
 
-    private func readProxyLogs(database: OpaquePointer, since: Date, until: Date) -> [CCSwitchUsageRecord] {
+    private func readProxyLogs(database: OpaquePointer, since: Date, until: Date, readFailed: inout Bool) -> [CCSwitchUsageRecord] {
         let hasProviders = tableExists("providers", database: database)
         let providerNameExpression = hasProviders ? "p.name" : "NULL"
         let joinExpression = hasProviders ? "LEFT JOIN providers p ON p.id = l.provider_id" : ""
@@ -164,6 +170,7 @@ final class CCSwitchUsageLogReader: @unchecked Sendable {
             database: database,
             query: query,
             source: .proxyRequestLogs,
+            readFailed: &readFailed,
             bind: { statement in
                 Self.bindCreatedAtRawEpochRanges(statement, since: since, until: until)
             },
@@ -212,7 +219,7 @@ final class CCSwitchUsageLogReader: @unchecked Sendable {
         return output
     }
 
-    private func readDailyRollups(database: OpaquePointer, since: Date, until: Date) -> [CCSwitchUsageRecord] {
+    private func readDailyRollups(database: OpaquePointer, since: Date, until: Date, readFailed: inout Bool) -> [CCSwitchUsageRecord] {
         let hasProviders = tableExists("providers", database: database)
         let providerNameExpression = hasProviders ? "p.name" : "NULL"
         let joinExpression = hasProviders ? "LEFT JOIN providers p ON p.id = r.provider_id" : ""
@@ -233,6 +240,7 @@ final class CCSwitchUsageLogReader: @unchecked Sendable {
             database: database,
             query: query,
             source: .dailyRollups,
+            readFailed: &readFailed,
             bind: { statement in
                 sqlite3_bind_text(statement, 1, startDay, -1, sqliteTransient)
                 sqlite3_bind_text(statement, 2, endDay, -1, sqliteTransient)
@@ -292,23 +300,29 @@ final class CCSwitchUsageLogReader: @unchecked Sendable {
         database: OpaquePointer,
         query: String,
         source: CCSwitchUsageLogReaderStreamEvent.Source,
+        readFailed: inout Bool,
         bind: ((OpaquePointer?) -> Void)? = nil,
         body: (SQLiteRow, Int) -> Void
     ) {
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(database, query, -1, &statement, nil) == SQLITE_OK,
               let statement else {
+            readFailed = true
             return
         }
         defer { sqlite3_finalize(statement) }
         bind?(statement)
 
         var rowOrdinal = 0
-        while sqlite3_step(statement) == SQLITE_ROW {
+        while !Task.isCancelled {
+            let status = sqlite3_step(statement)
+            if status == SQLITE_DONE { return }
+            guard status == SQLITE_ROW else { readFailed = true; return }
             rowOrdinal += 1
             notifyStreamEvent(source: source, phase: .rowRead, ordinal: rowOrdinal)
             body(SQLiteRow(statement: statement), rowOrdinal)
         }
+        readFailed = true
     }
 
     private func notifyStreamEvent(

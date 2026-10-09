@@ -122,7 +122,6 @@ final class CodexLocalUsageService {
     private let maxRowCount: Int
     private let onSessionFileParsed: ((String) -> Void)?
 
-    private static let sessionFileEnumerationCache = LocalUsageFileEnumerationCache()
     private static let parsedSessionFileCache = LocalUsageParsedFileCache<ParsedTokenEvent>(
         maxEntries: RuntimeDiagnosticsLimits.localUsageParsedFileCacheMaxEntries,
         maxCachedValues: RuntimeDiagnosticsLimits.localUsageParsedFileCacheMaxCachedValues
@@ -327,6 +326,7 @@ final class CodexLocalUsageService {
         var events: [ParsedTokenEvent] = []
         events.reserveCapacity(1024)
         for file in files {
+            if Task.isCancelled { break }
             let parsed = Self.parsedSessionFileCache.values(for: file) {
                 onSessionFileParsed?(file.path)
                 return CodexSessionTokenEventScanner.parse(filePath: file.path)
@@ -337,13 +337,8 @@ final class CodexLocalUsageService {
     }
 
     private func sessionJSONLFiles(roots: [String], cutoff: Date) -> [LocalUsageFileSnapshot] {
-        Self.sessionFileEnumerationCache.files(
-            identifier: "codex-session-jsonl",
-            roots: roots,
-            cutoff: cutoff,
-            fileManager: fileManager,
-            includeFile: { $0.pathExtension.lowercased() == "jsonl" }
-        )
+        LocalUsageSourceInventory.files(descriptor: .codexSessionJSONL, roots: roots, fileManager: fileManager)
+            .filter { $0.modifiedAtRef.map { $0 >= cutoff.timeIntervalSinceReferenceDate } ?? true }
     }
 
     private func scanIdentityLogEvents(

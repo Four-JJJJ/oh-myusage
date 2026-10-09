@@ -240,6 +240,9 @@ jobs:
               changes = ""
           if not changes:
               changes = "详见提交记录 / See the commit history for details."
+          curated_notes = Path("docs/releases") / f"{tag}.md"
+          if curated_notes.is_file():
+              changes = curated_notes.read_text(encoding="utf-8").strip()
           body = body.replace("- <变更要点，逐条列出>", changes)
 
           # 模板提示发布前删除“已知问题”空节。

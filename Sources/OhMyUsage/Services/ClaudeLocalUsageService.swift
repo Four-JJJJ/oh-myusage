@@ -121,6 +121,7 @@ final class ClaudeLocalUsageService {
         dedupedEvents.reserveCapacity(1024)
 
         for file in files {
+            if Task.isCancelled { break }
             let events = Self.parsedProjectFileCache.values(for: file) {
                 onProjectFileParsed?(file.path)
                 return parseProjectEvents(filePath: file.path)
@@ -217,7 +218,7 @@ final class ClaudeLocalUsageService {
         var buffer = Data()
         var droppingOversizedLine = false
 
-        while true {
+        while !Task.isCancelled {
             let chunk = try? handle.read(upToCount: 64 * 1024)
             guard let chunk else {
                 break
@@ -242,7 +243,7 @@ final class ClaudeLocalUsageService {
                 buffer.append(chunk)
             }
 
-            while let range = buffer.range(of: newline) {
+            while !Task.isCancelled, let range = buffer.range(of: newline) {
                 let lineData = buffer.subdata(in: 0..<range.lowerBound)
                 buffer.removeSubrange(0..<range.upperBound)
 

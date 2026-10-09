@@ -40,6 +40,22 @@ final class AppUsageAnalyticsModel {
         refreshUsageAnalyticsIfNeeded(force: true)
     }
 
+    func reset() {
+        coordinator.reset()
+        if let filter = getFilter?() { setSnapshot?(.empty(filter: filter)) }
+        setLoading?(false)
+    }
+
+    func removeEntries(providerID: String) {
+        // Aggregate snapshots contain multiple providers; invalidate the entire display cache.
+        _ = providerID
+        reset()
+    }
+
+    func flushPersistence() async {
+        await coordinator.flushPersistence()
+    }
+
     func refreshUsageAnalyticsIfNeeded(force: Bool = false) {
         let filter = requireGetFilter()()
         let snapshot = requireGetSnapshot()()
@@ -94,6 +110,9 @@ final class AppUsageAnalyticsModel {
 }
 
 extension AppViewModel {
+    func resetUsageAnalyticsCache() { usageAnalyticsModel.reset() }
+    func removeUsageAnalyticsEntries(providerID: String) { usageAnalyticsModel.removeEntries(providerID: providerID) }
+
     func refreshUsageAnalytics() {
         usageAnalyticsModel.refreshUsageAnalytics()
     }

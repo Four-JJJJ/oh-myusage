@@ -10,6 +10,7 @@ struct ProviderStateStore {
     var lastUpdatedAt: Date?
     var localUsageHistoryVersion = 0
     var consecutiveFailures: [String: Int] = [:]
+    var retryNotBefore: [String: Date] = [:]
     var activeAlerts: Set<String> = []
     var thirdPartyBalanceBaselineTracker = ThirdPartyBalanceBaselineTracker()
 }

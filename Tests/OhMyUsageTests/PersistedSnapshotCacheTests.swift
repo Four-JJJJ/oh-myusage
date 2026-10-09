@@ -74,6 +74,43 @@ final class PersistedSnapshotCacheTests: XCTestCase {
         )
     }
 
+    func testOlderArrivalCannotOverwriteNewerSnapshot() throws {
+        let directory = try makeTemporaryCacheDirectory()
+        let cache = makeCache(directory: directory)
+        cache.save(providerID: "a", snapshot: Self.makeSnapshot(source: "a", remaining: 80), savedAt: Date(timeIntervalSince1970: 200))
+        cache.save(providerID: "a", snapshot: Self.makeSnapshot(source: "a", remaining: 10), savedAt: Date(timeIntervalSince1970: 100))
+        XCTAssertEqual(cache.loadLatestSnapshots()["a"]?.payload.remaining, 80)
+    }
+
+    func testDispatchRevisionWinsWhenClockMovesBackward() throws {
+        let directory = try makeTemporaryCacheDirectory()
+        let cache = makeCache(directory: directory)
+        cache.enqueueSave(providerID: "a", snapshot: Self.makeSnapshot(source: "a", remaining: 10), savedAt: Date(timeIntervalSince1970: 200))
+        cache.flush()
+        cache.enqueueSave(providerID: "a", snapshot: Self.makeSnapshot(source: "a", remaining: 80), savedAt: Date(timeIntervalSince1970: 100))
+        cache.flush()
+        XCTAssertEqual(cache.loadLatestSnapshots()["a"]?.payload.remaining, 80)
+    }
+
+    func testQueuedWritesAndResetStayOrdered() throws {
+        let directory = try makeTemporaryCacheDirectory()
+        let cache = makeCache(directory: directory)
+        for index in 0..<100 {
+            cache.enqueueSave(providerID: "a", snapshot: Self.makeSnapshot(source: "a", remaining: Double(index)))
+        }
+        cache.flush()
+        XCTAssertEqual(cache.loadLatestSnapshots()["a"]?.payload.remaining, 99)
+        cache.enqueueSave(providerID: "a", snapshot: Self.makeSnapshot(source: "a"))
+        cache.removeAll()
+        cache.flush()
+        XCTAssertTrue(cache.loadAll().isEmpty)
+        cache.enqueueSave(providerID: "a", snapshot: Self.makeSnapshot(source: "a", remaining: 70))
+        cache.removeAll()
+        cache.enqueueSave(providerID: "a", snapshot: Self.makeSnapshot(source: "a", remaining: 90))
+        cache.flush()
+        XCTAssertEqual(cache.loadLatestSnapshots()["a"]?.payload.remaining, 90)
+    }
+
     // MARK: - Cold start restore
 
     func testSaveAndColdStartRestoreRoundTripsWhitelistedFields() throws {

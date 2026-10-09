@@ -5,6 +5,33 @@ import XCTest
 import OhMyUsageProviders
 
 final class RelayProviderTests: XCTestCase {
+    func testHTTPRateLimitPreservesDeadlineAndOfflineIsNotTimeout() async throws {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [RelayMockURLProtocol.self]
+        let client = RelayHTTPClient(session: URLSession(configuration: config))
+        let url = URL(string: "https://fixture.invalid/quota")!
+        RelayMockURLProtocol.requestHandler = { request in
+            (HTTPURLResponse(url: request.url!, statusCode: 429, httpVersion: nil, headerFields: ["Retry-After": "3600"])!, Data())
+        }
+        defer { RelayMockURLProtocol.requestHandler = nil }
+        do {
+            _ = try await client.requestJSON(url: url, headers: [:], method: nil, bodyJSON: nil)
+            XCTFail("Expected rate limit")
+        } catch let limited as ProviderRateLimitError {
+            XCTAssertGreaterThan(limited.retryNotBefore.timeIntervalSinceNow, 3500)
+        }
+        RelayMockURLProtocol.requestHandler = { _ in throw URLError(.notConnectedToInternet) }
+        do {
+            _ = try await client.requestJSON(url: url, headers: [:], method: nil, bodyJSON: nil)
+            XCTFail("Expected offline")
+        } catch let error as URLError { XCTAssertEqual(error.code, .notConnectedToInternet) }
+        RelayMockURLProtocol.requestHandler = { _ in throw URLError(.cancelled) }
+        do {
+            _ = try await client.requestJSON(url: url, headers: [:], method: nil, bodyJSON: nil)
+            XCTFail("Expected cancellation")
+        } catch { XCTAssertTrue(error is CancellationError) }
+    }
+
     func testDecodeRelayConfigWithoutQuotaDisplayModeDefaultsToRemaining() throws {
         let json = #"""
         {
@@ -3386,6 +3413,30 @@ extension RelayProviderTests {
                 cookieHeaderOverride: { _ in nil }
             )
         )
+    }
+
+    func testLaterChannelRateLimitSurvivesEarlierTimeoutAndUsesLatestDeadline() async throws {
+        let service = "OhMyUsageTests-\(UUID().uuidString)"
+        let keychain = makeTestKeychain()
+        XCTAssertTrue(keychain.saveToken("usage-token", service: service, account: "relay.example.com/sk-token"))
+        XCTAssertTrue(keychain.saveToken("balance-token", service: service, account: "relay.example.com/system-token"))
+        defer { RelayMockURLProtocol.requestHandler = nil }
+        for tokenTimeout in [true, false] {
+            RelayMockURLProtocol.requestHandler = { request in
+                if request.url?.path == "/api/usage/token" {
+                    if tokenTimeout { throw URLError(.timedOut) }
+                    return (HTTPURLResponse(url: request.url!, statusCode: 429, httpVersion: nil, headerFields: ["Retry-After": "60"])!, Data())
+                }
+                return (HTTPURLResponse(url: request.url!, statusCode: 429, httpVersion: nil, headerFields: ["Retry-After": "3600"])!, Data())
+            }
+            let provider = makeDualChannelProvider(descriptor: makeDualChannelDescriptor(id: UUID().uuidString, service: service), keychain: keychain)
+            do {
+                _ = try await provider.fetch(forceRefresh: true)
+                XCTFail("Expected aggregated rate limit")
+            } catch let limited as ProviderRateLimitError {
+                XCTAssertGreaterThan(limited.retryNotBefore.timeIntervalSinceNow, 3500)
+            }
+        }
     }
 
     func testBothChannelsRequestedOnceAndReusedFromCacheOnSecondFetch() async throws {

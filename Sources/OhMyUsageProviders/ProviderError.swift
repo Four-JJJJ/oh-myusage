@@ -31,3 +31,26 @@ public enum ProviderError: Error, LocalizedError {
         }
     }
 }
+
+/// Transport metadata kept separate from the source-compatible ProviderError cases.
+public struct ProviderRateLimitError: Error, LocalizedError, Sendable {
+    public let retryNotBefore: Date
+    public var errorDescription: String? { "Rate limited" }
+
+    public init(retryNotBefore: Date) { self.retryNotBefore = retryNotBefore }
+
+    public static func parseRetryAfter(_ value: String?, now: Date = Date()) -> Date? {
+        guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else { return nil }
+        if let seconds = Double(value), seconds.isFinite, seconds >= 0 {
+            let deadline = now.addingTimeInterval(seconds)
+            guard deadline.timeIntervalSinceReferenceDate.isFinite, deadline <= Date.distantFuture else { return nil }
+            return deadline
+        }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "EEE, dd MMM yyyy HH:mm:ss zzz"
+        guard let date = formatter.date(from: value), date >= now else { return nil }
+        return date
+    }
+}

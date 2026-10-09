@@ -90,6 +90,7 @@ final class RelayProvider: UsageProvider, @unchecked Sendable {
         let manifest = registry.manifest(for: relayConfig.baseURL, preferredID: relayConfig.adapterID)
 
         var firstError: Error?
+        var rateLimitDeadline: Date?
         var tokenChannel: TokenChannelResult?
         var balanceChannel: AccountChannelResult?
 
@@ -120,6 +121,10 @@ final class RelayProvider: UsageProvider, @unchecked Sendable {
                     tokenChannel = result
                 }
             } catch {
+                if error is CancellationError || Task.isCancelled || (error as? URLError)?.code == .cancelled { throw CancellationError() }
+                if let limited = error as? ProviderRateLimitError {
+                    rateLimitDeadline = max(rateLimitDeadline ?? .distantPast, limited.retryNotBefore)
+                }
                 firstError = firstError ?? error
             }
         }
@@ -146,11 +151,16 @@ final class RelayProvider: UsageProvider, @unchecked Sendable {
                     balanceChannel = result
                 }
             } catch {
+                if error is CancellationError || Task.isCancelled || (error as? URLError)?.code == .cancelled { throw CancellationError() }
+                if let limited = error as? ProviderRateLimitError {
+                    rateLimitDeadline = max(rateLimitDeadline ?? .distantPast, limited.retryNotBefore)
+                }
                 firstError = firstError ?? error
             }
         }
 
         guard tokenChannel != nil || balanceChannel != nil else {
+            if let deadline = rateLimitDeadline { throw ProviderRateLimitError(retryNotBefore: deadline) }
             throw firstError ?? ProviderError.unavailable("No enabled data channel for \(descriptor.name)")
         }
 
@@ -168,6 +178,9 @@ final class RelayProvider: UsageProvider, @unchecked Sendable {
 
         var noteParts: [String] = []
         var rawMeta: [String: String] = ["relay.adapterID": manifest.id]
+        if let deadline = rateLimitDeadline {
+            rawMeta["relay.retryNotBefore"] = String(deadline.timeIntervalSince1970)
+        }
 
         if let balanceChannel {
             noteParts.append(balanceChannel.note)

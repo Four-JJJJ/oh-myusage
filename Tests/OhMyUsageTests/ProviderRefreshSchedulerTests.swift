@@ -491,6 +491,22 @@ final class ProviderRefreshSchedulerTests: XCTestCase {
         scheduler.stop()
     }
 
+    func testServerRetryDeadlineExtendsDefaultBackoff() async throws {
+        let provider = makeProvider(id: "poll", enabled: true, pollIntervalSec: 60)
+        let deadline = Date().addingTimeInterval(3600)
+        let sleepGate = BlockingSleepGate()
+        let scheduler = makeScheduler(
+            providers: [provider], retryNotBefore: deadline,
+            startupJitterProvider: { 0 },
+            sleepAction: { seconds in try await sleepGate.sleep(seconds) }
+        )
+        scheduler.restart(providers: [provider])
+        try await waitUntil { scheduler.scheduledDueDate(for: "poll") == deadline }
+        XCTAssertEqual(scheduler.scheduledDueDate(for: "poll"), deadline)
+        scheduler.stop()
+        await sleepGate.releaseAll()
+    }
+
     func testRateLimitedWithoutFailureCountDoublesBaseInterval() async throws {
         let provider = makeProvider(id: "poll", enabled: true, pollIntervalSec: 60)
         var events: [String] = []
@@ -645,6 +661,7 @@ final class ProviderRefreshSchedulerTests: XCTestCase {
         activeProviderIDsProvider customActiveProviderIDsProvider: ProviderRefreshScheduler.ActiveProviderIDsProvider? = nil,
         failureCounts: [String: Int] = [:],
         rateLimitedProviderIDs: Set<String> = [],
+        retryNotBefore: Date? = nil,
         isNetworkOnlineProvider: ProviderRefreshScheduler.IsNetworkOnlineProvider? = nil,
         refreshRecorder: RefreshRecorder = RefreshRecorder(),
         localSessionRefreshCoordinator: LocalSessionRefreshCoordinator = LocalSessionRefreshCoordinator(
@@ -676,6 +693,7 @@ final class ProviderRefreshSchedulerTests: XCTestCase {
             isRateLimitedProvider: { providerID in
                 rateLimitedProviderIDs.contains(providerID)
             },
+            retryNotBeforeProvider: { _ in retryNotBefore },
             isNetworkOnline: isNetworkOnlineProvider ?? { true },
             refreshAction: customRefreshAction ?? { providerID, forceRefresh in
                 await refreshRecorder.record(providerID: providerID, forceRefresh: forceRefresh)

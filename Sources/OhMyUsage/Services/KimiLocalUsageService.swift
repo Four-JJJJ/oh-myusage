@@ -103,6 +103,7 @@ final class KimiLocalUsageService {
         let parseContext = "start=\(Int(startOfLast30Days.timeIntervalSinceReferenceDate))"
 
         for file in files {
+            if Task.isCancelled { break }
             let events = Self.parsedWireFileCache.values(for: file, context: parseContext) {
                 onWireFileParsed?(file.path)
                 return parseWireFile(filePath: file.path, startOfLast30Days: startOfLast30Days)
@@ -253,7 +254,7 @@ final class KimiLocalUsageService {
         var droppingOversizedLine = false
         var totalBytesRead = 0
 
-        while true {
+        while !Task.isCancelled {
             let chunk = try? handle.read(upToCount: 64 * 1024)
             guard let chunk else {
                 break
@@ -283,7 +284,7 @@ final class KimiLocalUsageService {
                 buffer.append(chunk)
             }
 
-            while let range = buffer.range(of: newline) {
+            while !Task.isCancelled, let range = buffer.range(of: newline) {
                 let lineData = buffer.subdata(in: 0..<range.lowerBound)
                 buffer.removeSubrange(0..<range.upperBound)
 

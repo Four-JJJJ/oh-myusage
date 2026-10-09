@@ -138,6 +138,7 @@ package final class ProviderRefreshScheduler {
     private let activeProviderIDsProvider: ActiveProviderIDsProvider
     private let failureCountProvider: FailureCountProvider
     private let isRateLimitedProvider: IsRateLimitedProvider
+    private let retryNotBeforeProvider: @MainActor (String) -> Date?
     private let isNetworkOnline: IsNetworkOnlineProvider
     private let refreshAction: RefreshAction
     private let localSessionRefreshCoordinator: LocalSessionRefreshCoordinator
@@ -159,6 +160,7 @@ package final class ProviderRefreshScheduler {
         activeProviderIDsProvider: @escaping ActiveProviderIDsProvider = { [] },
         failureCountProvider: @escaping FailureCountProvider,
         isRateLimitedProvider: @escaping IsRateLimitedProvider = { _ in false },
+        retryNotBeforeProvider: @escaping @MainActor (String) -> Date? = { _ in nil },
         isNetworkOnline: @escaping IsNetworkOnlineProvider = { true },
         refreshAction: @escaping RefreshAction,
         localSessionRefreshCoordinator: LocalSessionRefreshCoordinator,
@@ -173,6 +175,7 @@ package final class ProviderRefreshScheduler {
         self.activeProviderIDsProvider = activeProviderIDsProvider
         self.failureCountProvider = failureCountProvider
         self.isRateLimitedProvider = isRateLimitedProvider
+        self.retryNotBeforeProvider = retryNotBeforeProvider
         self.isNetworkOnline = isNetworkOnline
         self.refreshAction = refreshAction
         self.localSessionRefreshCoordinator = localSessionRefreshCoordinator
@@ -187,6 +190,10 @@ package final class ProviderRefreshScheduler {
 
     package var scheduledProviderIDs: Set<String> {
         scheduledProviderIDsStorage
+    }
+
+    package func scheduledDueDate(for providerID: String) -> Date? {
+        nextDueAtStorage[providerID]
     }
 
     package func restart(providers: [ProviderRefreshScheduleDescriptor]) {
@@ -400,7 +407,7 @@ package final class ProviderRefreshScheduler {
             isRateLimited: isRateLimitedProvider(providerID)
         ))
         let refreshedAt = max(logicalNowStorage, Date())
-        nextDueAtStorage[providerID] = refreshedAt.addingTimeInterval(delay)
+        nextDueAtStorage[providerID] = max(refreshedAt.addingTimeInterval(delay), retryNotBeforeProvider(providerID) ?? .distantPast)
     }
 
     private func restartLocalSessionSignalMonitor(providers: [ProviderRefreshScheduleDescriptor]) {

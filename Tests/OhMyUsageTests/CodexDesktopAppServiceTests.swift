@@ -58,10 +58,7 @@ final class CodexDesktopAppServiceTests: XCTestCase {
             },
             forceTerminator: { _ in
                 forceCalls += 1
-                Task {
-                    try? await Task.sleep(nanoseconds: 20_000_000)
-                    state.setRunning(false)
-                }
+                state.setRunning(false)
                 return true
             },
             openApplication: { _, _ in NSRunningApplication.current }

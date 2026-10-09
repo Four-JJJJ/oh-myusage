@@ -457,12 +457,38 @@ final class AppViewModel {
         syncCodexProfilesCurrentState()
         bootstrapClaudeProfileState()
         restorePersistedOfficialProvidersIfNeeded()
-        restorePersistedSnapshotsFromCacheIfNeeded()
+        if performsProductionBootstrapSideEffects {
+            restorePersistedSnapshotsFromCacheIfNeeded()
+        } else if let cache = persistedSnapshotCache {
+            restorePersistedSnapshotsFromCache(cache)
+        }
         bindPermissionModel()
         bindUpdateModel()
         bindUsageAnalyticsModel()
+        localUsageHistoryRepository.onRestore = { [weak self] in
+            self?.providerRefreshModel.mutateProviderState { $0.localUsageHistoryVersion += 1 }
+        }
         if performsProductionBootstrapSideEffects {
             refreshPermissionStatuses(force: true)
+        }
+    }
+
+    func removeLocalUsageHistoryEntries(providerID: String) {
+        localUsageHistoryRepository.removeEntries(providerID: providerID)
+        providerRefreshModel.mutateProviderState { $0.localUsageHistoryVersion += 1 }
+    }
+
+    func resetLocalUsageHistoryCache() {
+        localUsageHistoryRepository.reset()
+        providerRefreshModel.mutateProviderState { $0.localUsageHistoryVersion += 1 }
+    }
+
+    func flushDisplayCachesForShutdown() async {
+        providerRefreshModel.stopPolling()
+        await localUsageHistoryRepository.shutdown()
+        await usageAnalyticsModel.flushPersistence()
+        if let cache = persistedSnapshotCache {
+            await Task.detached(priority: .utility) { cache.flush() }.value
         }
     }
 
@@ -485,7 +511,18 @@ final class AppViewModel {
 
     private func restorePersistedSnapshotsFromCacheIfNeeded() {
         guard let cache = persistedSnapshotCache else { return }
-        restorePersistedSnapshotsFromCache(cache)
+        let generations = config.providers.reduce(into: [String: PersistedSnapshotCache.WriteGeneration]()) { $0[$1.id] = cache.currentGeneration(for: $1.id) }
+        Task { [weak self] in
+            let latest = await Task.detached(priority: .utility) { cache.loadLatestSnapshots() }.value
+            guard let self else { return }
+            let configured = Set(self.config.providers.map(\.id))
+            self.providerRefreshModel.mutateProviderState { state in
+                for (id, entry) in latest where configured.contains(id) && state.snapshots[id] == nil {
+                    guard generations[id] == cache.currentGeneration(for: id) else { continue }
+                    state.snapshots[id] = entry.restoredSnapshot
+                }
+            }
+        }
     }
 
     private func bindConfigurationModel() {

@@ -447,7 +447,7 @@ final class CopilotProvider: UsageProvider, @unchecked Sendable {
     }
 
     private static func clampPercent(_ raw: Double) -> Double {
-        max(0, min(100, raw))
+        ProviderTextParsing.clampPercent(raw)
     }
 
     private static func parseDateOnly(_ raw: String?) -> Date? {

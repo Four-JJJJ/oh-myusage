@@ -17,7 +17,8 @@ final class LocalUsageHistoryRepositoryTests: XCTestCase {
         )
         let repository = LocalUsageHistoryRepository(
             baseDirectoryURL: root,
-            nowProvider: { now.value }
+            nowProvider: { now.value },
+            asynchronousIO: false
         )
 
         repository.refreshIfNeeded(
@@ -39,7 +40,8 @@ final class LocalUsageHistoryRepositoryTests: XCTestCase {
 
         let restored = LocalUsageHistoryRepository(
             baseDirectoryURL: root,
-            nowProvider: { now.value }
+            nowProvider: { now.value },
+            asynchronousIO: false
         )
         let state = restored.snapshot(for: query)
         XCTAssertEqual(state.summary?.today.totalTokens, 101)
@@ -60,7 +62,8 @@ final class LocalUsageHistoryRepositoryTests: XCTestCase {
         )
         let repository = LocalUsageHistoryRepository(
             baseDirectoryURL: root,
-            nowProvider: { now.value }
+            nowProvider: { now.value },
+            asynchronousIO: false
         )
 
         repository.refreshIfNeeded(
@@ -96,7 +99,8 @@ final class LocalUsageHistoryRepositoryTests: XCTestCase {
         )
         let repository = LocalUsageHistoryRepository(
             baseDirectoryURL: root,
-            nowProvider: { now.value }
+            nowProvider: { now.value },
+            asynchronousIO: false
         )
 
         repository.refreshIfNeeded(
@@ -137,7 +141,8 @@ final class LocalUsageHistoryRepositoryTests: XCTestCase {
         let loaderCalls = LockedCounter()
         let repository = LocalUsageHistoryRepository(
             baseDirectoryURL: root,
-            nowProvider: { now.value }
+            nowProvider: { now.value },
+            asynchronousIO: false
         )
 
         repository.refreshIfNeeded(
@@ -194,7 +199,8 @@ final class LocalUsageHistoryRepositoryTests: XCTestCase {
         let loaderCalls = LockedCounter()
         let repository = LocalUsageHistoryRepository(
             baseDirectoryURL: root,
-            nowProvider: { now.value }
+            nowProvider: { now.value },
+            asynchronousIO: false
         )
 
         repository.refreshIfNeeded(
@@ -267,7 +273,8 @@ final class LocalUsageHistoryRepositoryTests: XCTestCase {
         let loaderCalls = LockedCounter()
         let repository = LocalUsageHistoryRepository(
             baseDirectoryURL: root,
-            nowProvider: { now.value }
+            nowProvider: { now.value },
+            asynchronousIO: false
         )
 
         repository.refreshIfNeeded(
@@ -316,7 +323,7 @@ final class LocalUsageHistoryRepositoryTests: XCTestCase {
             totalSize: 20,
             latestModificationTime: Date(timeIntervalSince1970: 100)
         )
-        let repository = LocalUsageHistoryRepository(baseDirectoryURL: root)
+        let repository = LocalUsageHistoryRepository(baseDirectoryURL: root, asynchronousIO: false)
 
         repository.refreshIfNeeded(
             query: query,
@@ -358,7 +365,8 @@ final class LocalUsageHistoryRepositoryTests: XCTestCase {
         let now = LockedDate(Date(timeIntervalSince1970: 2_000))
         let repository = LocalUsageHistoryRepository(
             baseDirectoryURL: root,
-            nowProvider: { now.value }
+            nowProvider: { now.value },
+            asynchronousIO: false
         )
         let fingerprint = LocalUsageSourceFingerprint(
             roots: ["/tmp/source"],
@@ -406,7 +414,7 @@ final class LocalUsageHistoryRepositoryTests: XCTestCase {
         )
         let loaderCalls = LockedCounter()
         let release = DispatchSemaphore(value: 0)
-        let repository = LocalUsageHistoryRepository(baseDirectoryURL: root)
+        let repository = LocalUsageHistoryRepository(baseDirectoryURL: root, asynchronousIO: false)
 
         repository.refreshIfNeeded(
             query: query,
@@ -444,6 +452,257 @@ final class LocalUsageHistoryRepositoryTests: XCTestCase {
             $0.summary?.today.totalTokens == 104 && !$0.isLoading
         }
         XCTAssertEqual(loaderCalls.value, 1)
+    }
+
+    func testDuplicateLegacyEntriesRestoreNewestWithoutTrapping() throws {
+        let root = try makeTemporaryRoot()
+        let query = makeQuery(identityKey: "duplicate")
+        let older = LocalUsageHistoryEntry(query: query, summary: Self.sampleSummary(seed: 1),
+            refreshedAt: Date(timeIntervalSince1970: 100), sourceFingerprint: nil,
+            lastFingerprintCheckedAt: nil, lastError: nil, isStaleFallback: false)
+        var newer = older
+        newer.refreshedAt = Date(timeIntervalSince1970: 200)
+        newer.summary = Self.sampleSummary(seed: 2)
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let data = try encoder.encode([older, newer, older])
+        try writeCache(Data("{\"entries\":".utf8) + data + Data("}".utf8), root: root)
+        let repository = LocalUsageHistoryRepository(baseDirectoryURL: root, asynchronousIO: false)
+        XCTAssertEqual(repository.snapshot(for: query).summary?.today.totalTokens, 102)
+    }
+
+    func testUnknownSchemaCorruptAndOversizeCachesAreIgnored() throws {
+        let root = try makeTemporaryRoot()
+        let query = makeQuery(identityKey: "invalid")
+        for data in [Data("{\"schemaVersion\":999,\"entries\":[]}".utf8),
+                     Data("{\"entries\":".utf8), Data(repeating: 32, count: 16 * 1024 * 1024 + 1)] {
+            try writeCache(data, root: root)
+            let repository = LocalUsageHistoryRepository(baseDirectoryURL: root, asynchronousIO: false)
+            XCTAssertNil(repository.snapshot(for: query).summary)
+        }
+    }
+
+    func testFailureDoesNotAdvanceSuccessfulLoadOrValidateItHealthy() async throws {
+        let root = try makeTemporaryRoot()
+        let now = LockedDate(Date(timeIntervalSince1970: 10_000))
+        let query = makeQuery(identityKey: "failure-time")
+        let fingerprint = LocalUsageSourceFingerprint(roots: [], fileCount: 0, totalSize: 0, latestModificationTime: nil)
+        let repository = LocalUsageHistoryRepository(baseDirectoryURL: root, nowProvider: { now.value }, asynchronousIO: false)
+        repository.refreshIfNeeded(query: query, force: true, fingerprintProvider: { fingerprint }, loader: { _ in
+            LocalUsageHistoryLoadResult(summary: Self.sampleSummary(seed: 1, generatedAt: now.value), sourceFingerprint: fingerprint)
+        }, onStateChange: {})
+        try await waitUntil(repository: repository, query: query) { $0.summary != nil && !$0.isLoading }
+        let successAt = repository.snapshot(for: query).lastRefreshedAt
+        now.value = now.value.addingTimeInterval(10)
+        repository.refreshIfNeeded(query: query, force: true, fingerprintProvider: { fingerprint }, loader: { _ in
+            throw SampleError.refreshFailed
+        }, onStateChange: {})
+        try await waitUntil(repository: repository, query: query) { $0.isStaleFallback && !$0.isLoading }
+        XCTAssertEqual(repository.snapshot(for: query).lastRefreshedAt, successAt)
+        now.value = now.value.addingTimeInterval(31)
+        let calls = LockedCounter()
+        repository.refreshIfNeeded(query: query, fingerprintProvider: { fingerprint }, loader: { _ in
+            calls.increment()
+            throw SampleError.refreshFailed
+        }, onStateChange: {})
+        try await waitUntil(repository: repository, query: query) { !$0.isLoading }
+        XCTAssertEqual(calls.value, 1)
+        XCTAssertTrue(repository.snapshot(for: query).isStaleFallback)
+    }
+
+    func testAsyncRestoreNeverOverwritesFreshResultAndOrderedWritesRoundTrip() async throws {
+        let root = try makeTemporaryRoot()
+        let query = makeQuery(identityKey: "async-race")
+        let fingerprint = LocalUsageSourceFingerprint(roots: [], fileCount: 0, totalSize: 0, latestModificationTime: nil)
+        let repository = LocalUsageHistoryRepository(baseDirectoryURL: root)
+        for seed in [1, 2] {
+            repository.refreshIfNeeded(query: query, force: true, fingerprintProvider: { fingerprint }, loader: { _ in
+                LocalUsageHistoryLoadResult(summary: Self.sampleSummary(seed: seed), sourceFingerprint: fingerprint)
+            }, onStateChange: {})
+            try await waitUntil(repository: repository, query: query) { $0.summary?.today.totalTokens == 100 + seed && !$0.isLoading }
+        }
+        await repository.flushPersistence()
+        repository.restoreFromDisk()
+        await repository.flushPersistence()
+        try await Task.sleep(nanoseconds: 20_000_000)
+        XCTAssertEqual(repository.snapshot(for: query).summary?.today.totalTokens, 102)
+        let restored = LocalUsageHistoryRepository(baseDirectoryURL: root, asynchronousIO: false)
+        XCTAssertEqual(restored.snapshot(for: query).summary?.today.totalTokens, 102)
+    }
+
+    func testDigestDetectsNonLatestEqualSizeModificationAndWALChanges() throws {
+        let root = try makeTemporaryRoot()
+        let first = root.appendingPathComponent("state.vscdb")
+        let wal = root.appendingPathComponent("state.vscdb-wal")
+        try Data("abcd".utf8).write(to: first)
+        try Data("1234".utf8).write(to: wal)
+        try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSince1970: 100)], ofItemAtPath: first.path)
+        try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSince1970: 500)], ofItemAtPath: wal.path)
+        let before = LocalUsageSourceFingerprintBuilder.fingerprint(roots: [root.path], includeFile: { _ in true })
+        try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSince1970: 200)], ofItemAtPath: first.path)
+        let changed = LocalUsageSourceFingerprintBuilder.fingerprint(roots: [root.path], includeFile: { _ in true })
+        XCTAssertEqual(before.totalSize, changed.totalSize)
+        XCTAssertEqual(before.latestModificationTime, changed.latestModificationTime)
+        XCTAssertNotEqual(before.metadataDigest, changed.metadataDigest)
+        try FileManager.default.removeItem(at: wal)
+        let checkpointed = LocalUsageSourceFingerprintBuilder.fingerprint(roots: [first.path, wal.path], includeFile: { _ in true })
+        XCTAssertEqual(checkpointed.fileCount, 1)
+    }
+
+    func testSlowAsyncRestoreDoesNotBlockMainActorAndCancellationDoesNotPublish() async throws {
+        let root = try makeTemporaryRoot()
+        let releaseRead = DispatchSemaphore(value: 0)
+        let startedRead = LockedCounter()
+        let query = makeQuery(identityKey: "slow-restore")
+        let repository = LocalUsageHistoryRepository(baseDirectoryURL: root, beforeCacheRead: {
+            startedRead.increment()
+            _ = releaseRead.wait(timeout: .now() + 2)
+        })
+        // Reaching this assertion while the read is blocked proves initialization did not wait on disk.
+        XCTAssertNil(repository.snapshot(for: query).summary)
+        let fingerprint = LocalUsageSourceFingerprint(roots: [], fileCount: 0, totalSize: 0, latestModificationTime: nil)
+        let calls = LockedCounter()
+        repository.refreshIfNeeded(query: query, force: true, fingerprintProvider: { fingerprint }, loader: { _ in
+            calls.increment()
+            return LocalUsageHistoryLoadResult(summary: Self.sampleSummary(seed: 9), sourceFingerprint: fingerprint)
+        }, onStateChange: {})
+        repository.cancelRefresh(for: query)
+        releaseRead.signal()
+        try await waitUntil(repository: repository, query: query) { !$0.isLoading }
+        XCTAssertEqual(calls.value, 0)
+        XCTAssertNil(repository.snapshot(for: query).summary)
+    }
+
+    func testResetAndRemovePreventLateWorkersResurrectingEntries() async throws {
+        let root = try makeTemporaryRoot()
+        let query = makeQuery(identityKey: "reset-race")
+        let repository = LocalUsageHistoryRepository(baseDirectoryURL: root)
+        let fingerprint = LocalUsageSourceFingerprint(roots: [], fileCount: 0, totalSize: 0, latestModificationTime: nil)
+        let started = LockedCounter()
+        let release = DispatchSemaphore(value: 0)
+        repository.refreshIfNeeded(query: query, force: true, fingerprintProvider: { fingerprint }, loader: { _ in
+            started.increment()
+            _ = release.wait(timeout: .now() + 2)
+            return LocalUsageHistoryLoadResult(summary: Self.sampleSummary(seed: 42), sourceFingerprint: fingerprint)
+        }, onStateChange: {})
+        try await waitUntil(repository: repository, query: query) { _ in started.value == 1 }
+        repository.reset()
+        release.signal()
+        await repository.flushPersistence()
+        try await Task.sleep(nanoseconds: 20_000_000)
+        XCTAssertNil(repository.snapshot(for: query).summary)
+        repository.refreshIfNeeded(query: query, force: true, fingerprintProvider: { fingerprint }, loader: { _ in
+            LocalUsageHistoryLoadResult(summary: Self.sampleSummary(seed: 2), sourceFingerprint: fingerprint)
+        }, onStateChange: {})
+        try await waitUntil(repository: repository, query: query) { $0.summary != nil && !$0.isLoading }
+        repository.removeEntries(providerID: query.providerID)
+        await repository.shutdown()
+        let restored = LocalUsageHistoryRepository(baseDirectoryURL: root, asynchronousIO: false)
+        XCTAssertNil(restored.snapshot(for: query).summary)
+    }
+
+    func testAsyncLoaderIsUsedInsteadOfBlockingLoader() async throws {
+        let root = try makeTemporaryRoot()
+        let query = makeQuery(identityKey: "async-loader")
+        let repository = LocalUsageHistoryRepository(baseDirectoryURL: root)
+        let fingerprint = LocalUsageSourceFingerprint(roots: [], fileCount: 0, totalSize: 0, latestModificationTime: nil)
+        repository.refreshIfNeeded(query: query, force: true, fingerprintProvider: { fingerprint }, loader: { _ in
+            throw SampleError.refreshFailed
+        }, asyncLoader: { _ in
+            await Task.yield()
+            return LocalUsageHistoryLoadResult(summary: Self.sampleSummary(seed: 5), sourceFingerprint: fingerprint)
+        }, onStateChange: {})
+        try await waitUntil(repository: repository, query: query) { $0.summary?.today.totalTokens == 105 && !$0.isLoading }
+        XCTAssertNil(repository.snapshot(for: query).error)
+    }
+
+    func testGeneratedFingerprintInventoryBenchmarks() throws {
+        // Generated metadata only. Single samples are timings, not p95 or energy claims.
+        for count in [1_000, 10_000] {
+            let root = try makeTemporaryRoot()
+            defer { try? FileManager.default.removeItem(at: root) }
+            for index in 0..<count {
+                try Data("{}\n".utf8).write(to: root.appendingPathComponent("\(index).jsonl"))
+            }
+            let start = Date()
+            let fingerprint = LocalUsageSourceFingerprintBuilder.fingerprint(roots: [root.path], includeFile: { $0.pathExtension == "jsonl" })
+            let elapsed = Date().timeIntervalSince(start)
+            XCTAssertEqual(fingerprint.fileCount, count)
+            XCTAssertNotNil(fingerprint.metadataDigest)
+            print("Generated fingerprint fixture files=\(count) elapsedSeconds=\(elapsed)")
+        }
+    }
+
+    func testSourceInventoryDescriptorSeparatesFiltersAndUpdatesMetadata() throws {
+        let root = try makeTemporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let wire = root.appendingPathComponent("wire.jsonl")
+        let session = root.appendingPathComponent("session.jsonl")
+        try Data("wire".utf8).write(to: wire)
+        try Data("session".utf8).write(to: session)
+        let all = LocalUsageSourceInventory.files(descriptor: .codexSessionJSONL, roots: [root.path])
+        let narrow = LocalUsageSourceInventory.files(descriptor: .kimiWireJSONL, roots: [root.path])
+        XCTAssertEqual(all.count, 2)
+        XCTAssertEqual(narrow.map { URL(fileURLWithPath: $0.path).resolvingSymlinksInPath().path },
+                       [wire.resolvingSymlinksInPath().path])
+        let before = LocalUsageSourceFingerprintBuilder.fingerprint(roots: [root.path], inventory: all)
+        try Data("longer-session".utf8).write(to: session)
+        let updated = LocalUsageSourceInventory.files(descriptor: .codexSessionJSONL, roots: [root.path])
+        XCTAssertNotEqual(before, LocalUsageSourceFingerprintBuilder.fingerprint(roots: [root.path], inventory: updated))
+        XCTAssertEqual(LocalUsageSourceInventory.files(descriptor: .kimiWireJSONL, roots: [root.path]).count, 1)
+    }
+
+    func testResetWhileRestoreReadIsBlockedDoesNotResurrectCache() async throws {
+        let root = try makeTemporaryRoot()
+        let query = makeQuery(identityKey: "restore-reset")
+        let entry = LocalUsageHistoryEntry(query: query, summary: Self.sampleSummary(seed: 1), refreshedAt: Date(),
+            sourceFingerprint: nil, lastFingerprintCheckedAt: nil, lastError: nil, isStaleFallback: false)
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        try writeCache(Data("{\"entries\":".utf8) + encoder.encode([entry]) + Data("}".utf8), root: root)
+        let release = DispatchSemaphore(value: 0)
+        let repository = LocalUsageHistoryRepository(baseDirectoryURL: root, beforeCacheRead: {
+            _ = release.wait(timeout: .now() + 2)
+        })
+        repository.reset()
+        release.signal()
+        await repository.flushPersistence()
+        try await Task.sleep(nanoseconds: 20_000_000)
+        XCTAssertNil(repository.snapshot(for: query).summary)
+        let restored = LocalUsageHistoryRepository(baseDirectoryURL: root, asynchronousIO: false)
+        XCTAssertNil(restored.snapshot(for: query).summary)
+    }
+
+    func testRemoveDuringRestoreRetainsOtherProviderCacheOnDisk() async throws {
+        let root = try makeTemporaryRoot()
+        let queryA = makeQuery(identityKey: "remove-A")
+        var queryB = makeQuery(identityKey: "retain-B")
+        queryB.providerID = "other-provider"
+        func entry(_ query: LocalUsageHistoryQuery) -> LocalUsageHistoryEntry {
+            LocalUsageHistoryEntry(query: query, summary: Self.sampleSummary(seed: 1), refreshedAt: Date(),
+                sourceFingerprint: nil, lastFingerprintCheckedAt: nil, lastError: nil, isStaleFallback: false)
+        }
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        try writeCache(Data("{\"entries\":".utf8) + encoder.encode([entry(queryA), entry(queryB)]) + Data("}".utf8), root: root)
+        let release = DispatchSemaphore(value: 0)
+        let repository = LocalUsageHistoryRepository(baseDirectoryURL: root, beforeCacheRead: {
+            _ = release.wait(timeout: .now() + 2)
+        })
+        repository.removeEntries(providerID: queryA.providerID)
+        release.signal()
+        await repository.flushPersistence()
+        XCTAssertNil(repository.snapshot(for: queryA).summary)
+        XCTAssertNotNil(repository.snapshot(for: queryB).summary)
+        let restored = LocalUsageHistoryRepository(baseDirectoryURL: root, asynchronousIO: false)
+        XCTAssertNil(restored.snapshot(for: queryA).summary)
+        XCTAssertNotNil(restored.snapshot(for: queryB).summary)
+    }
+
+    private func writeCache(_ data: Data, root: URL) throws {
+        let url = localUsageCacheURL(root: root)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try data.write(to: url)
     }
 
     func testFingerprintChangesWhenFileSetChanges() throws {

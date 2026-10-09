@@ -65,6 +65,7 @@ final class GrokLocalUsageService {
         )
         var events: [LocalUsageEvent] = []
         for file in files {
+            if Task.isCancelled { break }
             events.append(contentsOf: parseSession(summaryPath: file.path, since: since))
         }
         return events

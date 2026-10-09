@@ -47,6 +47,7 @@ final class GeminiLocalUsageService {
         )
         var events: [LocalUsageEvent] = []
         for file in files {
+            if Task.isCancelled { break }
             events.append(contentsOf: parseSessionFile(path: file.path, since: since))
         }
         return events

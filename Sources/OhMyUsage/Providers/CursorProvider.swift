@@ -184,12 +184,10 @@ final class CursorProvider: UsageProvider, @unchecked Sendable {
         usedPercent: Double,
         resetAt: Date?
     ) -> UsageQuotaWindow {
-        let clampedUsed = min(100, max(0, usedPercent))
-        return UsageQuotaWindow(
+        UsageQuotaWindow.percent(
             id: id,
             title: title,
-            remainingPercent: max(0, 100 - clampedUsed),
-            usedPercent: clampedUsed,
+            usedPercent: usedPercent,
             resetAt: resetAt,
             kind: .custom
         )

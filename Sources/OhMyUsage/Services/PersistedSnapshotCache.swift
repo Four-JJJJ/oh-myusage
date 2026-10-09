@@ -152,7 +152,7 @@ private struct PersistedSnapshotCacheEnvelope: Codable, Sendable {
 /// Guarantees (optimization doc §8.1):
 /// - Stores only the whitelisted payload fields; never credentials, tokens,
 ///   cookies, OAuth JSON, or raw log/chat content.
-/// - Atomic writes; all reads/writes serialized through one lock so concurrent
+/// - Atomic writes; all reads/writes serialized through one IO queue so concurrent
 ///   provider refreshes cannot clobber each other.
 /// - Incompatible schema versions and corrupt files are ignored (empty cache),
 ///   never fatal.
@@ -173,6 +173,20 @@ final class PersistedSnapshotCache: @unchecked Sendable {
     private let fileURL: URL
     private let fileManager: FileManager
     private let lock = NSLock()
+    private let ioQueue = DispatchQueue(label: "OhMyUsage.snapshot-cache", qos: .utility)
+    private var loadedEntries: [PersistedSnapshotCacheEntry]?
+    private struct PendingWrite {
+        var providerID: String
+        var snapshot: UsageSnapshot
+        var savedAt: Date
+        var generation: WriteGeneration
+        var revision: UInt64
+    }
+    private var pendingWrites: [String: PendingWrite] = [:]
+    private var drainScheduled = false
+    private var drainID: UInt64 = 0
+    private var nextRevision: UInt64 = 0
+    private var acceptedRevisions: [String: UInt64] = [:]
     private var resetGeneration: UInt64 = 0
     private var providerGenerations: [String: UInt64] = [:]
 
@@ -225,16 +239,55 @@ final class PersistedSnapshotCache: @unchecked Sendable {
         expectedGeneration: WriteGeneration? = nil
     ) {
         guard !providerID.isEmpty else { return }
-        lock.lock()
-        defer { lock.unlock() }
-        let currentGeneration = WriteGeneration(
-            reset: resetGeneration,
-            provider: providerGenerations[providerID, default: 0]
-        )
-        if let expectedGeneration, expectedGeneration != currentGeneration {
-            return
+        ioQueue.sync {
+            saveOnIOQueue(providerID: providerID, snapshot: snapshot, savedAt: savedAt, expectedGeneration: expectedGeneration)
         }
-        writeEntries(upserting: PersistedSnapshotCacheEntry(providerID: providerID, snapshot: snapshot, savedAt: savedAt))
+    }
+
+    /// Captures ordering on the caller before dispatch, not when a worker happens to run.
+    func enqueueSave(providerID: String, snapshot: UsageSnapshot, savedAt: Date = Date()) {
+        guard !providerID.isEmpty else { return }
+        lock.lock()
+        nextRevision &+= 1
+        let revision = nextRevision
+        let generation = WriteGeneration(reset: resetGeneration, provider: providerGenerations[providerID, default: 0])
+        let key = providerID + ":" + Self.accountFingerprint(for: snapshot)
+        pendingWrites[key] = PendingWrite(providerID: providerID, snapshot: snapshot, savedAt: savedAt, generation: generation, revision: revision)
+        if !drainScheduled {
+            drainScheduled = true
+            let id = drainID
+            ioQueue.async { [self] in drainPendingWrites(expectedID: id) }
+        }
+        lock.unlock()
+    }
+
+    private func drainPendingWrites(expectedID: UInt64? = nil) {
+        lock.lock()
+        if let expectedID, expectedID != drainID { lock.unlock(); return }
+        let batch = pendingWrites.values.sorted { $0.revision < $1.revision }
+        pendingWrites.removeAll()
+        drainScheduled = false
+        lock.unlock()
+        for write in batch {
+            saveOnIOQueue(providerID: write.providerID, snapshot: write.snapshot, savedAt: write.savedAt, expectedGeneration: write.generation, revision: write.revision)
+        }
+    }
+
+    func flush() { ioQueue.sync { drainPendingWrites() } }
+
+    private func saveOnIOQueue(providerID: String, snapshot: UsageSnapshot, savedAt: Date, expectedGeneration: WriteGeneration?, revision: UInt64? = nil) {
+        lock.lock()
+        let current = WriteGeneration(reset: resetGeneration, provider: providerGenerations[providerID, default: 0])
+        let valid = expectedGeneration == nil || expectedGeneration == current
+        lock.unlock()
+        guard valid else { return }
+        let entry = PersistedSnapshotCacheEntry(providerID: providerID, snapshot: snapshot, savedAt: savedAt)
+        let key = providerID + ":" + entry.accountFingerprint
+        if let revision {
+            guard revision > acceptedRevisions[key, default: 0] else { return }
+            acceptedRevisions[key] = revision
+        }
+        writeEntries(upserting: entry, enforceTimestampOrder: revision == nil)
     }
 
     /// Generation captured before dispatching an asynchronous write. Any
@@ -253,23 +306,36 @@ final class PersistedSnapshotCache: @unchecked Sendable {
     func remove(providerID: String) {
         guard !providerID.isEmpty else { return }
         lock.lock()
-        defer { lock.unlock() }
         providerGenerations[providerID, default: 0] &+= 1
-        let retained = readEntriesLocked().filter { $0.providerID != providerID }
-        if retained.isEmpty {
-            try? fileManager.removeItem(at: fileURL)
-        } else {
-            persistLocked(retained)
+        pendingWrites = pendingWrites.filter { $0.value.providerID != providerID }
+        // Fence all pending batches around deletion, preserving other providers.
+        drainID &+= 1
+        drainScheduled = false
+        let id = drainID
+        ioQueue.async { [self] in
+            let retained = readEntriesLocked().filter { $0.providerID != providerID }
+            loadedEntries = retained
+            if retained.isEmpty { try? fileManager.removeItem(at: fileURL) }
+            else { persistLocked(retained) }
+            drainPendingWrites(expectedID: id)
         }
+        lock.unlock()
     }
 
-    /// Removes every cached entry (used by reset flows).
+    /// Invalidates pending writes immediately; deletion remains ordered behind existing IO.
     func removeAll() {
         lock.lock()
-        defer { lock.unlock() }
         resetGeneration &+= 1
         providerGenerations.removeAll()
-        try? fileManager.removeItem(at: fileURL)
+        pendingWrites.removeAll()
+        drainID &+= 1
+        drainScheduled = false
+        ioQueue.async { [self] in
+            loadedEntries = []
+            acceptedRevisions.removeAll()
+            try? fileManager.removeItem(at: fileURL)
+        }
+        lock.unlock()
     }
 
     // MARK: - Account fingerprint
@@ -304,19 +370,26 @@ final class PersistedSnapshotCache: @unchecked Sendable {
         return digest.prefix(16).map { String(format: "%02x", $0) }.joined()
     }
 
-    // MARK: - File IO (lock held)
+    // MARK: - File IO (serial queue only)
 
     private func readEntries() -> [PersistedSnapshotCacheEntry] {
-        lock.lock()
-        defer { lock.unlock() }
-        return readEntriesLocked()
+        ioQueue.sync {
+            loadedEntries = nil
+            return readEntriesLocked()
+        }
     }
 
     private func readEntriesLocked() -> [PersistedSnapshotCacheEntry] {
+        if let loadedEntries { return loadedEntries }
         guard fileManager.fileExists(atPath: fileURL.path),
-              let data = try? Data(contentsOf: fileURL) else {
+              let size = try? fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize,
+              size <= Self.maxEncodedFileBytes,
+              let handle = try? FileHandle(forReadingFrom: fileURL) else {
             return []
         }
+        defer { try? handle.close() }
+        guard let data = try? handle.read(upToCount: Self.maxEncodedFileBytes + 1),
+              data.count <= Self.maxEncodedFileBytes else { return [] }
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         guard let envelope = try? decoder.decode(PersistedSnapshotCacheEnvelope.self, from: data),
@@ -324,11 +397,14 @@ final class PersistedSnapshotCache: @unchecked Sendable {
             NSLog("[PersistedSnapshotCache] Ignoring cache file with incompatible or corrupt contents")
             return []
         }
-        return envelope.entries
+        let entries = Self.boundedEntries(envelope.entries.filter { !$0.providerID.isEmpty && !$0.accountFingerprint.isEmpty })
+        loadedEntries = entries
+        return entries
     }
 
-    private func writeEntries(upserting entry: PersistedSnapshotCacheEntry) {
+    private func writeEntries(upserting entry: PersistedSnapshotCacheEntry, enforceTimestampOrder: Bool) {
         var entries = readEntriesLocked()
+        if enforceTimestampOrder, let current = entries.first(where: { $0.providerID == entry.providerID && $0.accountFingerprint == entry.accountFingerprint }), current.savedAt > entry.savedAt { return }
         entries.removeAll {
             $0.providerID == entry.providerID && $0.accountFingerprint == entry.accountFingerprint
         }
@@ -357,8 +433,9 @@ final class PersistedSnapshotCache: @unchecked Sendable {
             }
 
             try data.write(to: fileURL, options: .atomic)
+            loadedEntries = entries
         } catch {
-            NSLog("[PersistedSnapshotCache] Failed to persist snapshots: \(error.localizedDescription)")
+            NSLog("[PersistedSnapshotCache] Failed to persist snapshots")
         }
     }
 

@@ -15,6 +15,8 @@ private enum LocalUsageHistoryRefreshCoordinatorError: LocalizedError {
 
 @MainActor
 final class LocalUsageHistoryRefreshCoordinator {
+    private let cursorService = CursorLocalUsageService()
+
     func refreshLocalUsageHistoryIfNeeded(
         query: LocalUsageHistoryQuery,
         repository: LocalUsageHistoryRepository,
@@ -124,11 +126,24 @@ final class LocalUsageHistoryRefreshCoordinator {
         if let performRefresh {
             performRefresh(query, repository, force, fingerprintProvider, loader, onStateChange)
         } else {
+            let cursorService = self.cursorService
+            let asyncLoader: LocalUsageHistoryRepository.AsyncLoader?
+            if providerType == .cursor {
+                asyncLoader = { @Sendable fingerprint in
+                    LocalUsageHistoryLoadResult(
+                        summary: try await cursorService.fetchSummaryAsync(),
+                        sourceFingerprint: fingerprint
+                    )
+                }
+            } else {
+                asyncLoader = nil
+            }
             repository.refreshIfNeeded(
                 query: query,
                 force: force,
                 fingerprintProvider: fingerprintProvider,
                 loader: loader,
+                asyncLoader: asyncLoader,
                 onStateChange: onStateChange
             )
         }

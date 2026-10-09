@@ -4,6 +4,21 @@ A macOS menu bar app for monitoring AI plan limits, credits, relay balances, and
 
 [Download Latest Release](https://github.com/Four-JJJJ/oh-myusage/releases/latest) · [Install Guide](DOWNLOAD.md) · [Supported Services](PROVIDERS.md) · [中文说明](../README.md)
 
+## V2.5.4
+
+- Fix Cursor pagination using raw page lengths; disclose partial results and local fallback, including cc-switch read failures
+- Detect SQLite WAL and per-file changes; preserve the last successful refresh time and usable charts after failures
+- Move display-cache I/O to ordered background queues, cancel obsolete workers, reuse bounded short-lived raw statistics, and bound official cache size and stale age
+- Prevent late requests and out-of-order writes from restoring old account data after credential changes, removal, or reset; handle clock reversal safely
+- Respect server `Retry-After` deadlines in background scheduling and preserve the latest deadline across relay channels
+- All 1,326 local tests pass; no measured startup, CPU, memory, or energy improvement percentage is claimed, and default refresh concurrency remains unchanged
+
+See the [implementation and validation record](OPTIMIZATION_IMPLEMENTATION_2026-10-09.md) for scope and remaining verification limits.
+
+## V2.5.3
+
+- Show relay token-plan expiry as a countdown instead of an absolute date
+
 ## V2.5.2
 
 - Make plan names readable across official providers: map `PLAN_` / `LEVEL_` codes to Plus, Pro, SuperGrok, and Kimi music-term tiers; hide placeholders such as `unknown`

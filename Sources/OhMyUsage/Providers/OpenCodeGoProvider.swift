@@ -666,7 +666,7 @@ final class OpenCodeGoProvider: UsageProvider, @unchecked Sendable {
     }
 
     private static func clampPercent(_ value: Double) -> Double {
-        max(0, min(100, value))
+        ProviderTextParsing.clampPercent(value)
     }
 
     private static func percent(used: Double, limit: Double) -> Double {

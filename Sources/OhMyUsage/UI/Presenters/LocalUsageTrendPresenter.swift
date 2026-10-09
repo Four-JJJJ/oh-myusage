@@ -66,7 +66,9 @@ enum LocalUsageTrendPresenter {
             staleFallbackText: staleFallbackText(
                 historyState,
                 localizedText: localizedText
-            ),
+            ) ?? (summary?.isApproximateFallback == true ? localizedText(
+                "数据可能不完整，仅供趋势参考", "Data may be incomplete; use for trend reference only"
+            ) : nil),
             cacheStatusText: cacheStatusText(
                 historyState,
                 summary: summary,

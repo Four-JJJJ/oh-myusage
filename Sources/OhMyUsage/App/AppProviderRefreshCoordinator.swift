@@ -27,6 +27,8 @@ final class AppProviderRefreshCoordinator {
     private let providerFactory: any ProviderFactorying
     private let notifications: NotificationService
     private var inFlightRefreshTasks: [String: Task<Void, Never>] = [:]
+    private var resetRevision: UInt64 = 0
+    private var providerRevisions: [String: UInt64] = [:]
     private let isNetworkOnline: IsNetworkOnlineProvider
     private let fetchPlanRegistry = ProviderFetchPlanRegistry()
     /// Upper bound on concurrently executing provider refreshes (doc §9.3).
@@ -109,6 +111,17 @@ final class AppProviderRefreshCoordinator {
     /// without starting another fetch — including when the new caller requested `forceRefresh`.
     /// No cancel+rerun; joiners reuse the in-flight result. The global concurrency cap is
     /// enforced around the action body; joiners waiting on `existing.value` hold no slot.
+    func invalidateRefreshes(providerID: String? = nil) {
+        if let providerID {
+            providerRevisions[providerID, default: 0] &+= 1
+            inFlightRefreshTasks.removeValue(forKey: providerID)?.cancel()
+        } else {
+            resetRevision &+= 1
+            inFlightRefreshTasks.values.forEach { $0.cancel() }
+            inFlightRefreshTasks.removeAll()
+        }
+    }
+
     func runExclusiveRefresh(
         providerID: String,
         action: @escaping @MainActor () async -> Void
@@ -287,11 +300,15 @@ final class AppProviderRefreshCoordinator {
         boundedSnapshot: @escaping SnapshotBounder
     ) async {
         defer { afterRefresh() }
+        if !forceRefresh, let deadline = getState().retryNotBefore[descriptor.id], deadline > Date() { return }
         beforeRefresh(descriptor)
         let provider = providerFactory.makeProvider(for: descriptor)
+        let capturedReset = resetRevision
+        let capturedProvider = providerRevisions[descriptor.id, default: 0]
 
         do {
             let fetched = try await fetchProviderSnapshot(using: provider, forceRefresh: forceRefresh)
+            guard !Task.isCancelled, capturedReset == resetRevision, capturedProvider == providerRevisions[descriptor.id, default: 0] else { return }
             let snapshot = transformFetchedSnapshot(descriptor, fetched)
             let bounded = boundedSnapshot(snapshot)
 
@@ -308,6 +325,10 @@ final class AppProviderRefreshCoordinator {
                         at: snapshot.updatedAt
                     )
                 }
+                state.retryNotBefore.removeValue(forKey: descriptor.id)
+                if let raw = snapshot.rawMeta["relay.retryNotBefore"] ?? snapshot.rawMeta["provider.retryNotBefore"], let timestamp = Double(raw) {
+                    state.retryNotBefore[descriptor.id] = Date(timeIntervalSince1970: timestamp)
+                }
                 state.errors.removeValue(forKey: descriptor.id)
                 state.consecutiveFailures[descriptor.id] = 0
                 state.lastUpdatedAt = Date()
@@ -322,6 +343,8 @@ final class AppProviderRefreshCoordinator {
             if descriptor.family == .official {
                 await postOfficialRefresh(descriptor, forceRefresh)
             }
+            guard !Task.isCancelled, capturedReset == resetRevision,
+                  capturedProvider == providerRevisions[descriptor.id, default: 0] else { return }
 
             handleLowRemainingAlerts(
                 for: descriptor,
@@ -333,8 +356,12 @@ final class AppProviderRefreshCoordinator {
                 language: language
             )
         } catch {
-            if Self.isCancellationError(error) || Task.isCancelled {
+            if Self.isCancellationError(error) || Task.isCancelled || capturedReset != resetRevision || capturedProvider != providerRevisions[descriptor.id, default: 0] {
                 return
+            }
+
+            if let limited = error as? ProviderRateLimitError {
+                mutateState(getState, setState) { $0.retryNotBefore[descriptor.id] = limited.retryNotBefore }
             }
 
             if Self.isRateLimitedError(error),
@@ -624,6 +651,7 @@ extension AppProviderRefreshCoordinator {
     }
 
     nonisolated static func isRateLimitedError(_ error: Error) -> Bool {
+        if error is ProviderRateLimitError { return true }
         if let providerError = error as? ProviderError,
            case .rateLimited = providerError {
             return true
@@ -638,6 +666,7 @@ extension AppProviderRefreshCoordinator {
     }
 
     nonisolated static func classifyFetchHealth(_ error: Error) -> FetchHealth {
+        if error is ProviderRateLimitError { return .rateLimited }
         if let providerError = error as? ProviderError {
             switch providerError {
             case .missingCredential, .unauthorized, .unauthorizedDetail:

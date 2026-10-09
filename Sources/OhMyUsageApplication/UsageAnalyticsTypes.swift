@@ -288,6 +288,7 @@ public struct UsageAnalyticsSnapshot: Codable, Equatable, Sendable {
     public var modelStats: [UsageModelStats]
     public var availableModels: [UsageAnalyticsModelOption]
     public var diagnostics: [String]
+    public var isPartial: Bool?
 
     public init(
         generatedAt: Date,
@@ -298,7 +299,8 @@ public struct UsageAnalyticsSnapshot: Codable, Equatable, Sendable {
         providerStats: [UsageProviderStats],
         modelStats: [UsageModelStats],
         availableModels: [UsageAnalyticsModelOption],
-        diagnostics: [String]
+        diagnostics: [String],
+        isPartial: Bool? = false
     ) {
         self.generatedAt = generatedAt
         self.filter = filter
@@ -309,6 +311,7 @@ public struct UsageAnalyticsSnapshot: Codable, Equatable, Sendable {
         self.modelStats = modelStats
         self.availableModels = availableModels
         self.diagnostics = diagnostics
+        self.isPartial = isPartial
     }
 
     public static func empty(filter: UsageAnalyticsFilter, generatedAt: Date = Date()) -> UsageAnalyticsSnapshot {

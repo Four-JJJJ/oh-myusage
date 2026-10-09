@@ -283,6 +283,33 @@ final class AppProviderRefreshCoordinatorTests: XCTestCase {
         await second.value
     }
 
+    func testInvalidatedCredentialFetchCannotPublishOrPersistLateResult() async throws {
+        var descriptor = ProviderDescriptor.defaultOfficialGemini()
+        descriptor.id = "invalidated"
+        let fetchGate = CoordinatorFetchGate()
+        let coordinator = AppProviderRefreshCoordinator(providerFactory: CountingProviderFactory(gate: fetchGate), notifications: NotificationService())
+        let stateBox = CoordinatorRefreshStateBox()
+        var persisted = false
+        let task = Task { @MainActor in
+            await coordinator.refreshProvider(
+                descriptor: descriptor, forceRefresh: true,
+                getState: { stateBox.state }, setState: { stateBox.state = $0 },
+                beforeRefresh: { _ in }, transformFetchedSnapshot: { _, fetched in fetched },
+                postOfficialRefresh: { _, _ in }, persistBaselineEntries: { _ in },
+                persistSnapshot: { _, _ in persisted = true }, afterRefresh: {},
+                notifyStatusBarDisplayConfigChanged: {}, text: { _ in "" },
+                localizedText: { zh, _ in zh }, language: { .en }, boundedSnapshot: { $0 }
+            )
+        }
+        try await waitUntil { await fetchGate.fetchCount() == 1 }
+        coordinator.invalidateRefreshes(providerID: descriptor.id)
+        await fetchGate.release()
+        await task.value
+        XCTAssertNil(stateBox.state.snapshots[descriptor.id])
+        XCTAssertNil(stateBox.state.errors[descriptor.id])
+        XCTAssertFalse(persisted)
+    }
+
     func testRefreshProviderDeduplicatesInFlightFetchesForSameProviderID() async throws {
         var descriptor = ProviderDescriptor.defaultOfficialGemini()
         descriptor.id = "dedupe-provider"
