@@ -14,6 +14,8 @@ final class AppSettingsPersistenceFeedbackCoordinator {
     )
 
     private let clearDelaySeconds: TimeInterval
+    private let now: @MainActor () -> Date
+    private let sleepUntil: @MainActor (Date) async throws -> Void
     private var clearTask: Task<Void, Never>?
     private var presentedKind: DisplayKind = .idle
     /// Bumped whenever a new auto-clear schedule replaces a prior one so stale Tasks cannot apply idle.
@@ -25,8 +27,19 @@ final class AppSettingsPersistenceFeedbackCoordinator {
     /// stale stored `.saved` values still resolve as idle.
     private var clearExpired = false
 
-    init(clearDelaySeconds: TimeInterval) {
+    init(
+        clearDelaySeconds: TimeInterval,
+        now: @escaping @MainActor () -> Date = Date.init,
+        sleepUntil: @escaping @MainActor (Date) async throws -> Void = { deadline in
+            let remaining = deadline.timeIntervalSinceNow
+            if remaining > 0 {
+                try await Task.sleep(nanoseconds: UInt64(remaining * 1_000_000_000))
+            }
+        }
+    ) {
         self.clearDelaySeconds = max(0, clearDelaySeconds)
+        self.now = now
+        self.sleepUntil = sleepUntil
     }
 
     @discardableResult
@@ -82,7 +95,7 @@ final class AppSettingsPersistenceFeedbackCoordinator {
 
         presentedKind = kind
         clearExpired = false
-        clearDeadline = Date().addingTimeInterval(clearDelaySeconds)
+        clearDeadline = now().addingTimeInterval(clearDelaySeconds)
         cancelClearTask()
 
         if isDeadlineDue {
@@ -93,11 +106,9 @@ final class AppSettingsPersistenceFeedbackCoordinator {
         let deadline = clearDeadline
         let generation = clearGeneration
         clearTask = Task { [weak self] in
+            guard let sleepUntil = self?.sleepUntil else { return }
             if let deadline {
-                let remaining = deadline.timeIntervalSinceNow
-                if remaining > 0 {
-                    try? await Task.sleep(nanoseconds: UInt64(remaining * 1_000_000_000))
-                }
+                try? await sleepUntil(deadline)
             }
             guard !Task.isCancelled else { return }
             await MainActor.run { [weak self] in
@@ -129,7 +140,7 @@ final class AppSettingsPersistenceFeedbackCoordinator {
     }
 
     private var isDeadlineDue: Bool {
-        clearExpired || clearDeadline.map { Date() >= $0 } == true
+        clearExpired || clearDeadline.map { now() >= $0 } == true
     }
 
     private func shouldPresentAsIdle(storedKind: DisplayKind) -> Bool {

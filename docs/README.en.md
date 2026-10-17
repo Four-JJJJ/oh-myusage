@@ -12,8 +12,9 @@ A macOS menu bar app for monitoring AI plan limits, credits, relay balances, and
 - Propagate refresh cancellation to background workers, suppress stale results, remove the persistent window-scan timer, and reuse Grok/Gemini enumeration caches
 - Unify subscription and API sources under Official Services, label API entries by name, and present account, plan-quota, or balance details appropriate to each source
 - Localize statistics headings, metrics, options, empty states, and month labels; provide checkout-isolated build commands and enforce production-source warning checks before release
+- Use a controllable clock in persistence-feedback tests to remove CI scheduling-dependent failures; cover duplicate saves, cancelled timers, and delayed-task reconciliation without changing the app's default timing behavior
 
-Local regression tests and universal Release compilation pass. Final DMG, signing, notarization, and upgrade-installation validation follow the actual Release and acceptance record; real-account flows require separate acceptance. Profiles remain plaintext accessible to the same user; credential transactions do not provide cross-process concurrency guarantees. No unmeasured performance or energy saving is claimed.
+All 1,382 local tests pass, including 20 consecutive runs of the 12 persistence-feedback tests, and the production-source warnings-as-errors build passes. Universal Release compilation also passed earlier in this release cycle. Final DMG, signing, notarization, and upgrade-installation validation follow the actual Release and acceptance record; real-account flows require separate acceptance. Profiles remain plaintext accessible to the same user; credential transactions do not provide cross-process concurrency guarantees. No unmeasured performance or energy saving is claimed.
 
 See the [release notes](releases/v2.6.0.md) and [repair validation record](OPTIMIZATION_REPAIRS_2026-10-17.md).
 

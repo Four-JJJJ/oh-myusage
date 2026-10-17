@@ -5,9 +5,13 @@ import XCTest
 @MainActor
 final class AppSettingsPersistenceFeedbackCoordinatorTests: XCTestCase {
     func testSavedStatusAutoClearsToIdle() async {
-        let coordinator = AppSettingsPersistenceFeedbackCoordinator(clearDelaySeconds: 0.05)
+        let clock = ManualFeedbackClock()
+        defer { clock.resumeAll() }
+        let coordinator = makeCoordinator(clock: clock)
         var state = SettingsPersistenceDisplayState(kind: .idle, statusText: nil, tone: .neutral)
         var errorMessage: String?
+        let scheduled = expectSleep(on: clock)
+        let cleared = expectation(description: "Saved feedback clears")
 
         coordinator.setStatus(
             kind: .saved,
@@ -16,43 +20,84 @@ final class AppSettingsPersistenceFeedbackCoordinatorTests: XCTestCase {
             update: { next, detail in
                 state = next
                 errorMessage = detail
+                if next.kind == .idle { cleared.fulfill() }
             }
         )
 
         XCTAssertEqual(state.kind, .saved)
 
-        let deadline = Date().addingTimeInterval(2)
-        while Date() < deadline {
-            if state.kind == .idle && errorMessage == nil {
-                return
-            }
-            try? await Task.sleep(nanoseconds: 20_000_000)
-        }
-        XCTFail("expected auto-clear to idle, still \(state.kind)")
+        await fulfillment(of: [scheduled], timeout: 5)
+        clock.advance(by: 10)
+        await fulfillment(of: [cleared], timeout: 5)
+        XCTAssertEqual(state.kind, .idle)
+        XCTAssertNil(errorMessage)
     }
 
     func testDuplicateSavedKeepsOriginalDeadline() async {
-        let coordinator = AppSettingsPersistenceFeedbackCoordinator(clearDelaySeconds: 0.15)
+        let clock = ManualFeedbackClock()
+        defer { clock.resumeAll() }
+        let coordinator = makeCoordinator(clock: clock)
+        var state = SettingsPersistenceDisplayState(kind: .idle, statusText: nil, tone: .neutral)
+        let scheduled = expectSleep(on: clock)
+        let cleared = expectation(description: "Duplicate saved feedback keeps its deadline")
+        let update: AppSettingsPersistenceFeedbackCoordinator.StateUpdater = { next, _ in
+            state = next
+            if next.kind == .idle { cleared.fulfill() }
+        }
+
+        coordinator.setStatus(kind: .saved, statusText: "Saved", tone: .positive, update: update)
+        await fulfillment(of: [scheduled], timeout: 5)
+        clock.advance(by: 4)
+        coordinator.setStatus(kind: .saved, statusText: "Saved again", tone: .positive, update: update)
+        XCTAssertEqual(state.kind, .saved)
+
+        clock.advance(by: 5)
+        coordinator.reconcileIfNeeded(update: update)
+        XCTAssertEqual(state.kind, .saved)
+        XCTAssertEqual(coordinator.resolvedDisplayState(stored: state).kind, .saved)
+
+        // The original deadline is 10, not 14 after the duplicate save.
+        clock.advance(by: 1)
+        await fulfillment(of: [cleared], timeout: 5)
+        XCTAssertEqual(state.kind, .idle)
+    }
+
+    func testDuplicateSavedAfterDeadlineClearsWithoutWaitingForTask() {
+        let clock = ManualFeedbackClock()
+        let coordinator = makeCoordinator(clock: clock)
         var state = SettingsPersistenceDisplayState(kind: .idle, statusText: nil, tone: .neutral)
         let update: AppSettingsPersistenceFeedbackCoordinator.StateUpdater = { next, _ in
             state = next
         }
 
-        let startedAt = Date()
         coordinator.setStatus(kind: .saved, statusText: "Saved", tone: .positive, update: update)
-        try? await Task.sleep(nanoseconds: 60_000_000)
+        clock.advance(by: 10)
         coordinator.setStatus(kind: .saved, statusText: "Saved again", tone: .positive, update: update)
+
+        XCTAssertEqual(state.kind, .idle)
+    }
+
+    func testTaskStartingAfterDeadlineClearsWithoutSleeping() async {
+        let clock = ManualFeedbackClock()
+        defer { clock.resumeAll() }
+        let coordinator = makeCoordinator(clock: clock)
+        let cleared = expectation(description: "Delayed auto-clear task catches up")
+        var state = SettingsPersistenceDisplayState(kind: .idle, statusText: nil, tone: .neutral)
+
+        coordinator.setStatus(
+            kind: .saved,
+            statusText: "Saved",
+            tone: .positive,
+            update: { next, _ in
+                state = next
+                if next.kind == .idle { cleared.fulfill() }
+            }
+        )
+        clock.advance(by: 10)
         XCTAssertEqual(state.kind, .saved)
 
-        let deadline = startedAt.addingTimeInterval(1.0)
-        while Date() < deadline {
-            if state.kind == .idle {
-                XCTAssertLessThan(Date().timeIntervalSince(startedAt), 0.45)
-                return
-            }
-            try? await Task.sleep(nanoseconds: 10_000_000)
-        }
-        XCTFail("duplicate saved reset deadline; still \(state.kind)")
+        await fulfillment(of: [cleared], timeout: 5)
+        XCTAssertEqual(state.kind, .idle)
     }
 
     func testReconcileAppliesIdleWhenDeadlinePassesWithoutTaskRunning() {
@@ -85,8 +130,9 @@ final class AppSettingsPersistenceFeedbackCoordinatorTests: XCTestCase {
         )
     }
 
-    func testReconcileClearsStarvedClearTask() async {
-        let coordinator = AppSettingsPersistenceFeedbackCoordinator(clearDelaySeconds: 0.05)
+    func testReconcileClearsStarvedClearTask() {
+        let clock = ManualFeedbackClock()
+        let coordinator = makeCoordinator(clock: clock)
         var state = SettingsPersistenceDisplayState(kind: .idle, statusText: nil, tone: .neutral)
         let update: AppSettingsPersistenceFeedbackCoordinator.StateUpdater = { next, _ in
             state = next
@@ -95,10 +141,8 @@ final class AppSettingsPersistenceFeedbackCoordinatorTests: XCTestCase {
         coordinator.setStatus(kind: .saved, statusText: "Saved", tone: .positive, update: update)
         XCTAssertEqual(state.kind, .saved)
 
-        let busyUntil = Date().addingTimeInterval(0.08)
-        while Date() < busyUntil {
-            // Busy-wait on MainActor so the clear Task cannot run.
-        }
+        // Do not yield to the clear Task; reconciliation must enforce the deadline itself.
+        clock.advance(by: 10)
 
         XCTAssertEqual(state.kind, .saved)
         coordinator.reconcileIfNeeded(update: update)
@@ -112,7 +156,8 @@ final class AppSettingsPersistenceFeedbackCoordinatorTests: XCTestCase {
     }
 
     func testNewNonIdleStatusCancelsPendingClearTask() {
-        let coordinator = AppSettingsPersistenceFeedbackCoordinator(clearDelaySeconds: 0.2)
+        let clock = ManualFeedbackClock()
+        let coordinator = makeCoordinator(clock: clock)
         var state = SettingsPersistenceDisplayState(kind: .idle, statusText: nil, tone: .neutral)
         var errorMessage: String?
         let update: AppSettingsPersistenceFeedbackCoordinator.StateUpdater = { next, detail in
@@ -134,16 +179,23 @@ final class AppSettingsPersistenceFeedbackCoordinatorTests: XCTestCase {
     }
 
     func testNewNonIdleStatusCancelsPendingClearTaskAfterDelay() async {
-        let coordinator = AppSettingsPersistenceFeedbackCoordinator(clearDelaySeconds: 1.0)
+        let clock = ManualFeedbackClock()
+        defer { clock.resumeAll() }
+        let coordinator = makeCoordinator(clock: clock)
         var state = SettingsPersistenceDisplayState(kind: .idle, statusText: nil, tone: .neutral)
         var errorMessage: String?
+        let savedScheduled = expectSleep(on: clock)
+        let cleared = expectation(description: "Replacement feedback clears at its own deadline")
         let update: AppSettingsPersistenceFeedbackCoordinator.StateUpdater = { next, detail in
             state = next
             errorMessage = detail
+            if next.kind == .idle { cleared.fulfill() }
         }
 
         coordinator.setStatus(kind: .saved, statusText: "Saved", tone: .positive, update: update)
-        try? await Task.sleep(nanoseconds: 50_000_000)
+        await fulfillment(of: [savedScheduled], timeout: 5)
+        clock.advance(by: 4)
+        let failedScheduled = expectSleep(on: clock)
         coordinator.setStatus(
             kind: .failed,
             statusText: "Save Failed",
@@ -155,34 +207,48 @@ final class AppSettingsPersistenceFeedbackCoordinatorTests: XCTestCase {
         XCTAssertEqual(state.kind, .failed)
         XCTAssertEqual(errorMessage, "boom")
 
-        // Failed feedback also auto-clears after the same delay.
-        let cleared = Date().addingTimeInterval(1.5)
-        while Date() < cleared {
-            if state.kind == .idle && errorMessage == nil {
-                return
-            }
-            try? await Task.sleep(nanoseconds: 20_000_000)
-        }
-        XCTFail("expected failed status to auto-clear, still \(state.kind)")
+        await fulfillment(of: [failedScheduled], timeout: 5)
+        // Deliver the cancelled saved timer and verify it cannot clear the newer failure.
+        let savedResumed = expectation(description: "Cancelled saved timer resumes")
+        clock.onResume = { savedResumed.fulfill() }
+        clock.advance(by: 6)
+        await fulfillment(of: [savedResumed], timeout: 5)
+        clock.onResume = nil
+        coordinator.reconcileIfNeeded(update: update)
+        XCTAssertEqual(state.kind, .failed)
+        XCTAssertEqual(errorMessage, "boom")
+
+        clock.advance(by: 4)
+        await fulfillment(of: [cleared], timeout: 5)
+        XCTAssertEqual(state.kind, .idle)
+        XCTAssertNil(errorMessage)
     }
 
     func testSavedAfterAutoClearStartsFreshDeadline() async {
-        let coordinator = AppSettingsPersistenceFeedbackCoordinator(clearDelaySeconds: 0.05)
+        let clock = ManualFeedbackClock()
+        defer { clock.resumeAll() }
+        let coordinator = makeCoordinator(clock: clock)
         var state = SettingsPersistenceDisplayState(kind: .idle, statusText: nil, tone: .neutral)
+        let firstScheduled = expectSleep(on: clock)
+        let firstCleared = expectation(description: "First saved feedback clears")
+        let secondCleared = expectation(description: "Second saved feedback clears")
+        var clearCount = 0
         let update: AppSettingsPersistenceFeedbackCoordinator.StateUpdater = { next, _ in
             state = next
+            if next.kind == .idle {
+                clearCount += 1
+                if clearCount == 1 { firstCleared.fulfill() }
+                if clearCount == 2 { secondCleared.fulfill() }
+            }
         }
 
         coordinator.setStatus(kind: .saved, statusText: "Saved", tone: .positive, update: update)
-        let firstClearDeadline = Date().addingTimeInterval(1)
-        while Date() < firstClearDeadline {
-            if state.kind == .idle {
-                break
-            }
-            try? await Task.sleep(nanoseconds: 10_000_000)
-        }
+        await fulfillment(of: [firstScheduled], timeout: 5)
+        clock.advance(by: 10)
+        await fulfillment(of: [firstCleared], timeout: 5)
         XCTAssertEqual(state.kind, .idle)
 
+        let secondScheduled = expectSleep(on: clock)
         coordinator.setStatus(kind: .saved, statusText: "Saved again", tone: .positive, update: update)
         XCTAssertEqual(state.kind, .saved)
         XCTAssertEqual(
@@ -190,18 +256,19 @@ final class AppSettingsPersistenceFeedbackCoordinatorTests: XCTestCase {
             .saved
         )
 
-        let secondClearDeadline = Date().addingTimeInterval(1)
-        while Date() < secondClearDeadline {
-            if state.kind == .idle {
-                return
-            }
-            try? await Task.sleep(nanoseconds: 10_000_000)
-        }
-        XCTFail("expected second saved status to auto-clear, still \(state.kind)")
+        await fulfillment(of: [secondScheduled], timeout: 5)
+        clock.advance(by: 9)
+        coordinator.reconcileIfNeeded(update: update)
+        XCTAssertEqual(state.kind, .saved)
+        clock.advance(by: 1)
+        await fulfillment(of: [secondCleared], timeout: 5)
+        XCTAssertEqual(state.kind, .idle)
+        XCTAssertEqual(clearCount, 2)
     }
 
     func testResolvedStateStaysSavedBeforeDeadline() {
-        let coordinator = AppSettingsPersistenceFeedbackCoordinator(clearDelaySeconds: 5)
+        let clock = ManualFeedbackClock()
+        let coordinator = makeCoordinator(clock: clock)
         var state = SettingsPersistenceDisplayState(kind: .idle, statusText: nil, tone: .neutral)
         coordinator.setStatus(
             kind: .saved,
@@ -216,5 +283,91 @@ final class AppSettingsPersistenceFeedbackCoordinatorTests: XCTestCase {
             coordinator.resolvedErrorMessage(stored: "detail", storedKind: .saved),
             "detail"
         )
+    }
+
+    func testResolvedStateAndErrorClearAtDeadlineWithoutTaskRunning() {
+        let clock = ManualFeedbackClock()
+        let coordinator = makeCoordinator(clock: clock)
+        var state = SettingsPersistenceDisplayState(kind: .idle, statusText: nil, tone: .neutral)
+        coordinator.setStatus(
+            kind: .failed,
+            statusText: "Save Failed",
+            tone: .negative,
+            detail: "boom",
+            update: { next, _ in state = next }
+        )
+
+        clock.advance(by: 10)
+
+        XCTAssertEqual(state.kind, .failed)
+        XCTAssertEqual(coordinator.resolvedDisplayState(stored: state).kind, .idle)
+        XCTAssertNil(coordinator.resolvedErrorMessage(stored: "boom", storedKind: .failed))
+    }
+
+    func testDefaultClockAutoClearsSavedFeedback() async {
+        let coordinator = AppSettingsPersistenceFeedbackCoordinator(clearDelaySeconds: 0.01)
+        let cleared = expectation(description: "Default clock and sleeper clear feedback")
+        var state = SettingsPersistenceDisplayState(kind: .idle, statusText: nil, tone: .neutral)
+        coordinator.setStatus(
+            kind: .saved,
+            statusText: "Saved",
+            tone: .positive,
+            update: { next, _ in
+                state = next
+                if next.kind == .idle { cleared.fulfill() }
+            }
+        )
+
+        await fulfillment(of: [cleared], timeout: 5)
+        XCTAssertEqual(state.kind, .idle)
+    }
+
+    private func makeCoordinator(clock: ManualFeedbackClock) -> AppSettingsPersistenceFeedbackCoordinator {
+        AppSettingsPersistenceFeedbackCoordinator(
+            clearDelaySeconds: 10,
+            now: { clock.now },
+            sleepUntil: { await clock.sleep(until: $0) }
+        )
+    }
+
+    private func expectSleep(on clock: ManualFeedbackClock) -> XCTestExpectation {
+        let scheduled = expectation(description: "Auto-clear task starts waiting")
+        scheduled.assertForOverFulfill = true
+        clock.onSleep = { scheduled.fulfill() }
+        return scheduled
+    }
+}
+
+@MainActor
+private final class ManualFeedbackClock {
+    private(set) var now = Date(timeIntervalSince1970: 1_000)
+    var onSleep: (() -> Void)?
+    var onResume: (() -> Void)?
+    private var sleepers: [(deadline: Date, continuation: CheckedContinuation<Void, Never>)] = []
+
+    func sleep(until deadline: Date) async {
+        guard deadline > now else { return }
+        await withCheckedContinuation { continuation in
+            sleepers.append((deadline, continuation))
+            onSleep?()
+        }
+        onResume?()
+    }
+
+    func advance(by seconds: TimeInterval) {
+        now = now.addingTimeInterval(seconds)
+        let ready = sleepers.filter { $0.deadline <= now }
+        sleepers.removeAll { $0.deadline <= now }
+        for sleeper in ready {
+            sleeper.continuation.resume()
+        }
+    }
+
+    func resumeAll() {
+        let pending = sleepers
+        sleepers.removeAll()
+        for sleeper in pending {
+            sleeper.continuation.resume()
+        }
     }
 }
