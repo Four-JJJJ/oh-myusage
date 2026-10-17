@@ -78,6 +78,9 @@ jobs:
             exit 1
           fi
 
+      - name: Test release commit
+        run: ./scripts/dev.sh test
+
       - name: Build release assets
         shell: bash
         run: |

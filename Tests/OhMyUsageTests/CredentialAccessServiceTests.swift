@@ -125,8 +125,8 @@ final class CredentialAccessServiceTests: XCTestCase {
             ),
             "secret-token".count
         )
-        XCTAssertEqual(recorder.counts.readData, 0)
-        XCTAssertEqual(recorder.counts.readAll, 0)
+        XCTAssertEqual(recorder.counts.readData, 1)
+        XCTAssertEqual(recorder.counts.readAll, 1)
     }
 
     // MARK: - Access state mapping (doc 7.5)
@@ -287,15 +287,15 @@ final class CredentialAccessServiceTests: XCTestCase {
             )
         }
 
-        // The vault item itself no longer carries the deleted entries — the wipe
-        // is persisted, not just hidden from the in-memory cache.
+        // Persisted empty tombstones contain no credential and prevent old
+        // per-account items from being imported again if cleanup was denied.
         let vaultData = store.readData(
             service: KeychainService.defaultServiceName,
             account: "__credential_vault__"
         )
         let vaultSnapshot = vaultData.flatMap { try? JSONDecoder().decode([String: String].self, from: $0) } ?? [:]
-        XCTAssertNil(vaultSnapshot["\(KeychainService.defaultServiceName)::acct-a"])
-        XCTAssertNil(vaultSnapshot["relay-svc::acct-b"])
+        XCTAssertEqual(vaultSnapshot["\(KeychainService.defaultServiceName)::acct-a"], "")
+        XCTAssertEqual(vaultSnapshot["relay-svc::acct-b"], "")
 
         // A fresh service over the same store and defaults sees no leftovers.
         let fresh = CredentialAccessService(

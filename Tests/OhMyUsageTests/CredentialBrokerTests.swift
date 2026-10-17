@@ -211,7 +211,7 @@ final class CredentialBrokerTests: XCTestCase {
                     recorder.signalLeaderEntered()
                     _ = recorder.releaseGate.wait(timeout: .now() + 10)
                 }
-                return Data("shared-token".utf8)
+                return account == "__credential_vault__" ? nil : Data("shared-token".utf8)
             },
             readAll: { service, interactive in
                 recorder.recordReadAll(service: service, interactive: interactive)
@@ -286,17 +286,17 @@ final class CredentialBrokerTests: XCTestCase {
         let initialAccountReads = recorder.readDataCount(service: "svc", account: "ttl-account")
         XCTAssertEqual(initialAccountReads, 1)
 
-        // Within the TTL the broker shield even a cold keychain from re-reads.
+        // Explicit reset is a generation change and invalidates broker caches.
         clock.advance(30)
         keychain.resetAllStoredCredentials()
         XCTAssertEqual(broker.readToken(service: "svc", account: "ttl-account"), "ttl-token")
-        XCTAssertEqual(recorder.readDataCount(service: "svc", account: "ttl-account"), initialAccountReads)
+        XCTAssertEqual(recorder.readDataCount(service: "svc", account: "ttl-account"), initialAccountReads + 1)
 
         // Past the TTL the broker re-consults the underlying store exactly once.
         clock.advance(40)
         keychain.resetAllStoredCredentials()
         XCTAssertEqual(broker.readToken(service: "svc", account: "ttl-account"), "ttl-token")
-        XCTAssertEqual(recorder.readDataCount(service: "svc", account: "ttl-account"), initialAccountReads + 1)
+        XCTAssertEqual(recorder.readDataCount(service: "svc", account: "ttl-account"), initialAccountReads + 2)
     }
 
     func testNegativeCacheExpiresAfterTTL() {
@@ -323,17 +323,17 @@ final class CredentialBrokerTests: XCTestCase {
         let initialAccountReads = recorder.readDataCount(service: "svc", account: "missing-account")
         XCTAssertEqual(initialAccountReads, 1)
 
-        // Within the negative TTL the broker shields even a cold keychain.
+        // Explicit reset invalidates even a negative entry before its TTL.
         clock.advance(5)
         keychain.resetAllStoredCredentials()
         XCTAssertNil(broker.readToken(service: "svc", account: "missing-account"))
-        XCTAssertEqual(recorder.readDataCount(service: "svc", account: "missing-account"), initialAccountReads)
+        XCTAssertEqual(recorder.readDataCount(service: "svc", account: "missing-account"), initialAccountReads + 1)
 
         // Past the negative TTL the miss is re-consulted against the store.
         clock.advance(6)
         keychain.resetAllStoredCredentials()
         XCTAssertNil(broker.readToken(service: "svc", account: "missing-account"))
-        XCTAssertEqual(recorder.readDataCount(service: "svc", account: "missing-account"), initialAccountReads + 1)
+        XCTAssertEqual(recorder.readDataCount(service: "svc", account: "missing-account"), initialAccountReads + 2)
     }
 
     // MARK: - Save / delete cache updates
@@ -397,7 +397,7 @@ final class CredentialBrokerTests: XCTestCase {
         XCTAssertEqual(broker.readToken(service: "svc", account: "fresh-account"), "fresh-token")
         // Underlying store changes out of band (simulating another writer).
         XCTAssertTrue(keychain.saveToken("out-of-band-token", service: "svc", account: "fresh-account"))
-        XCTAssertEqual(broker.readToken(service: "svc", account: "fresh-account"), "fresh-token")
+        XCTAssertEqual(broker.readToken(service: "svc", account: "fresh-account"), "out-of-band-token")
 
         broker.invalidateCache(service: "svc", account: "fresh-account")
         XCTAssertEqual(broker.readToken(service: "svc", account: "fresh-account"), "out-of-band-token")

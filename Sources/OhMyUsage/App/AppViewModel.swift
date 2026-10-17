@@ -286,7 +286,7 @@ final class AppViewModel {
         postUpdateReleaseNotesStore: any PostUpdateReleaseNotesStoring = PostUpdateReleaseNotesStore(),
         codexSlotStore: CodexAccountSlotStore = CodexAccountSlotStore(),
         codexProfileStore: CodexAccountProfileStore = CodexAccountProfileStore(),
-        codexDesktopAuthService: CodexDesktopAuthService = CodexDesktopAuthService(),
+        codexDesktopAuthService: CodexDesktopAuthService? = nil,
         codexDesktopAppService: CodexDesktopAppService = CodexDesktopAppService(),
         codexProfileSnapshotService: CodexProfileSnapshotService = CodexProfileSnapshotService(),
         notificationService: NotificationService = NotificationService(),
@@ -338,7 +338,7 @@ final class AppViewModel {
         postUpdateReleaseNotesStore: any PostUpdateReleaseNotesStoring = PostUpdateReleaseNotesStore(),
         codexSlotStore: CodexAccountSlotStore = CodexAccountSlotStore(),
         codexProfileStore: CodexAccountProfileStore = CodexAccountProfileStore(),
-        codexDesktopAuthService: CodexDesktopAuthService = CodexDesktopAuthService(),
+        codexDesktopAuthService: CodexDesktopAuthService? = nil,
         codexDesktopAppService: CodexDesktopAppService = CodexDesktopAppService(),
         codexProfileSnapshotService: CodexProfileSnapshotService = CodexProfileSnapshotService(),
         notificationService: NotificationService = NotificationService(),
@@ -562,9 +562,10 @@ final class AppViewModel {
                 await self?.notifications.authorizationStatus() ?? .notDetermined
             },
             checkSecureStorageReady: { [weak self] in
-                await withCheckedContinuation { continuation in
+                guard let keychain = self?.keychain else { return false }
+                return await withCheckedContinuation { continuation in
                     DispatchQueue.global(qos: .utility).async {
-                        continuation.resume(returning: self?.keychain.isSecureStoreReady() ?? false)
+                        continuation.resume(returning: keychain.isSecureStoreReady())
                     }
                 }
             },

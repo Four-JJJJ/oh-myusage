@@ -1,9 +1,12 @@
+import CryptoKit
+import Darwin
 import Foundation
 
 final class ConfigSnapshotWriter {
     private let paths: ConfigStorePaths
     private let fileManager: FileManager
     private let log: (String) -> Void
+    private var knownUsableSnapshots: [URL: Data] = [:]
 
     init(
         paths: ConfigStorePaths,
@@ -28,6 +31,18 @@ final class ConfigSnapshotWriter {
     ) throws {
         try ensureDirectoryExists()
         let data = try encodedConfigData(config)
+        // Preserve unreadable originals before any snapshot can be replaced or removed.
+        for url in [paths.fileURL, paths.backupFileURL, paths.recoveryFileURL,
+                    paths.lastKnownGoodFileURL, paths.preservedFallbackCandidateFileURL] {
+            guard fileManager.fileExists(atPath: url.path) else { continue }
+            let existing = try Data(contentsOf: url)
+            if existing == data || knownUsableSnapshots[url] == existing { continue }
+            if (try? AppConfig.decodeWithDiagnostics(from: existing)) == nil {
+                try archiveCorruptSnapshot(existing)
+            } else {
+                knownUsableSnapshots[url] = existing
+            }
+        }
         try writeData(data, to: paths.fileURL)
         try writeData(data, to: paths.backupFileURL)
         try writeData(data, to: paths.recoveryFileURL)
@@ -37,6 +52,10 @@ final class ConfigSnapshotWriter {
         if clearPreservedFallbackCandidate {
             try removePreservedFallbackCandidateIfPresent()
         }
+        for url in [paths.fileURL, paths.backupFileURL, paths.recoveryFileURL] {
+            knownUsableSnapshots[url] = data
+        }
+        if updateLastKnownGood { knownUsableSnapshots[paths.lastKnownGoodFileURL] = data }
     }
 
     func syncShadowCopiesIfNeeded(primaryData: Data) throws {
@@ -52,6 +71,41 @@ final class ConfigSnapshotWriter {
     func preserveFallbackCandidateIfNeeded(_ data: Data?) throws {
         guard let data, !data.isEmpty else { return }
         try writeData(data, to: paths.preservedFallbackCandidateFileURL)
+    }
+
+    func archiveCorruptSnapshot(_ data: Data) throws {
+        let directory = paths.corruptArchiveDirectoryURL
+        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true,
+                                        attributes: [.posixPermissions: 0o700])
+        var info = stat()
+        guard lstat(directory.path, &info) == 0, info.st_mode & S_IFMT == S_IFDIR else {
+            throw CocoaError(.fileWriteNoPermission)
+        }
+        try fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
+        // Archives are not recovery candidates: only an explicit reset removes them.
+        let hash = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        let url = directory.appendingPathComponent("config-\(hash).json")
+        if fileManager.fileExists(atPath: url.path) {
+            try validateArchive(at: url, matches: data)
+            return
+        }
+        let staging = directory.appendingPathComponent(".archive-\(UUID().uuidString).tmp")
+        defer { try? fileManager.removeItem(at: staging) }
+        try PrivateProfileFile(url: staging, fileManager: fileManager).write(data)
+        // Exclusive atomic move also avoids a crash leaving two links to one archive.
+        if Darwin.renamex_np(staging.path, url.path, UInt32(RENAME_EXCL)) != 0 {
+            guard errno == EEXIST else { throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno)) }
+            try validateArchive(at: url, matches: data)
+        }
+    }
+
+    private func validateArchive(at url: URL, matches data: Data) throws {
+        var info = stat()
+        guard lstat(url.path, &info) == 0, info.st_mode & S_IFMT == S_IFREG, info.st_nlink == 1,
+              try Data(contentsOf: url) == data else {
+            throw CocoaError(.fileReadCorruptFile)
+        }
+        try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
     }
 
     private func encodedConfigData(_ config: AppConfig) throws -> Data {

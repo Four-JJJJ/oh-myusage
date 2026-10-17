@@ -1,27 +1,16 @@
 import AppKit
 
-/// Permanently watches for the blank SwiftUI `Settings { EmptyView() }` scene
-/// window and closes it whenever it appears — not only while the custom
-/// settings window is being shown.
-///
-/// The phantom can materialize at arbitrary times: launch-time window
-/// restoration, asynchronous scene creation after the activation policy flips
-/// to `.regular`, app re-activation, or a re-created scene after the policy
-/// flips back and forth. Fixed one-shot sweeps inside
-/// `SettingsWindowController.show()` and event-driven checks miss those cases,
-/// so this guard stays registered for the whole app lifetime and additionally
-/// runs a low-frequency poll that closes any matching window no matter when it
-/// appeared.
+/// Event-driven compatibility guard for restored blank SwiftUI Settings windows.
+/// The AppKit entry point no longer creates a Settings scene, so there is no
+/// reason to poll the window list while the application is idle.
 @MainActor
 final class SettingsScenePhantomWindowGuard {
     static let shared = SettingsScenePhantomWindowGuard()
 
-    /// How often the low-frequency poll sweeps the window list.
-    private static let pollInterval: TimeInterval = 0.75
-
     private var observers: [NSObjectProtocol] = []
-    private var sweepTimer: Timer?
     private var isStarted = false
+
+    var registeredObserverCount: Int { observers.count }
 
     private init() {}
 
@@ -58,18 +47,9 @@ final class SettingsScenePhantomWindowGuard {
             }
         )
 
-        // The phantom can appear without any of the above events (e.g. window
-        // restoration finishing long after launch), so keep polling the whole
-        // window list for the app's lifetime.
-        let timer = Timer(timeInterval: Self.pollInterval, repeats: true) { _ in
-            MainActor.assumeIsolated {
-                Self.performSweep()
-            }
-        }
-        RunLoop.main.add(timer, forMode: .common)
-        sweepTimer = timer
-
-        // Catch anything that already appeared before the timer's first tick.
+        // Catch restored windows present before observation starts. Later windows
+        // are covered by activation/key/main notifications and the controller's
+        // existing finite activation-policy sweeps.
         Self.performSweep()
     }
 

@@ -4,6 +4,19 @@ A macOS menu bar app for monitoring AI plan limits, credits, relay balances, and
 
 [Download Latest Release](https://github.com/Four-JJJJ/oh-myusage/releases/latest) · [Install Guide](DOWNLOAD.md) · [Supported Services](PROVIDERS.md) · [中文说明](../README.md)
 
+## V2.6.0
+
+- Merge credential writes against the persisted vault under a shared in-process transaction; preserve previous credentials on failure and prevent deleted legacy entries from migrating back
+- Archive corrupt configuration bytes before replacement; ordinary saves and later launches preserve the archive for manual recovery
+- Create profile files with 0600 permissions and private atomic replacement; tighten existing files and reject symbolic-link and hard-link targets
+- Propagate refresh cancellation to background workers, suppress stale results, remove the persistent window-scan timer, and reuse Grok/Gemini enumeration caches
+- Unify subscription and API sources under Official Services, label API entries by name, and present account, plan-quota, or balance details appropriate to each source
+- Localize statistics headings, metrics, options, empty states, and month labels; provide checkout-isolated build commands and enforce production-source warning checks before release
+
+Local regression tests and universal Release compilation pass. Final DMG, signing, notarization, and upgrade-installation validation follow the actual Release and acceptance record; real-account flows require separate acceptance. Profiles remain plaintext accessible to the same user; credential transactions do not provide cross-process concurrency guarantees. No unmeasured performance or energy saving is claimed.
+
+See the [release notes](releases/v2.6.0.md) and [repair validation record](OPTIMIZATION_REPAIRS_2026-10-17.md).
+
 ## V2.5.4
 
 - Fix Cursor pagination using raw page lengths; disclose partial results and local fallback, including cc-switch read failures

@@ -3,6 +3,9 @@ import Foundation
 final class ConfigStore {
     private let paths: ConfigStorePaths
     private let fileManager: FileManager
+    private lazy var snapshotWriter = ConfigSnapshotWriter(
+        paths: paths, fileManager: fileManager, log: { [weak self] in self?.log($0) }
+    )
     private(set) var lastLoadWasLossy = false
     private var directoryURL: URL { paths.directoryURL }
     private var fileURL: URL { paths.fileURL }
@@ -38,7 +41,10 @@ final class ConfigStore {
                 switch result {
                 case .missing:
                     continue
+                case .unreadable(let error):
+                    throw error
                 case .invalid(let data, let error):
+                    try snapshotWriter.archiveCorruptSnapshot(data)
                     sawPersistedConfigSource = true
                     if preservedFallbackData == nil {
                         preservedFallbackData = data
@@ -72,7 +78,10 @@ final class ConfigStore {
             switch result {
             case .missing:
                 continue
+            case .unreadable(let error):
+                throw error
             case .invalid(let data, let error):
+                try snapshotWriter.archiveCorruptSnapshot(data)
                 sawPersistedConfigSource = true
                 if preservedFallbackData == nil, source != .preservedFallbackCandidate {
                     preservedFallbackData = data
@@ -145,6 +154,9 @@ final class ConfigStore {
         if fileManager.fileExists(atPath: preservedFallbackCandidateFileURL.path) {
             try fileManager.removeItem(at: preservedFallbackCandidateFileURL)
         }
+        if fileManager.fileExists(atPath: paths.corruptArchiveDirectoryURL.path) {
+            try fileManager.removeItem(at: paths.corruptArchiveDirectoryURL)
+        }
         for source in paths.legacyConfigSources where fileManager.fileExists(atPath: source.importMarkerFileURL.path) {
             try fileManager.removeItem(at: source.importMarkerFileURL)
         }
@@ -205,13 +217,7 @@ final class ConfigStore {
     }
 
     private func makeSnapshotWriter() -> ConfigSnapshotWriter {
-        ConfigSnapshotWriter(
-            paths: paths,
-            fileManager: fileManager,
-            log: { message in
-                self.log(message)
-            }
-        )
+        snapshotWriter
     }
 
     private func legacyImporter() -> LegacyConfigImporter {

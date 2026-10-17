@@ -50,16 +50,18 @@ final class CodexAccountProfileStore {
 
     private let fileURL: URL
     private let fileManager: FileManager
+    private let protectedFile: PrivateProfileFile
 
     init(fileManager: FileManager = .default, fileURL: URL? = nil) {
         self.fileManager = fileManager
         if let fileURL {
             self.fileURL = fileURL
         } else {
-            let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-            let directory = appSupport.appendingPathComponent("OhMyUsage", isDirectory: true)
-            self.fileURL = directory.appendingPathComponent("codex_profiles.json")
+            self.fileURL = PrivateProfileFile.defaultURL(name: "codex_profiles.json", fileManager: fileManager)
         }
+        self.protectedFile = PrivateProfileFile(url: self.fileURL, fileManager: fileManager, ownsParentDirectory: fileURL == nil)
+        do { try protectedFile.protectExistingFile() }
+        catch { NSLog("[CodexAccountProfileStore] Unable to restrict profile file permissions") }
     }
 
     func profiles() -> [CodexAccountProfile] {
@@ -335,7 +337,7 @@ final class CodexAccountProfileStore {
 
     private func loadFile() -> ProfileFile {
         let directory = fileURL.deletingLastPathComponent()
-        try? fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        try? fileManager.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         guard let data = try? Data(contentsOf: fileURL) else {
             return ProfileFile(profiles: [], ignoredFingerprints: [])
         }
@@ -349,7 +351,7 @@ final class CodexAccountProfileStore {
 
     private func save(_ profiles: [CodexAccountProfile], ignoredFingerprints: Set<String> = []) throws {
         let directory = fileURL.deletingLastPathComponent()
-        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -359,7 +361,7 @@ final class CodexAccountProfileStore {
                 ignoredFingerprints: ignoredFingerprints.isEmpty ? nil : ignoredFingerprints.sorted()
             )
         )
-        try data.write(to: fileURL, options: .atomic)
+        try protectedFile.write(data)
     }
 
     private func normalizeProfiles(_ profiles: [CodexAccountProfile]) -> [CodexAccountProfile] {

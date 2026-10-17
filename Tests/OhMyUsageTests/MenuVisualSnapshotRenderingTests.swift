@@ -183,6 +183,98 @@ final class MenuVisualSnapshotRenderingTests: XCTestCase {
 
     // MARK: - Scenario 6: settings credential disclosure expanded
 
+    func testRenderUnifiedOfficialSidebarNames() async throws {
+        let context = try await makeSettingsDetailContext(idSuffix: "unified-sidebar")
+        let viewModel = context.viewModel
+        let examples = [
+            OfficialProviderDefaultCatalog.kimi(),
+            OfficialProviderDefaultCatalog.kimiBalance(),
+            OfficialProviderDefaultCatalog.openRouterCredits(),
+            OfficialProviderDefaultCatalog.openRouterAPI(),
+            OfficialRelayProviderDefaultCatalog.deepSeek()
+        ]
+        viewModel.config.providers = examples.enumerated().map { index, provider in
+            var provider = provider
+            provider.enabled = index < 3
+            return provider
+        }
+        let settingsView = SettingsView(
+            viewModel: viewModel,
+            navigationState: SettingsNavigationState(selectedProviderID: examples[1].id)
+        )
+        XCTAssertEqual(settingsView.sidebarProviders.map(\.id), examples.map(\.id))
+        try renderPNG(
+            settingsView.officialSubscriptionsSidebar
+                .frame(width: 188, height: 220)
+                .background(Color(hex: 0x232323))
+                .environment(\.colorScheme, .dark),
+            fileName: "settings-unified-official-sidebar.png",
+            proposedSize: NSSize(width: 188, height: 220)
+        )
+    }
+
+    func testRenderUnifiedOfficialProviderList() async throws {
+        let context = try await makeSettingsDetailContext(idSuffix: "categories")
+        let viewModel = context.viewModel
+        let examples = [
+            OfficialProviderDefaultCatalog.zaiBalance(),
+            OfficialRelayProviderDefaultCatalog.deepSeek(),
+            OfficialRelayProviderDefaultCatalog.xiaomiMIMO(),
+            OfficialProviderDefaultCatalog.copilot()
+        ]
+        for provider in examples {
+            let isAPI = OfficialSettingsCategory.resolve(for: provider) == .api
+            let snapshot = UsageSnapshot(
+                source: provider.id,
+                status: .ok,
+                remaining: isAPI ? 82.5 : 82,
+                used: isAPI ? nil : 18,
+                limit: isAPI ? nil : 100,
+                unit: isAPI ? "CNY" : "%",
+                updatedAt: Date(),
+                note: "",
+                quotaWindows: isAPI ? [] : [
+                    UsageQuotaWindow(id: "monthly", title: "Monthly", remainingPercent: 82, usedPercent: 18, resetAt: Date().addingTimeInterval(3600), kind: .weekly)
+                ],
+                sourceLabel: "API",
+                accountLabel: "demo@example.test"
+            )
+            viewModel.providerRefreshModel.mutateProviderState { $0.snapshots[provider.id] = snapshot }
+            let settingsView = SettingsView(
+                viewModel: viewModel,
+                navigationState: SettingsNavigationState(
+                    selectedProviderID: provider.id
+                )
+            )
+            XCTAssertEqual(settingsView.selectedProvider?.id, provider.id)
+            XCTAssertTrue(Set(examples.map(\.id)).isSubset(of: Set(settingsView.sidebarProviders.map(\.id))))
+            let officialProviders = viewModel.config.providers.filter { $0.family == .official || $0.isOfficialRelayProvider }
+            XCTAssertEqual(
+                settingsView.sidebarProviders.map(\.id),
+                (officialProviders.filter(\.enabled) + officialProviders.filter { !$0.enabled }).map(\.id)
+            )
+            try renderPNG(
+                settingsDetailPane(settingsView: settingsView, provider: provider),
+                fileName: "settings-category-\(provider.id).png"
+            )
+        }
+        viewModel.setLanguage(.en)
+        let api = OfficialProviderDefaultCatalog.zaiBalance()
+        let settingsView = SettingsView(
+            viewModel: viewModel,
+            navigationState: SettingsNavigationState(selectedProviderID: api.id)
+        )
+        try renderPNG(
+            settingsDetailPane(settingsView: settingsView, provider: api),
+            fileName: "settings-category-api-en.png"
+        )
+        viewModel.providerRefreshModel.mutateProviderState { $0.snapshots.removeValue(forKey: api.id) }
+        try renderPNG(
+            settingsDetailPane(settingsView: settingsView, provider: api),
+            fileName: "settings-category-api-empty.png"
+        )
+    }
+
     func testRenderSettingsCredentialDisclosureExpanded() async throws {
         let context = try await makeSettingsDetailContext(idSuffix: "expanded")
         let settingsView = context.settingsView
@@ -455,7 +547,6 @@ final class MenuVisualSnapshotRenderingTests: XCTestCase {
 
     private func makeSettingsDetailContext(idSuffix: String) async throws -> SettingsDetailContext {
         var kimi = ProviderDescriptor.defaultOfficialKimi()
-        kimi.id = "kimi-visual-settings-\(idSuffix)"
         kimi.enabled = true
 
         let now = Date()

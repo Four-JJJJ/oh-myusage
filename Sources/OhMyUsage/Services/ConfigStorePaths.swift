@@ -15,6 +15,7 @@ struct ConfigStorePaths {
     let recoveryFileURL: URL
     let lastKnownGoodFileURL: URL
     let preservedFallbackCandidateFileURL: URL
+    let corruptArchiveDirectoryURL: URL
 
     init(rootDirectoryURL: URL) {
         self.rootDirectoryURL = rootDirectoryURL
@@ -25,6 +26,7 @@ struct ConfigStorePaths {
         self.recoveryFileURL = directory.appendingPathComponent("config.recovery.json")
         self.lastKnownGoodFileURL = directory.appendingPathComponent("config.last-known-good.json")
         self.preservedFallbackCandidateFileURL = directory.appendingPathComponent("config.preserved-fallback-candidate.json")
+        self.corruptArchiveDirectoryURL = directory.appendingPathComponent("config.corrupt-archive", isDirectory: true)
     }
 
     var legacyConfigSources: [LegacyConfigSource] {

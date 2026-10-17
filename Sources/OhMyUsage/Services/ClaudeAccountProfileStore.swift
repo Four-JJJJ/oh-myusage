@@ -51,16 +51,18 @@ final class ClaudeAccountProfileStore {
 
     private let fileURL: URL
     private let fileManager: FileManager
+    private let protectedFile: PrivateProfileFile
 
     init(fileManager: FileManager = .default, fileURL: URL? = nil) {
         self.fileManager = fileManager
         if let fileURL {
             self.fileURL = fileURL
         } else {
-            let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-            let directory = appSupport.appendingPathComponent("OhMyUsage", isDirectory: true)
-            self.fileURL = directory.appendingPathComponent("claude_profiles.json")
+            self.fileURL = PrivateProfileFile.defaultURL(name: "claude_profiles.json", fileManager: fileManager)
         }
+        self.protectedFile = PrivateProfileFile(url: self.fileURL, fileManager: fileManager, ownsParentDirectory: fileURL == nil)
+        do { try protectedFile.protectExistingFile() }
+        catch { NSLog("[ClaudeAccountProfileStore] Unable to restrict profile file permissions") }
     }
 
     func profiles() -> [ClaudeAccountProfile] {
@@ -952,7 +954,7 @@ final class ClaudeAccountProfileStore {
 
     private func loadFile() -> ProfileFile {
         let directory = fileURL.deletingLastPathComponent()
-        try? fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        try? fileManager.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         guard let data = try? Data(contentsOf: fileURL) else {
             return ProfileFile(profiles: [], ignoredFingerprints: [])
         }
@@ -966,7 +968,7 @@ final class ClaudeAccountProfileStore {
 
     private func save(_ profiles: [ClaudeAccountProfile], ignoredFingerprints: Set<String> = []) throws {
         let directory = fileURL.deletingLastPathComponent()
-        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -976,6 +978,6 @@ final class ClaudeAccountProfileStore {
                 ignoredFingerprints: ignoredFingerprints.isEmpty ? nil : ignoredFingerprints.sorted()
             )
         )
-        try data.write(to: fileURL, options: .atomic)
+        try protectedFile.write(data)
     }
 }

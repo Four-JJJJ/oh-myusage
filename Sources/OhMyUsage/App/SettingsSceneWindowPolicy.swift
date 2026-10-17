@@ -26,6 +26,7 @@ enum SettingsSceneWindowPolicy {
     /// the scene ("oh-myusage Settings"), and its content is not the real
     /// settings UI. The content check is the decisive signal: the phantom hosts
     /// an empty SwiftUI view controller, never our `hostingController`.
+    @MainActor
     static func isPhantomWindow(
         _ window: NSWindow,
         ownedWindow: NSWindow?,

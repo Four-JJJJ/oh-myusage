@@ -2,6 +2,7 @@ import AppKit
 import XCTest
 @testable import OhMyUsage
 
+@MainActor
 final class SettingsScenePhantomWindowGuardTests: XCTestCase {
     private func makeWindow(title: String, titleVisibility: NSWindow.TitleVisibility) -> NSWindow {
         let window = NSWindow(
@@ -114,14 +115,10 @@ final class SettingsScenePhantomWindowGuardTests: XCTestCase {
         XCTAssertGreaterThan(SettingsSceneWindowPolicy.sweepDelays.last ?? 0, 1)
     }
 
-    func testPhantomGuardStartIsIdempotent() async {
-        await MainActor.run {
-            let guardInstance = SettingsScenePhantomWindowGuard.shared
-            guardInstance.start()
-            guardInstance.start()
-        }
-        // Reaching here without registering duplicate observers/timers is the
-        // regression guard; the assertion documents intent.
-        XCTAssertTrue(true)
+    func testPhantomGuardStartIsIdempotent() {
+        let guardInstance = SettingsScenePhantomWindowGuard.shared
+        guardInstance.start()
+        guardInstance.start()
+        XCTAssertEqual(guardInstance.registeredObserverCount, 3)
     }
 }

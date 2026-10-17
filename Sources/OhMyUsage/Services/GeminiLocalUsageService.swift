@@ -2,6 +2,8 @@ import Foundation
 import OhMyUsageApplication
 
 final class GeminiLocalUsageService {
+    // Callers create services per refresh; retain enumeration metadata across instances.
+    private static let enumerationCache = LocalUsageFileEnumerationCache()
     private let fileManager: FileManager
     private let calendar: Calendar
     private let nowProvider: () -> Date
@@ -35,7 +37,7 @@ final class GeminiLocalUsageService {
     }
 
     func fetchEvents(since: Date) throws -> [LocalUsageEvent] {
-        let files = LocalUsageFileEnumerationCache().files(
+        let files = Self.enumerationCache.files(
             identifier: "gemini-session-files",
             roots: [tmpRootPath],
             cutoff: calendar.date(byAdding: .day, value: -1, to: since) ?? since,

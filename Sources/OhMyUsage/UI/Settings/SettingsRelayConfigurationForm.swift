@@ -23,6 +23,7 @@ extension SettingsView {
     @ViewBuilder
     func relayCondensedConfigSection(_ provider: ProviderDescriptor) -> some View {
         let providerConfiguration = providerConfigurationFacade
+        let officialCategory = OfficialSettingsCategory.resolve(for: provider)
         let relayViewConfig = provider.relayViewConfig
         let accountAuth = relayViewConfig?.accountBalance?.auth
         let providerAdapterID = provider.relayConfig?.adapterID
@@ -107,32 +108,36 @@ extension SettingsView {
         let credentialFieldWidth = max(220, thirdPartyConfigControlWidth - 58)
 
         settingsConfigurationRows {
-            settingsConfigToggleRow(
-                title: officialStatusBarTitle,
-                isOn: Binding(
-                    get: { providerConfiguration.isStatusBarProvider(providerID: provider.id) },
-                    set: { providerConfiguration.setStatusBarDisplayEnabled($0, providerID: provider.id) }
-                )
-            )
-
-            if shouldShowExpirationTimeToggle(for: provider) {
+            if officialCategory != nil {
+                settingsDetailGroupCaption(viewModel.localizedText("授权与导入", "Authorization & Import"))
+            } else {
                 settingsConfigToggleRow(
-                    title: relayExpirationTimeTitle,
-                    isOn: relayExpirationTimeBinding(provider, providerConfiguration: providerConfiguration)
+                    title: officialStatusBarTitle,
+                    isOn: Binding(
+                        get: { providerConfiguration.isStatusBarProvider(providerID: provider.id) },
+                        set: { providerConfiguration.setStatusBarDisplayEnabled($0, providerID: provider.id) }
+                    )
                 )
-            }
 
-            relayCompactConfigRow(title: viewModel.localizedText("用量偏好", "Usage Preference")) {
-                relayPillControl(
-                    selection: quotaDisplayBinding.wrappedValue.id,
-                    options: [
-                        (OfficialQuotaDisplayMode.remaining.id, viewModel.text(.quotaDisplayRemaining)),
-                        (OfficialQuotaDisplayMode.used.id, viewModel.text(.quotaDisplayUsed))
-                    ],
-                    width: 136
-                ) { selection in
-                    if let match = [OfficialQuotaDisplayMode.remaining, .used].first(where: { $0.id == selection }) {
-                        quotaDisplayBinding.wrappedValue = match
+                if shouldShowExpirationTimeToggle(for: provider) {
+                    settingsConfigToggleRow(
+                        title: relayExpirationTimeTitle,
+                        isOn: relayExpirationTimeBinding(provider, providerConfiguration: providerConfiguration)
+                    )
+                }
+
+                relayCompactConfigRow(title: viewModel.localizedText("用量偏好", "Usage Preference")) {
+                    relayPillControl(
+                        selection: quotaDisplayBinding.wrappedValue.id,
+                        options: [
+                            (OfficialQuotaDisplayMode.remaining.id, viewModel.text(.quotaDisplayRemaining)),
+                            (OfficialQuotaDisplayMode.used.id, viewModel.text(.quotaDisplayUsed))
+                        ],
+                        width: 136
+                    ) { selection in
+                        if let match = [OfficialQuotaDisplayMode.remaining, .used].first(where: { $0.id == selection }) {
+                            quotaDisplayBinding.wrappedValue = match
+                        }
                     }
                 }
             }
@@ -246,26 +251,28 @@ extension SettingsView {
                 }
             }
 
-            settingsConfigThresholdRow(
-                title: officialThresholdTitle,
-                value: Binding(
-                    get: { thresholdValue(for: provider) },
-                    set: { setOfficialThresholdValue($0, providerID: provider.id) }
-                ),
-                valueStyle: .number,
-                onValueCommit: { newValue in
-                    providerConfiguration.commitProviderThreshold(newValue, providerID: provider.id)
-                },
-                onEditingChanged: { editing in
-                    if !editing {
-                        commitOfficialThresholdDraft(provider)
+            if officialCategory == nil {
+                settingsConfigThresholdRow(
+                    title: officialThresholdTitle,
+                    value: Binding(
+                        get: { thresholdValue(for: provider) },
+                        set: { setOfficialThresholdValue($0, providerID: provider.id) }
+                    ),
+                    valueStyle: .number,
+                    onValueCommit: { newValue in
+                        providerConfiguration.commitProviderThreshold(newValue, providerID: provider.id)
+                    },
+                    onEditingChanged: { editing in
+                        if !editing {
+                            commitOfficialThresholdDraft(provider)
+                        }
                     }
-                }
-            )
-            .onChange(of: provider.threshold.lowRemaining) { _, newValue in
-                if focusedThresholdProviderID != provider.id {
-                    officialEditorDraft.thresholdDraftValues[provider.id] = newValue
-                    officialEditorDraft.officialThresholdInputs[provider.id] = formattedOfficialThresholdValue(newValue)
+                )
+                .onChange(of: provider.threshold.lowRemaining) { _, newValue in
+                    if focusedThresholdProviderID != provider.id {
+                        officialEditorDraft.thresholdDraftValues[provider.id] = newValue
+                        officialEditorDraft.officialThresholdInputs[provider.id] = formattedOfficialThresholdValue(newValue)
+                    }
                 }
             }
 
@@ -304,6 +311,10 @@ extension SettingsView {
                 }
             }
             .padding(.leading, thirdPartyConfigLabelWidth + thirdPartyConfigLabelSpacing - 3)
+
+            if officialCategory != nil {
+                officialDisplayConfigurationRows(provider, quotaDisplayBinding: quotaDisplayBinding)
+            }
         }
         .onAppear { focusPendingRelayCredentialIfNeeded(provider) }
         .onChange(of: navigationState.selectedProviderID) { _, _ in

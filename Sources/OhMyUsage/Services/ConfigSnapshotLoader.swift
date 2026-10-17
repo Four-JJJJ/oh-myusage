@@ -10,6 +10,7 @@ enum ConfigSnapshotSource: String {
 
 enum ConfigSnapshotLoadResult {
     case missing
+    case unreadable(Error)
     case invalid(Data, Error)
     case lossy(ConfigSnapshot, AppConfigDecodeDiagnostics)
     case usable(ConfigSnapshot)
@@ -67,8 +68,13 @@ final class ConfigSnapshotLoader {
             return .missing
         }
 
+        let data: Data
         do {
-            let data = try Data(contentsOf: url)
+            data = try Data(contentsOf: url)
+        } catch {
+            return .unreadable(error)
+        }
+        do {
             let decoded = try AppConfig.decodeWithDiagnostics(from: data)
             let migrated = decoded.config.migratedWithSiteDefaults()
             let snapshot = ConfigSnapshot(
@@ -84,7 +90,6 @@ final class ConfigSnapshotLoader {
 
             return .usable(snapshot)
         } catch {
-            let data = (try? Data(contentsOf: url)) ?? Data()
             return .invalid(data, error)
         }
     }

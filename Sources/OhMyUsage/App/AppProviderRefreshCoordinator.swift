@@ -479,9 +479,15 @@ final class AppProviderRefreshCoordinator {
         using provider: any UsageProvider,
         forceRefresh: Bool
     ) async throws -> UsageSnapshot {
-        try await Task.detached(priority: .utility) {
-            try await provider.fetch(forceRefresh: forceRefresh)
-        }.value
+        let worker = Task.detached(priority: .utility) {
+            try Task.checkCancellation()
+            return try await provider.fetch(forceRefresh: forceRefresh)
+        }
+        return try await withTaskCancellationHandler {
+            try await worker.value
+        } onCancel: {
+            worker.cancel()
+        }
     }
 
     private func handleLowRemainingAlerts(

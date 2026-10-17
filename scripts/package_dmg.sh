@@ -159,35 +159,9 @@ sign_mode() {
 }
 
 resolve_binary_path() {
-  # Prefer the freshest Release binary. Universal `swift build --arch ...`
-  # writes to `.build/apple`, but older Xcode/SwiftPM layouts may leave a
-  # stale executable under `.build/out` that would otherwise be picked first.
-  local candidates=(
-    "$ROOT_DIR/.build/apple/Products/Release/$EXECUTABLE_NAME"
-    "$ROOT_DIR/.build/arm64-apple-macosx/release/$EXECUTABLE_NAME"
-    "$ROOT_DIR/.build/x86_64-apple-macosx/release/$EXECUTABLE_NAME"
-    "$ROOT_DIR/.build/out/Products/Release/$EXECUTABLE_NAME"
-  )
-
-  local best=""
-  local best_mtime=0
-  local candidate mtime
-  for candidate in "${candidates[@]}"; do
-    if [[ -x "$candidate" ]]; then
-      mtime="$(stat -f %m "$candidate" 2>/dev/null || echo 0)"
-      if (( mtime >= best_mtime )); then
-        best="$candidate"
-        best_mtime="$mtime"
-      fi
-    fi
-  done
-
-  if [[ -n "$best" ]]; then
-    echo "$best"
-    return 0
-  fi
-
-  return 1
+  local products_dir
+  products_dir="$("$ROOT_DIR/scripts/dev.sh" build -c release --arch arm64 --arch x86_64 --show-bin-path)" || return 1
+  printf '%s/%s\n' "$products_dir" "$EXECUTABLE_NAME"
 }
 
 build_products_dir() {
@@ -390,7 +364,7 @@ if command -v xattr >/dev/null 2>&1 && [[ -d "$RESOURCES_DIR" ]]; then
 fi
 
 log "Building universal release binary..."
-swift build -c release --arch arm64 --arch x86_64 ${SWIFT_BUILD_SYSTEM:+--build-system "$SWIFT_BUILD_SYSTEM"}
+"$ROOT_DIR/scripts/dev.sh" build -c release --arch arm64 --arch x86_64
 
 BIN_PATH="$(resolve_binary_path || true)"
 

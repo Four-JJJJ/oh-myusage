@@ -4,7 +4,6 @@ import SwiftUI
 extension SettingsView {
     @ViewBuilder
     func officialConfigurationRows(_ provider: ProviderDescriptor) -> some View {
-        let providerConfiguration = providerConfigurationFacade
         let settingsSpec = ProviderSettingsSpec.resolve(for: provider)
         let supportedSourceModes = settingsSpec.supportedSourceModes
         let visibleWebModes = officialConfigVisibleWebModes(settingsSpec.supportedWebModes)
@@ -40,8 +39,6 @@ extension SettingsView {
             set: { officialEditorDraft.officialWebModeInputs[provider.id] = $0 }
         )
 
-        // doc 10.3：详情配置区固定信息顺序——
-        // 5. 授权或重新导入操作 → 6. 套餐字段 → 7. Cookie、API 覆盖规则和调试信息（凭证输入默认折叠）。
         let hasSavedOfficialCredential = providerConfigurationFacade.hasToken(for: provider)
             || providerConfigurationFacade.hasOfficialManualCookie(for: provider)
 
@@ -81,92 +78,7 @@ extension SettingsView {
                 }
             }
 
-            settingsDetailGroupCaption(viewModel.localizedText("套餐与显示", "Plan & Display"))
-
-            settingsConfigToggleRow(
-                title: officialStatusBarTitle,
-                isOn: Binding(
-                    get: { providerConfiguration.isStatusBarProvider(providerID: provider.id) },
-                    set: { providerConfiguration.setStatusBarDisplayEnabled($0, providerID: provider.id) }
-                )
-            )
-
-            settingsConfigToggleRow(
-                title: officialShowEmailTitle,
-                isOn: Binding(
-                    get: { providerConfiguration.showOfficialAccountEmailInMenuBar },
-                    set: { providerConfiguration.setShowOfficialAccountEmailInMenuBar($0) }
-                )
-            )
-
-            settingsConfigToggleRow(
-                title: officialShowPlanTypeTitle,
-                isOn: Binding(
-                    get: { providerConfiguration.showOfficialPlanTypeInMenuBar(providerID: provider.id) },
-                    set: { providerConfiguration.setShowOfficialPlanTypeInMenuBar($0, providerID: provider.id) }
-                )
-            )
-
-            if shouldShowExpirationTimeToggle(for: provider) {
-                settingsConfigToggleRow(
-                    title: relayExpirationTimeTitle,
-                    isOn: relayExpirationTimeBinding(provider, providerConfiguration: providerConfiguration)
-                )
-            }
-
-            officialUsagePreferenceConfigRow(quotaDisplayBinding)
-
-            if settingsSpec.showsTraeValueDisplayMode {
-                settingsConfigRow(title: viewModel.localizedText("显示", "Display"), nested: true) {
-                    settingsConfigSegmentedControl(
-                        options: [
-                            SettingsPillSegmentOption(id: OfficialTraeValueDisplayMode.percent.id, title: viewModel.localizedText("百分比", "Percent")),
-                            SettingsPillSegmentOption(id: OfficialTraeValueDisplayMode.amount.id, title: viewModel.localizedText("数字", "Amount"))
-                        ],
-                        selection: traeValueDisplayBinding.wrappedValue.id,
-                        width: 112
-                    ) { selectedID in
-                        if let selected = [OfficialTraeValueDisplayMode.percent, .amount].first(where: { $0.id == selectedID }) {
-                            traeValueDisplayBinding.wrappedValue = selected
-                        }
-                    }
-                }
-            }
-
-            settingsConfigThresholdRow(
-                title: officialThresholdTitle,
-                value: Binding(
-                    get: { thresholdValue(for: provider) },
-                    set: { setOfficialThresholdValue($0, providerID: provider.id) }
-                ),
-                valueStyle: officialThresholdValueStyle(
-                    provider: provider,
-                    traeValueDisplayMode: settingsSpec.showsTraeValueDisplayMode ? traeValueDisplayBinding.wrappedValue : nil
-                ),
-                onValueCommit: { newValue in
-                    providerConfiguration.commitProviderThreshold(newValue, providerID: provider.id)
-                },
-                onEditingChanged: { editing in
-                    if !editing {
-                        commitOfficialThresholdDraft(provider)
-                    }
-                }
-            )
-            .onChange(of: provider.threshold.lowRemaining) { _, newValue in
-                if focusedThresholdProviderID != provider.id {
-                    officialEditorDraft.thresholdDraftValues[provider.id] = newValue
-                    officialEditorDraft.officialThresholdInputs[provider.id] = formattedOfficialThresholdValue(newValue)
-                }
-            }
-            .onChange(of: focusedThresholdProviderID) { oldValue, newValue in
-                if oldValue == provider.id, newValue != provider.id {
-                    applyOfficialThresholdInput(provider)
-                }
-            }
-
             if !settingsSpec.credentialFields.isEmpty {
-                settingsDetailGroupCaption(viewModel.localizedText("凭证与调试信息", "Credentials & Debug"))
-
                 // 凭证输入默认折叠，只有点击「重新导入凭证 / 手动配置凭证」时展开。
                 SettingsCredentialDisclosureBlock(
                     headerTitle: SettingsCredentialDisclosurePresenter.headerTitle(
@@ -194,6 +106,11 @@ extension SettingsView {
                     }
                 }
             }
+            officialDisplayConfigurationRows(
+                provider,
+                quotaDisplayBinding: quotaDisplayBinding,
+                traeValueDisplayBinding: traeValueDisplayBinding
+            )
         }
         .onChange(of: sourceBinding.wrappedValue) { _, newValue in
             persistOfficialConfigSettings(
@@ -231,6 +148,101 @@ extension SettingsView {
                 quotaDisplayMode: quotaDisplayBinding.wrappedValue,
                 traeValueDisplayMode: newValue
             )
+        }
+    }
+
+    @ViewBuilder
+    func officialDisplayConfigurationRows(
+        _ provider: ProviderDescriptor,
+        quotaDisplayBinding: Binding<OfficialQuotaDisplayMode>,
+        traeValueDisplayBinding: Binding<OfficialTraeValueDisplayMode>? = nil
+    ) -> some View {
+        let providerConfiguration = providerConfigurationFacade
+        let category = OfficialSettingsCategory.resolve(for: provider) ?? .subscription
+
+        settingsDetailGroupCaption(viewModel.localizedText("显示与提醒", "Display & Alerts"))
+
+        settingsConfigToggleRow(
+            title: viewModel.localizedText("菜单栏", "Menubar"),
+            isOn: Binding(
+                get: { providerConfiguration.isStatusBarProvider(providerID: provider.id) },
+                set: { providerConfiguration.setStatusBarDisplayEnabled($0, providerID: provider.id) }
+            )
+        )
+
+        if category == .subscription {
+            settingsConfigToggleRow(
+                title: viewModel.localizedText("显示账号", "Show Account"),
+                isOn: Binding(
+                    get: { providerConfiguration.showOfficialAccountEmailInMenuBar },
+                    set: { providerConfiguration.setShowOfficialAccountEmailInMenuBar($0) }
+                )
+            )
+
+            settingsConfigToggleRow(
+                title: viewModel.localizedText("显示套餐", "Show Plan"),
+                isOn: Binding(
+                    get: { providerConfiguration.showOfficialPlanTypeInMenuBar(providerID: provider.id) },
+                    set: { providerConfiguration.setShowOfficialPlanTypeInMenuBar($0, providerID: provider.id) }
+                )
+            )
+        }
+
+        if shouldShowExpirationTimeToggle(for: provider) {
+            settingsConfigToggleRow(
+                title: viewModel.localizedText("重置时间", "Reset Time"),
+                isOn: relayExpirationTimeBinding(provider, providerConfiguration: providerConfiguration)
+            )
+        }
+
+        officialUsagePreferenceConfigRow(quotaDisplayBinding)
+
+        if let traeValueDisplayBinding, provider.type == .trae {
+            settingsConfigRow(title: viewModel.localizedText("显示", "Display"), nested: true) {
+                settingsConfigSegmentedControl(
+                    options: [
+                        SettingsPillSegmentOption(id: OfficialTraeValueDisplayMode.percent.id, title: viewModel.localizedText("百分比", "Percent")),
+                        SettingsPillSegmentOption(id: OfficialTraeValueDisplayMode.amount.id, title: viewModel.localizedText("数字", "Amount"))
+                    ],
+                    selection: traeValueDisplayBinding.wrappedValue.id,
+                    width: 112
+                ) { selectedID in
+                    if let selected = [OfficialTraeValueDisplayMode.percent, .amount].first(where: { $0.id == selectedID }) {
+                        traeValueDisplayBinding.wrappedValue = selected
+                    }
+                }
+            }
+        }
+
+        settingsConfigThresholdRow(
+            title: officialThresholdTitle,
+            value: Binding(
+                get: { thresholdValue(for: provider) },
+                set: { setOfficialThresholdValue($0, providerID: provider.id) }
+            ),
+            valueStyle: provider.isRelay || [.zaiBalance, .kimiBalance, .qwenBalance].contains(provider.type) ? .number : officialThresholdValueStyle(
+                provider: provider,
+                traeValueDisplayMode: traeValueDisplayBinding?.wrappedValue
+            ),
+            onValueCommit: { newValue in
+                providerConfiguration.commitProviderThreshold(newValue, providerID: provider.id)
+            },
+            onEditingChanged: { editing in
+                if !editing {
+                    commitOfficialThresholdDraft(provider)
+                }
+            }
+        )
+        .onChange(of: provider.threshold.lowRemaining) { _, newValue in
+            if focusedThresholdProviderID != provider.id {
+                officialEditorDraft.thresholdDraftValues[provider.id] = newValue
+                officialEditorDraft.officialThresholdInputs[provider.id] = formattedOfficialThresholdValue(newValue)
+            }
+        }
+        .onChange(of: focusedThresholdProviderID) { oldValue, newValue in
+            if oldValue == provider.id, newValue != provider.id {
+                applyOfficialThresholdInput(provider)
+            }
         }
     }
 

@@ -9,6 +9,21 @@ oh-myusage 把官方订阅额度、模型使用窗口、第三方中转余额、
 
 [下载最新版本](https://github.com/Four-JJJJ/oh-myusage/releases/latest) · [安装说明](docs/DOWNLOAD.md) · [支持的服务](docs/PROVIDERS.md) · [扩展指南](docs/EXTENDING.md) · [发布清单](docs/RELEASE_CHECKLIST.md) · [English](docs/README.en.md)
 
+## V2.6.0 更新
+
+V2.6.0 聚焦凭证与配置的数据安全、后台任务取消和统计页双语体验，保留既有刷新频率与界面风格。
+
+| 方向 | 改进 |
+| --- | --- |
+| 凭证完整性 | 同进程多实例按最新持久化状态合并写入，避免冷写覆盖；写入失败不删旧凭证，不污染成功缓存；删除标记防止旧单项凭证重新迁入 |
+| 配置恢复 | 损坏配置原始字节在覆盖前独立归档，连续启动和普通保存不会清除，保留人工恢复依据 |
+| Profile 保护 | 新文件从创建起使用 0600 权限并私有原子替换；收紧现有 profile 文件，拒绝符号链接和硬链接目标 |
+| 运行时治理 | 父刷新取消传递到后台 worker，阻止旧结果晚写；移除常驻窗口扫描 Timer，复用 Grok/Gemini 文件枚举缓存 |
+| 官方服务 | 统一管理订阅与 API 来源，在服务名后标注 API 类型；按来源展示账号、套餐额度或账户余额 |
+| 双语与构建 | 统计页标题、指标、选项、空态和月份跟随应用语言；新增隔离构建入口和源码警告门禁，发布前运行测试 |
+
+本地回归测试与双架构 Release 编译已通过；最终 DMG、签名、公证和覆盖安装的验证状态以实际 Release 与验收记录为准；真实账号流程另行验收。Profile 仍是同用户可访问的明文，凭证事务尚不保证跨进程并发；不宣称未经测量的性能或能耗收益。详见[本版发布说明](docs/releases/v2.6.0.md)与[修缮验证记录](docs/OPTIMIZATION_REPAIRS_2026-10-17.md)。
+
 ## V2.5.4 更新
 
 V2.5.4 聚焦用量统计正确性、缓存可信度和后台任务治理，保留现有界面与默认刷新频率。
@@ -235,19 +250,19 @@ GitHub 分发的构建未使用 Apple Developer ID 签名、未经公证（notar
 构建：
 
 ```bash
-swift build
+./scripts/dev.sh build
 ```
 
 运行：
 
 ```bash
-swift run
+./scripts/dev.sh run
 ```
 
 测试：
 
 ```bash
-swift test
+./scripts/dev.sh test
 ```
 
 打包：
@@ -255,6 +270,16 @@ swift test
 ```bash
 ./scripts/package_dmg.sh
 ```
+
+`dev.sh` 使用默认 SwiftPM 构建后端，并将产物放在同步目录外的
+`~/Library/Caches/OhMyUsage/Builds/<工作区路径摘要>`，不同 checkout 不共用产物。
+如果当前选择的是 Command Line Tools，会仅为该命令优先选择已安装的完整 Xcode，
+不会修改全局 `xcode-select`。可用 `DEVELOPER_DIR` 指定工具链，或用 `OMU_BUILD_PATH`
+指定独立构建目录；原生 `swift build/test/run` 仍可使用。
+
+遇到 SwiftUI 宏插件缺失时先检查完整 Xcode 选择；遇到 resource fork / FinderInfo
+签名错误时使用同步目录外的全新构建目录。无需清空已有 `.build`、移动源码或递归清理仓库属性。
+CI 的源码构建使用 `-Xswiftc -warnings-as-errors`；测试仍单独运行，避免把历史测试警告混同为生产源码警告。
 
 打包产物默认输出到：
 

@@ -31,6 +31,26 @@ final class SettingsWorkspacePresenterTests: XCTestCase {
         )
     }
 
+    func testOfficialServicesUseUnifiedListCopy() {
+        let header = SettingsWorkspacePresenter.headerPresentation(
+            selectedTab: .officialProviders,
+            localizedText: Self.english,
+            generalTabTitle: "General"
+        )
+        XCTAssertEqual(header.title, "Official Services")
+        XCTAssertEqual(
+            header.subtitle,
+            "Manage official accounts, credentials, and usage in one list, with API services labeled by name."
+        )
+
+        let sidebar = SettingsWorkspacePresenter.sidebarPresentation(
+            localizedText: { zhHans, _ in zhHans },
+            generalTabTitle: "通用"
+        )
+        let officialItems = sidebar.sections.flatMap(\.items).filter { $0.tab == .officialProviders }
+        XCTAssertEqual(officialItems.map(\.title), ["官方服务"])
+    }
+
     func testSidebarPresentationBuildsExpectedSectionsAndLabels() {
         let presentation = SettingsWorkspacePresenter.sidebarPresentation(
             localizedText: Self.english,

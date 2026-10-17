@@ -308,6 +308,65 @@ final class AppProviderRefreshCoordinatorTests: XCTestCase {
         XCTAssertNil(stateBox.state.snapshots[descriptor.id])
         XCTAssertNil(stateBox.state.errors[descriptor.id])
         XCTAssertFalse(persisted)
+        let cancelledFetches = await fetchGate.cancelledFetchCount()
+        XCTAssertEqual(cancelledFetches, 1, "Invalidation must reach the actual detached provider task")
+    }
+
+    func testInvalidationInterruptsCancellationCooperativeFetchWithoutPublishingFailure() async throws {
+        var descriptor = ProviderDescriptor.defaultOfficialGemini()
+        descriptor.id = "cooperative-cancellation"
+        let probe = CoordinatorCancellationProbe()
+        let coordinator = AppProviderRefreshCoordinator(providerFactory: CooperativeProviderFactory(probe: probe), notifications: NotificationService())
+        let stateBox = CoordinatorRefreshStateBox()
+        let task = Task { @MainActor in
+            await coordinator.refreshProvider(
+                descriptor: descriptor, forceRefresh: true,
+                getState: { stateBox.state }, setState: { stateBox.state = $0 },
+                beforeRefresh: { _ in }, transformFetchedSnapshot: { _, fetched in fetched },
+                postOfficialRefresh: { _, _ in }, persistBaselineEntries: { _ in }, afterRefresh: {},
+                notifyStatusBarDisplayConfigChanged: {}, text: { _ in "" },
+                localizedText: { zh, _ in zh }, language: { .en }, boundedSnapshot: { $0 }
+            )
+        }
+        try await waitUntil { await probe.started }
+        coordinator.invalidateRefreshes(providerID: descriptor.id)
+        try await waitUntil { await probe.cancelled }
+        await task.value
+        XCTAssertNil(stateBox.state.snapshots[descriptor.id])
+        XCTAssertNil(stateBox.state.errors[descriptor.id])
+        XCTAssertNil(stateBox.state.consecutiveFailures[descriptor.id])
+    }
+
+    func testInvalidatingOldFetchDoesNotCancelReplacementRevision() async throws {
+        var descriptor = ProviderDescriptor.defaultOfficialGemini()
+        descriptor.id = "replacement"
+        let fetchGate = CoordinatorFetchGate()
+        let coordinator = AppProviderRefreshCoordinator(providerFactory: CountingProviderFactory(gate: fetchGate), notifications: NotificationService())
+        let stateBox = CoordinatorRefreshStateBox()
+        var persisted = 0
+        func refresh() async {
+            await coordinator.refreshProvider(
+                descriptor: descriptor, forceRefresh: true,
+                getState: { stateBox.state }, setState: { stateBox.state = $0 },
+                beforeRefresh: { _ in }, transformFetchedSnapshot: { _, fetched in fetched },
+                postOfficialRefresh: { _, _ in }, persistBaselineEntries: { _ in },
+                persistSnapshot: { _, _ in persisted += 1 }, afterRefresh: {},
+                notifyStatusBarDisplayConfigChanged: {}, text: { _ in "" },
+                localizedText: { zh, _ in zh }, language: { .en }, boundedSnapshot: { $0 }
+            )
+        }
+        let old = Task { await refresh() }
+        try await waitUntil { await fetchGate.fetchCount() == 1 }
+        coordinator.invalidateRefreshes(providerID: descriptor.id)
+        let replacement = Task { await refresh() }
+        try await waitUntil { await fetchGate.fetchCount() == 2 }
+        await fetchGate.release()
+        await old.value
+        await replacement.value
+        XCTAssertEqual(persisted, 1)
+        XCTAssertEqual(stateBox.state.snapshots[descriptor.id]?.remaining, 42)
+        let cancelled = await fetchGate.cancelledFetchCount()
+        XCTAssertEqual(cancelled, 1, "Only the old worker is cancelled")
     }
 
     func testRefreshProviderDeduplicatesInFlightFetchesForSameProviderID() async throws {
@@ -669,6 +728,7 @@ private actor ExclusiveRefreshCallCounter {
 }
 
 private actor CoordinatorFetchGate {
+    private var cancelledCount = 0
     private var count = 0
     private var continuations: [CheckedContinuation<Void, Never>] = []
 
@@ -688,6 +748,12 @@ private actor CoordinatorFetchGate {
     func fetchCount() -> Int {
         count
     }
+
+    func recordCancellation(_ cancelled: Bool) {
+        if cancelled { cancelledCount += 1 }
+    }
+
+    func cancelledFetchCount() -> Int { cancelledCount }
 }
 
 private struct CountingProviderFactory: ProviderFactorying {
@@ -708,6 +774,7 @@ private struct CountingUsageProvider: UsageProvider {
 
     func fetch(forceRefresh: Bool) async throws -> UsageSnapshot {
         await gate.beginFetch()
+        await gate.recordCancellation(Task.isCancelled)
         return UsageSnapshot(
             source: descriptor.id,
             status: .ok,
@@ -779,5 +846,38 @@ private final class CoordinatorPersistRecorder {
 
     func snapshot() -> [String] {
         events
+    }
+}
+
+private actor CoordinatorCancellationProbe {
+    private(set) var started = false
+    private(set) var cancelled = false
+
+    func fetch() async throws -> UsageSnapshot {
+        started = true
+        do {
+            try await Task.sleep(nanoseconds: 5_000_000_000)
+        } catch {
+            cancelled = error is CancellationError
+            throw error
+        }
+        throw ProviderError.timeout("Cooperative test fetch was not cancelled")
+    }
+}
+
+private struct CooperativeProviderFactory: ProviderFactorying {
+    let probe: CoordinatorCancellationProbe
+
+    func makeProvider(for descriptor: ProviderDescriptor) -> UsageProvider {
+        CooperativeUsageProvider(descriptor: descriptor, probe: probe)
+    }
+}
+
+private struct CooperativeUsageProvider: UsageProvider {
+    let descriptor: ProviderDescriptor
+    let probe: CoordinatorCancellationProbe
+
+    func fetch() async throws -> UsageSnapshot {
+        try await probe.fetch()
     }
 }

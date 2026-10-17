@@ -651,10 +651,7 @@ extension SettingsView {
 
         return ScrollView {
             VStack(alignment: .leading, spacing: 4) {
-                ForEach(enabledProviders) { provider in
-                    officialSubscriptionSidebarRow(provider)
-                }
-                ForEach(disabledProviders) { provider in
+                ForEach(enabledProviders + disabledProviders) { provider in
                     officialSubscriptionSidebarRow(provider)
                 }
             }
@@ -711,6 +708,8 @@ extension SettingsView {
 
     func officialSubscriptionSidebarRowContent(_ provider: ProviderDescriptor) -> some View {
         let isSelected = navigationState.selectedProviderID == provider.id
+        let displayName = sidebarDisplayName(for: provider)
+        let isAPI = OfficialSettingsCategory.resolve(for: provider) == .api
         return HStack(spacing: 6) {
             SettingsCheckbox(isOn: Binding(
                 get: { provider.enabled },
@@ -728,10 +727,19 @@ extension SettingsView {
                 )
                 .opacity(0.8)
 
-            Text(sidebarDisplayName(for: provider))
-                .font(.system(size: 12, weight: provider.enabled ? .semibold : .regular))
-                .foregroundStyle(provider.enabled ? SettingsVisualTokens.Text.primary : SettingsVisualTokens.Text.tertiary)
-                .lineLimit(1)
+            HStack(spacing: 0) {
+                Text(isAPI ? String(displayName.dropLast(" (API)".count)) : displayName)
+                    .lineLimit(1)
+                if isAPI {
+                    Text(" (API)")
+                        .fixedSize()
+                }
+            }
+            .font(.system(size: 12, weight: provider.enabled ? .semibold : .regular))
+            .foregroundStyle(provider.enabled ? SettingsVisualTokens.Text.primary : SettingsVisualTokens.Text.tertiary)
+            .help(displayName)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(displayName)
 
             Spacer(minLength: 0)
 
@@ -773,17 +781,66 @@ extension SettingsView {
     func officialSubscriptionDetailPage(_ provider: ProviderDescriptor) -> some View {
         let snapshot = viewModel.snapshots[provider.id]
         let error = viewModel.errors[provider.id]
+        let category = OfficialSettingsCategory.resolve(for: provider) ?? .subscription
 
-        // doc 10.3 信息顺序：状态 → 当前账号 → 额度/余额和重置时间 → 更新时间/来源/可信度 → 配置（授权/套餐/凭证）。
         return VStack(alignment: .leading, spacing: 24) {
-            officialSubscriptionHeader(provider)
+            VStack(alignment: .leading, spacing: 8) {
+                officialSubscriptionHeader(provider)
+                Text(category.detail(language: viewModel.language))
+                    .font(.system(size: 11))
+                    .foregroundStyle(SettingsVisualTokens.Text.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             providerDetailStatusSection(provider, snapshot: snapshot, error: error)
-            officialSubscriptionAccountsSection(provider: provider, snapshot: snapshot, error: error)
-            officialSubscriptionUsageSection(provider: provider, snapshot: snapshot)
+            if category == .subscription {
+                officialSubscriptionAccountsSection(provider: provider, snapshot: snapshot, error: error)
+                if shouldShowOfficialLocalTrendCard(for: provider) {
+                    officialSubscriptionUsageSection(provider: provider, snapshot: snapshot)
+                }
+            } else {
+                officialAPIUsageSection(snapshot: snapshot)
+            }
             providerDetailProvenanceSection(provider, snapshot: snapshot)
             officialSubscriptionConfigSection(provider)
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
+    }
+
+    func officialAPIUsageSection(snapshot: UsageSnapshot?) -> some View {
+        officialSubscriptionPanel(title: viewModel.localizedText("余额与用量", "Balance & Usage")) {
+            officialSubscriptionSectionCard(padding: 16, cornerRadius: SettingsVisualTokens.Radius.control) {
+                VStack(alignment: .leading, spacing: 16) {
+                    if let account = snapshot?.accountLabel, !account.isEmpty {
+                        Text(account)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(SettingsVisualTokens.Text.primary)
+                    }
+                    HStack(alignment: .top, spacing: 12) {
+                        officialAPIAmount(title: viewModel.localizedText("余额 / 剩余额度", "Balance / Remaining"), value: snapshot?.remaining, unit: snapshot?.unit)
+                        officialAPIAmount(title: viewModel.localizedText("已用", "Used"), value: snapshot?.used, unit: snapshot?.unit)
+                        officialAPIAmount(title: viewModel.localizedText("总额 / 限额", "Total / Limit"), value: snapshot?.limit, unit: snapshot?.unit)
+                    }
+                    if snapshot == nil {
+                        Text(viewModel.localizedText("配置凭证并刷新后显示账户数据。", "Configure credentials and refresh to load account data."))
+                            .font(.system(size: 11))
+                            .foregroundStyle(SettingsVisualTokens.Text.tertiary)
+                    }
+                }
+            }
+        }
+    }
+
+    func officialAPIAmount(title: String, value: Double?, unit: String?) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.system(size: 10))
+                .foregroundStyle(SettingsVisualTokens.Text.tertiary)
+            Text(OfficialAPIUsagePresenter.amount(value, unit: unit))
+                .font(AppFonts.numeric(size: 14, fallbackWeight: .bold))
+                .foregroundStyle(SettingsVisualTokens.Text.primary)
+                .textSelection(.enabled)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     func officialSubscriptionHeader(_ provider: ProviderDescriptor) -> some View {
@@ -932,7 +989,7 @@ extension SettingsView {
     ) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .center) {
-                Text(viewModel.localizedText("账号", "Accounts"))
+                Text(viewModel.localizedText("账号与额度", "Accounts & Quotas"))
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(settingsBodyColor)
 
@@ -1365,11 +1422,15 @@ extension SettingsView {
         defer { resetProviderReorderState() }
         guard let sourceProviderID = navigationState.draggingProviderID else { return false }
 
-        let originalIDs = enabledSidebarProviders.map(\.id)
-        let finalIDs = navigationState.reorderPreviewProviderIDs ?? originalIDs
-
+        let originalIDs = viewModel.config.providers.filter { $0.family == selectedFamily && $0.enabled }.map(\.id)
+        let previewIDs = navigationState.reorderPreviewProviderIDs ?? originalIDs
+        // Map visible rows back to the persisted family order.
         guard let sourceIndex = originalIDs.firstIndex(of: sourceProviderID),
-              let destinationIndex = finalIDs.firstIndex(of: sourceProviderID) else {
+              let destinationIndex = SettingsProviderReorderPresenter.destination(
+                providerID: sourceProviderID,
+                previewIDs: previewIDs,
+                allEnabledIDs: originalIDs
+              ) else {
             return false
         }
 
@@ -1484,7 +1545,7 @@ extension SettingsView {
     }
 
     func sidebarDisplayName(for provider: ProviderDescriptor) -> String {
-        ProviderDefinitionRegistry.definition(for: provider).displayName
+        SettingsProviderSidebarPresenter.displayName(for: provider)
     }
 
     func iconName(for provider: ProviderDescriptor) -> String {
@@ -1566,7 +1627,7 @@ extension SettingsView {
         var insertAfterThresholdY: CGFloat = 19
 
         func validateDrop(info: DropInfo) -> Bool {
-            draggingProviderID != nil
+            draggingProviderID.map { enabledProviderIDs.contains($0) } ?? false
         }
 
         func dropEntered(info: DropInfo) {
@@ -1585,12 +1646,13 @@ extension SettingsView {
         }
 
         func performDrop(info: DropInfo) -> Bool {
+            guard validateDrop(info: info) else { return false }
             updatePreview(with: info)
             return onPerformDrop()
         }
 
         private func updatePreview(with info: DropInfo) {
-            guard let draggingProviderID else { return }
+            guard let draggingProviderID, enabledProviderIDs.contains(draggingProviderID) else { return }
             guard draggingProviderID != targetProviderID else {
                 dropTargetProviderID = nil
                 return

@@ -3,33 +3,35 @@ import SwiftUI
 struct UsageAnalyticsSettingsView: View {
     @Bindable var viewModel: AppViewModel
     var theme: SettingsTheme
+#if DEBUG
+    var rendersLocalizationFixture = false
+    var localizationFixtureSnapshot: UsageAnalyticsSnapshot? = nil
+#endif
 
     @State private var hoveredBucketID: String?
     @State private var selectedStatisticsBreakdown: UsageStatisticsBreakdown = .provider
 
+    private var copy: UsageAnalyticsCopy { UsageAnalyticsCopy(language: viewModel.language) }
+
     private var snapshot: UsageAnalyticsSnapshot {
-        viewModel.usageAnalyticsSnapshot
+#if DEBUG
+        if let localizationFixtureSnapshot { return localizationFixtureSnapshot }
+#endif
+        return viewModel.usageAnalyticsSnapshot
     }
 
     var body: some View {
         VStack(spacing: 0) {
             topControls
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 24) {
-                    overviewModule
-                    trendModule
-                    statisticsModule
-                }
-                .padding(.horizontal, 24)
-                .padding(.top, 12)
-                .padding(.bottom, 24)
-                .frame(maxWidth: .infinity, alignment: .topLeading)
-            }
-            .scrollIndicators(.never)
+            scrollableModules
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .environment(\.usageAnalyticsLanguage, viewModel.language)
         .onAppear {
+#if DEBUG
+            guard !rendersLocalizationFixture else { return }
+#endif
             viewModel.usageAnalyticsFilter.mode = .all
             viewModel.usageAnalyticsFilter.selectedModelID = nil
             viewModel.refreshUsageAnalyticsIfNeeded(force: false)
@@ -39,11 +41,36 @@ struct UsageAnalyticsSettingsView: View {
         }
     }
 
+    @ViewBuilder
+    private var scrollableModules: some View {
+#if DEBUG
+        if rendersLocalizationFixture {
+            analyticsModules
+        } else {
+            ScrollView { analyticsModules }.scrollIndicators(.never)
+        }
+#else
+        ScrollView { analyticsModules }.scrollIndicators(.never)
+#endif
+    }
+
+    private var analyticsModules: some View {
+        VStack(alignment: .leading, spacing: 24) {
+            overviewModule
+            trendModule
+            statisticsModule
+        }
+        .padding(.horizontal, 24)
+        .padding(.top, 12)
+        .padding(.bottom, 24)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+    }
+
     private var topControls: some View {
         HStack(alignment: .center, spacing: 12) {
             SettingsPillSegmentedControl(
                 options: timeRangeOptions.map {
-                    SettingsPillSegmentOption(id: $0, title: timeRangeTitle($0))
+                    SettingsPillSegmentOption(id: $0, title: copy.timeRangeTitle($0))
                 },
                 selection: viewModel.usageAnalyticsFilter.range,
                 backgroundColor: Color.white.opacity(0.15),
@@ -71,7 +98,7 @@ struct UsageAnalyticsSettingsView: View {
                     .frame(width: 28, height: 28)
             }
             .buttonStyle(.plain)
-            .help("刷新使用统计")
+            .help(copy.text(.refresh))
         }
         .padding(.horizontal, 24)
         .padding(.top, 24)
@@ -80,17 +107,17 @@ struct UsageAnalyticsSettingsView: View {
     }
 
     private var overviewModule: some View {
-        module(title: "总览", subtitle: sourceSubtitle) {
+        module(title: copy.text(.overview), subtitle: sourceSubtitle) {
             UsageOverviewMetricsGrid(totals: snapshot.totals)
         }
     }
 
     private var sourceSubtitle: String {
-        snapshot.diagnostics.first ?? ""
+        copy.diagnostic(snapshot.diagnostics.first ?? "")
     }
 
     private var trendModule: some View {
-        module(title: "使用趋势", subtitle: "") {
+        module(title: copy.text(.trend), subtitle: "") {
             VStack(alignment: .leading, spacing: 16) {
                 UsageTrendChartView(
                     buckets: snapshot.trendBuckets,
@@ -112,14 +139,14 @@ struct UsageAnalyticsSettingsView: View {
 
     private var statisticsModule: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("统计")
+            Text(copy.text(.statistics))
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(usageText80)
                 .frame(height: 12, alignment: .leading)
 
             SettingsPillSegmentedControl(
                 options: UsageStatisticsBreakdown.allCases.map {
-                    SettingsPillSegmentOption(id: $0, title: $0.title)
+                    SettingsPillSegmentOption(id: $0, title: $0 == .provider ? copy.text(.provider) : copy.text(.model))
                 },
                 selection: selectedStatisticsBreakdown,
                 backgroundColor: Color.white.opacity(0.15),
@@ -128,13 +155,13 @@ struct UsageAnalyticsSettingsView: View {
                 textColor: Color.white.opacity(0.80),
                 height: 24,
                 segmentWidths: [
-                    .provider: 58,
-                    .model: 48
+                    .provider: viewModel.language == .en ? 74 : 58,
+                    .model: viewModel.language == .en ? 56 : 48
                 ]
             ) { selection in
                 selectedStatisticsBreakdown = selection
             }
-            .frame(width: 106, height: 24)
+            .frame(width: viewModel.language == .en ? 130 : 106, height: 24)
 
             UsagePieAndTableView(
                 pieItems: statisticsPieItems,
@@ -227,12 +254,7 @@ private enum UsageStatisticsBreakdown: String, CaseIterable, Hashable {
     case provider
     case model
 
-    var title: String {
-        switch self {
-        case .provider: return "供应商"
-        case .model: return "模型"
-        }
-    }
+
 }
 
 private let timeRangeOptions: [UsageAnalyticsRange] = [
@@ -247,32 +269,25 @@ private let usageText55 = Color.white.opacity(0.55)
 private let usageText40 = Color.white.opacity(0.40)
 private let usageText30 = Color.white.opacity(0.30)
 
-private func timeRangeTitle(_ range: UsageAnalyticsRange) -> String {
-    switch range {
-    case .all: return "全部"
-    case .last24Hours: return "近24小时"
-    case .last7Days: return "近7天"
-    case .last30Days: return "近30天"
-    }
-}
-
 private struct UsageOverviewMetricsGrid: View {
+    @Environment(\.usageAnalyticsLanguage) private var language
+    private var copy: UsageAnalyticsCopy { UsageAnalyticsCopy(language: language) }
     var totals: UsageMetricTotals
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(spacing: 24) {
-                UsageMetricTile(title: "总请求", value: tokenText(totals.requestCount))
-                UsageMetricTile(title: "总Token", value: tokenText(totals.totalTokens))
-                UsageMetricTile(title: "输入", value: tokenText(totals.inputTokens))
-                UsageMetricTile(title: "输出", value: tokenText(totals.outputTokens))
+                UsageMetricTile(title: copy.text(.requests), value: tokenText(totals.requestCount))
+                UsageMetricTile(title: copy.text(.tokens), value: tokenText(totals.totalTokens))
+                UsageMetricTile(title: copy.text(.input), value: tokenText(totals.inputTokens))
+                UsageMetricTile(title: copy.text(.output), value: tokenText(totals.outputTokens))
             }
 
             HStack(spacing: 24) {
-                UsageMetricTile(title: "缓存命中", value: tokenText(totals.cacheReadTokens))
-                UsageMetricTile(title: "缓存写入", value: tokenText(totals.cacheWriteTokens))
-                UsageMetricTile(title: "缓存率", value: percentText(totals.cacheRate))
-                UsageMetricTile(title: "成功率", value: percentText(totals.successRate))
+                UsageMetricTile(title: copy.text(.cacheRead), value: tokenText(totals.cacheReadTokens))
+                UsageMetricTile(title: copy.text(.cacheWrite), value: tokenText(totals.cacheWriteTokens))
+                UsageMetricTile(title: copy.text(.cacheRate), value: percentText(totals.cacheRate))
+                UsageMetricTile(title: copy.text(.successRate), value: percentText(totals.successRate))
             }
         }
     }
@@ -299,6 +314,8 @@ private struct UsageMetricTile: View {
 }
 
 private struct UsageTrendChartView: View {
+    @Environment(\.usageAnalyticsLanguage) private var language
+    private var copy: UsageAnalyticsCopy { UsageAnalyticsCopy(language: language) }
     var buckets: [UsageTrendBucket]
     @Binding var hoveredBucketID: String?
     var selectedBucketID: String?
@@ -309,7 +326,7 @@ private struct UsageTrendChartView: View {
             let activeBucketID = hoveredBucketID ?? selectedBucketID
             HStack(alignment: .bottom, spacing: 6) {
                 if buckets.isEmpty {
-                    Text("暂无趋势数据")
+                    Text(copy.text(.emptyTrend))
                         .font(.system(size: 12))
                         .foregroundStyle(usageText55)
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
@@ -325,7 +342,7 @@ private struct UsageTrendChartView: View {
                             }
                             .frame(maxWidth: .infinity)
 
-                            Text(trendTickLabel(bucket.startAt, endAt: bucket.endAt))
+                            Text(copy.trendTickLabel(bucket.startAt, endAt: bucket.endAt))
                                 .font(usageTrendLabelFont(isActive: isActive))
                                 .foregroundStyle(isActive ? usageText80 : usageText40)
                                 .lineLimit(1)
@@ -352,6 +369,8 @@ private struct UsageTrendChartView: View {
 }
 
 private struct UsageHoverDetailView: View {
+    @Environment(\.usageAnalyticsLanguage) private var language
+    private var copy: UsageAnalyticsCopy { UsageAnalyticsCopy(language: language) }
     var bucket: UsageTrendBucket
 
     var body: some View {
@@ -361,12 +380,12 @@ private struct UsageHoverDetailView: View {
                 .foregroundStyle(usageText80)
 
             HStack(spacing: 24) {
-                detail("总Token", tokenText(bucket.totals.totalTokens))
-                detail("输入", tokenText(bucket.totals.inputTokens))
-                detail("输出", tokenText(bucket.totals.outputTokens))
-                detail("缓存命中", tokenText(bucket.totals.cacheReadTokens))
-                detail("缓存写入", tokenText(bucket.totals.cacheWriteTokens))
-                detail("缓存率", percentText(bucket.totals.cacheRate))
+                detail(copy.text(.tokens), tokenText(bucket.totals.totalTokens))
+                detail(copy.text(.input), tokenText(bucket.totals.inputTokens))
+                detail(copy.text(.output), tokenText(bucket.totals.outputTokens))
+                detail(copy.text(.cacheRead), tokenText(bucket.totals.cacheReadTokens))
+                detail(copy.text(.cacheWrite), tokenText(bucket.totals.cacheWriteTokens))
+                detail(copy.text(.cacheRate), percentText(bucket.totals.cacheRate))
             }
         }
     }
@@ -593,9 +612,11 @@ private struct UsageDonutSegmentShape: Shape {
 }
 
 private struct UsageStatsTableView: View {
+    @Environment(\.usageAnalyticsLanguage) private var language
+    private var copy: UsageAnalyticsCopy { UsageAnalyticsCopy(language: language) }
     var rows: [UsageStatsTableRow]
     var theme: SettingsTheme
-    private let rateColumnWidth: CGFloat = 48
+    private var rateColumnWidth: CGFloat { language == .en ? 68 : 48 }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -608,7 +629,7 @@ private struct UsageStatsTableView: View {
                 }
             }
             if rows.isEmpty {
-                Text("暂无匹配的使用数据")
+                Text(copy.text(.emptyData))
                     .font(.system(size: 12))
                     .foregroundStyle(usageText55)
                     .frame(maxWidth: .infinity, minHeight: 56, alignment: .center)
@@ -625,13 +646,13 @@ private struct UsageStatsTableView: View {
                 .truncationMode(.middle)
 
             HStack(spacing: 24) {
-                compactMetric(title: "总Token", tokenText(row.totals.totalTokens))
-                compactMetric(title: "输入", tokenText(row.totals.inputTokens))
-                compactMetric(title: "输出", tokenText(row.totals.outputTokens))
-                compactMetric(title: "缓存命中", tokenText(row.totals.cacheReadTokens))
-                compactMetric(title: "缓存写入", tokenText(row.totals.cacheWriteTokens))
-                compactMetric(title: "缓存率", percentTextFixed(row.totals.cacheRate), fixedWidth: rateColumnWidth)
-                compactMetric(title: "成功率", percentTextFixed(row.totals.successRate), fixedWidth: rateColumnWidth)
+                compactMetric(title: copy.text(.tokens), tokenText(row.totals.totalTokens))
+                compactMetric(title: copy.text(.input), tokenText(row.totals.inputTokens))
+                compactMetric(title: copy.text(.output), tokenText(row.totals.outputTokens))
+                compactMetric(title: copy.text(.cacheRead), tokenText(row.totals.cacheReadTokens))
+                compactMetric(title: copy.text(.cacheWrite), tokenText(row.totals.cacheWriteTokens))
+                compactMetric(title: copy.text(.cacheRate), percentTextFixed(row.totals.cacheRate), fixedWidth: rateColumnWidth)
+                compactMetric(title: copy.text(.successRate), percentTextFixed(row.totals.successRate), fixedWidth: rateColumnWidth)
             }
         }
         .padding(.vertical, 12)
@@ -700,32 +721,119 @@ private func usagePingFangFont(size: CGFloat, weight: Font.Weight) -> Font {
     }
 }
 
-private func trendTickLabel(_ date: Date, endAt: Date) -> String {
-    let duration = endAt.timeIntervalSince(date)
-    if duration > 40 * 24 * 60 * 60 {
-        let components = Calendar.current.dateComponents([.year, .month], from: date)
-        let year = components.year ?? 0
-        let month = components.month ?? 1
-        let quarter = ((month - 1) / 3) + 1
-        return "\(year) Q\(quarter)"
-    }
-
-    let formatter = DateFormatter()
-    if duration <= 90 * 60 {
-        formatter.dateFormat = "H"
-    } else if duration <= 36 * 60 * 60 {
-        formatter.dateFormat = "d"
-    } else if duration <= 8 * 24 * 60 * 60 {
-        formatter.dateFormat = "M/d"
-    } else {
-        formatter.dateFormat = "M月"
-    }
-    return formatter.string(from: date)
-}
-
 private func pieColor(_ index: Int, theme: SettingsTheme) -> Color {
     let colors = [0.82, 0.56, 0.40, 0.30, 0.18, 0.08].map {
         Color.white.opacity($0)
     }
     return colors[index % colors.count]
+}
+
+private struct UsageAnalyticsLanguageKey: EnvironmentKey {
+    static let defaultValue: AppLanguage = .zhHans
+}
+
+private extension EnvironmentValues {
+    var usageAnalyticsLanguage: AppLanguage {
+        get { self[UsageAnalyticsLanguageKey.self] }
+        set { self[UsageAnalyticsLanguageKey.self] = newValue }
+    }
+}
+
+struct UsageAnalyticsCopy {
+    enum Key: CaseIterable {
+        case refresh
+        case overview
+        case trend
+        case statistics
+        case provider
+        case model
+        case all
+        case last24Hours
+        case last7Days
+        case last30Days
+        case requests
+        case tokens
+        case input
+        case output
+        case cacheRead
+        case cacheWrite
+        case cacheRate
+        case successRate
+        case emptyTrend
+        case emptyData
+    }
+
+    var language: AppLanguage
+
+    func text(_ key: Key) -> String {
+        let pair: (String, String)
+        switch key {
+        case .refresh: pair = ("刷新使用统计", "Refresh usage statistics")
+        case .overview: pair = ("总览", "Overview")
+        case .trend: pair = ("使用趋势", "Usage trend")
+        case .statistics: pair = ("统计", "Statistics")
+        case .provider: pair = ("供应商", "Provider")
+        case .model: pair = ("模型", "Model")
+        case .all: pair = ("全部", "All")
+        case .last24Hours: pair = ("近24小时", "Last 24h")
+        case .last7Days: pair = ("近7天", "Last 7d")
+        case .last30Days: pair = ("近30天", "Last 30d")
+        case .requests: pair = ("总请求", "Requests")
+        case .tokens: pair = ("总Token", "Tokens")
+        case .input: pair = ("输入", "Input")
+        case .output: pair = ("输出", "Output")
+        case .cacheRead: pair = ("缓存命中", "Cache read")
+        case .cacheWrite: pair = ("缓存写入", "Cache write")
+        case .cacheRate: pair = ("缓存率", "Cache rate")
+        case .successRate: pair = ("成功率", "Success rate")
+        case .emptyTrend: pair = ("暂无趋势数据", "No trend data yet")
+        case .emptyData: pair = ("暂无匹配的使用数据", "No matching usage data")
+        }
+        return language == .zhHans ? pair.0 : pair.1
+    }
+
+    func timeRangeTitle(_ range: UsageAnalyticsRange) -> String {
+        switch range {
+        case .all: return text(.all)
+        case .last24Hours: return text(.last24Hours)
+        case .last7Days: return text(.last7Days)
+        case .last30Days: return text(.last30Days)
+        }
+    }
+
+    func diagnostic(_ value: String) -> String {
+        guard language == .en else { return value }
+        switch value {
+        case "统计来源：官方应用本地用量日志 / Cursor dashboard（可用时）":
+            return "Sources: local app usage logs / Cursor dashboard (when available)"
+        case "统计来源：官方应用本地用量 / Cursor dashboard（可用时）+ cc-switch 请求日志":
+            return "Sources: local app usage / Cursor dashboard (when available) + cc-switch request logs"
+        default: return value
+        }
+    }
+
+    func trendTickLabel(_ date: Date, endAt: Date) -> String {
+        let duration = endAt.timeIntervalSince(date)
+        if duration > 40 * 24 * 60 * 60 {
+            let components = Calendar.current.dateComponents([.year, .month], from: date)
+            let year = components.year ?? 0
+            let month = components.month ?? 1
+            let quarter = ((month - 1) / 3) + 1
+            return "\(year) Q\(quarter)"
+        }
+
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: language.rawValue)
+        if duration <= 90 * 60 {
+            formatter.dateFormat = "H"
+        } else if duration <= 36 * 60 * 60 {
+            formatter.dateFormat = "d"
+        } else if duration <= 8 * 24 * 60 * 60 {
+            formatter.dateFormat = "M/d"
+        } else {
+            formatter.dateFormat = language == .zhHans ? "M月" : "MMM"
+        }
+        return formatter.string(from: date)
+    }
+
 }

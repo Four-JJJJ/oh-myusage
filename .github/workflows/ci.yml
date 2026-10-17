@@ -20,7 +20,7 @@ jobs:
           swift-version: "6.2.0"
 
       - name: Build
-        run: swift build
+        run: ./scripts/dev.sh build -Xswiftc -warnings-as-errors
 
       - name: Test
-        run: swift test
+        run: ./scripts/dev.sh test

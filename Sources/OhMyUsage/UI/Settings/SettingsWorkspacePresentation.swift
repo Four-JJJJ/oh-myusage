@@ -93,8 +93,8 @@ enum SettingsWorkspacePresenter {
         case .officialProviders:
             title = localizedText("官方服务", "Official Services")
             subtitle = localizedText(
-                "管理 Codex、Claude、Gemini、Cursor 等官方来源和账号。",
-                "Manage official sources and accounts such as Codex, Claude, Gemini, and Cursor."
+                "统一管理官方服务的账号、凭证与用量，API 服务在名称后标注。",
+                "Manage official accounts, credentials, and usage in one list, with API services labeled by name."
             )
         case .customProviders:
             title = localizedText("自定义接口", "Custom Endpoints")
@@ -154,7 +154,7 @@ enum SettingsWorkspacePresenter {
                         SettingsSidebarItemPresentation(
                             tab: .officialProviders,
                             icon: "settings_sidebar_official_icon",
-                            title: localizedText("官方订阅", "Official")
+                            title: localizedText("官方服务", "Official")
                         ),
                         SettingsSidebarItemPresentation(
                             tab: .customProviders,

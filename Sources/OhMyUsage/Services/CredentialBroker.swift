@@ -73,7 +73,9 @@ final class CredentialBroker: @unchecked Sendable {
     private var successCache: [String: CacheEntry] = [:]
     private var negativeCache: [String: Date] = [:]
     private var inFlightReads: [String: InFlight<String?>] = [:]
+    private var inFlightGenerations: [String: UInt64] = [:]
     private var prepareInFlight: InFlight<CredentialPreparationResult>?
+    private var cachedGeneration: UInt64 = 0
     private var preparedState: CredentialAccessState = .notConfigured
 
     init(
@@ -130,8 +132,14 @@ final class CredentialBroker: @unchecked Sendable {
         let normalizedAccount = normalizedAccountName(account)
         let key = cacheKey(service: normalizedService, account: normalizedAccount)
         let timestamp = now()
+        let generation = keychain.credentialGeneration
 
         lock.lock()
+        if cachedGeneration != generation {
+            successCache.removeAll()
+            negativeCache.removeAll()
+            cachedGeneration = generation
+        }
         if let entry = successCache[key], entry.expiresAt > timestamp {
             lock.unlock()
             return entry.token
@@ -140,26 +148,37 @@ final class CredentialBroker: @unchecked Sendable {
             lock.unlock()
             return nil
         }
-        if let inFlight = inFlightReads[key] {
+        if let inFlight = inFlightReads[key], inFlightGenerations[key] == generation {
             lock.unlock()
             return inFlight.wait()
         }
         let inFlight = InFlight(String?.none)
         inFlightReads[key] = inFlight
+        inFlightGenerations[key] = generation
         lock.unlock()
 
-        let token = keychain.readToken(service: normalizedService, account: normalizedAccount)
-
+        let read = keychain.readTokenVersioned(service: normalizedService, account: normalizedAccount)
+        let token = read.token
+        let generationAfterRead = read.generation
         lock.lock()
-        inFlightReads[key] = nil
+        let ownsFlight = inFlightReads[key] === inFlight
+        if ownsFlight {
+            inFlightReads[key] = nil
+            inFlightGenerations[key] = nil
+        }
         let timestampAfterRead = now()
-        if let token, !token.isEmpty {
+        if ownsFlight, cachedGeneration != generationAfterRead {
+            successCache.removeAll()
+            negativeCache.removeAll()
+            cachedGeneration = generationAfterRead
+        }
+        if ownsFlight, let token, !token.isEmpty {
             successCache[key] = CacheEntry(
                 token: token,
                 expiresAt: timestampAfterRead.addingTimeInterval(successCacheTTL)
             )
             negativeCache[key] = nil
-        } else {
+        } else if ownsFlight {
             successCache[key] = nil
             negativeCache[key] = timestampAfterRead.addingTimeInterval(negativeCacheTTL)
         }
@@ -181,10 +200,7 @@ final class CredentialBroker: @unchecked Sendable {
 
         lock.lock()
         if ok {
-            successCache[key] = CacheEntry(
-                token: token,
-                expiresAt: now().addingTimeInterval(successCacheTTL)
-            )
+            successCache[key] = nil
             negativeCache[key] = nil
         }
         lock.unlock()
@@ -199,9 +215,9 @@ final class CredentialBroker: @unchecked Sendable {
         let ok = keychain.deleteToken(service: normalizedService, account: normalizedAccount)
 
         lock.lock()
-        successCache[key] = nil
         if ok {
-            negativeCache[key] = now().addingTimeInterval(negativeCacheTTL)
+            successCache[key] = nil
+            negativeCache[key] = nil
         }
         lock.unlock()
         return ok
@@ -217,8 +233,16 @@ final class CredentialBroker: @unchecked Sendable {
         )
         let timestamp = now()
 
+        let generation = keychain.credentialGeneration
+        let cachedToken = keychain.cachedToken(service: service, account: account)
+        if cachedToken?.isEmpty == false { return .ready }
         lock.lock()
         defer { lock.unlock() }
+        if cachedGeneration != generation {
+            successCache.removeAll()
+            negativeCache.removeAll()
+            cachedGeneration = generation
+        }
         if let entry = successCache[key], entry.expiresAt > timestamp {
             return .ready
         }

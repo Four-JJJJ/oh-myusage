@@ -5,7 +5,15 @@ import OhMyUsageInfrastructure
 import Security
 
 final class KeychainService: @unchecked Sendable {
+    enum VaultReadResult {
+        case snapshot([String: String])
+        case missing
+        case unavailable
+    }
+
     struct SecureStoreAdapter {
+        var storageIdentity = UUID().uuidString
+        var readVault: (@Sendable (_ interactive: Bool) -> VaultReadResult)? = nil
         var readData: @Sendable (_ service: String, _ account: String, _ interactive: Bool) -> Data?
         var readAll: @Sendable (_ service: String, _ interactive: Bool) -> [String: String]?
         var saveData: @Sendable (_ data: Data, _ service: String, _ account: String, _ interactive: Bool) -> Bool
@@ -13,6 +21,8 @@ final class KeychainService: @unchecked Sendable {
         var deleteAll: @Sendable (_ service: String) -> Void
 
         static let live = SecureStoreAdapter(
+            storageIdentity: "system-keychain",
+            readVault: { interactive in liveReadVault(interactive: interactive) },
             readData: { service, account, interactive in
                 KeychainService.liveReadData(service: service, account: account, interactive: interactive)
             },
@@ -39,6 +49,29 @@ final class KeychainService: @unchecked Sendable {
     private static let secureAccessPreparedDefaultsKey = "OhMyUsage.Keychain.SecureAccessPrepared"
     private static let credentialLengthDefaultsKey = "OhMyUsage.Keychain.CredentialLengths"
 
+    private final class Transaction: @unchecked Sendable {
+        let lock = NSRecursiveLock()
+        var generation: UInt64 = 0
+    }
+    private final class WeakTransaction {
+        weak var value: Transaction?
+        init(_ value: Transaction) { self.value = value }
+    }
+    private static let registryLock = NSLock()
+    nonisolated(unsafe) private static var transactions: [String: WeakTransaction] = [:]
+
+    private static func transaction(for identity: String) -> Transaction {
+        registryLock.lock()
+        defer { registryLock.unlock() }
+        transactions = transactions.filter { $0.value.value != nil }
+        if let existing = transactions[identity]?.value { return existing }
+        let created = Transaction()
+        transactions[identity] = WeakTransaction(created)
+        return created
+    }
+
+    private let transaction: Transaction
+    private var observedGeneration: UInt64 = 0
     private let lock = NSLock()
     private let fileManager: FileManager
     private let storageURL: URL?
@@ -66,6 +99,9 @@ final class KeychainService: @unchecked Sendable {
         )
         self.storageURL = resolvedStorageURL
         self.useFileStorage = !forceSecureStore && resolvedStorageURL != nil
+        self.transaction = Self.transaction(for: (!forceSecureStore ? resolvedStorageURL : nil)
+            .map { "file:" + $0.standardizedFileURL.resolvingSymlinksInPath().path }
+            ?? "secure:" + secureStore.storageIdentity)
         if useFileStorage {
             loadFromDisk()
         }
@@ -94,14 +130,20 @@ final class KeychainService: @unchecked Sendable {
     }
 
     func cachedToken(service: String, account: String) -> String? {
+        transaction.lock.lock()
+        defer { transaction.lock.unlock() }
+        synchronizeGeneration()
         let normalizedService = normalizedServiceName(service)
         let key = cacheKey(service: normalizedService, account: account)
         lock.lock()
         defer { lock.unlock() }
-        return tokenCache[key]
+        return tokenCache[key].flatMap { $0.isEmpty ? nil : $0 }
     }
 
     func cachedCredentialLength(service: String, account: String) -> Int? {
+        transaction.lock.lock()
+        defer { transaction.lock.unlock() }
+        synchronizeGeneration()
         let normalizedService = normalizedServiceName(service)
         let key = cacheKey(service: normalizedService, account: account)
 
@@ -115,14 +157,24 @@ final class KeychainService: @unchecked Sendable {
         return credentialLengthSnapshot()[key]
     }
 
+    func readTokenVersioned(service: String, account: String) -> (token: String?, generation: UInt64) {
+        transaction.lock.lock()
+        defer { transaction.lock.unlock() }
+        let token = readToken(service: service, account: account)
+        return (token, transaction.generation)
+    }
+
     func readToken(service: String, account: String) -> String? {
+        transaction.lock.lock()
+        defer { transaction.lock.unlock() }
+        synchronizeGeneration()
         let normalizedService = normalizedServiceName(service)
         let key = cacheKey(service: normalizedService, account: account)
 
         lock.lock()
         if let cached = tokenCache[key] {
             lock.unlock()
-            return cached
+            return cached.isEmpty ? nil : cached
         }
         if missingCache.contains(key) {
             lock.unlock()
@@ -134,9 +186,16 @@ final class KeychainService: @unchecked Sendable {
         if useFileStorage {
             token = readFromDisk(service: normalizedService, account: account)
         } else {
-            token = readFromVault(service: normalizedService, account: account)
-                ?? readCurrentServiceAndMigrateIfPossible(service: normalizedService, account: account)
-                ?? readLegacyServiceAndMigrateIfPossible(account: account)
+            guard loadSecureVaultIfNeeded(interactive: false) else { return nil }
+            let vaultToken = cachedSnapshot()[key]
+            // Empty values are deletion tombstones: old per-account items must
+            // not resurrect after a failed or denied best-effort legacy delete.
+            if vaultToken != nil {
+                token = vaultToken?.isEmpty == false ? vaultToken : nil
+            } else {
+                token = readCurrentServiceAndMigrateIfPossible(service: normalizedService, account: account)
+                    ?? readLegacyServiceAndMigrateIfPossible(account: account)
+            }
             if token != nil {
                 markSecureStorePrepared()
             }
@@ -158,49 +217,103 @@ final class KeychainService: @unchecked Sendable {
 
     @discardableResult
     func saveToken(_ token: String, service: String, account: String) -> Bool {
-        let normalizedService = normalizedServiceName(service)
-        let key = cacheKey(service: normalizedService, account: account)
-
-        lock.lock()
-        tokenCache[key] = token
-        missingCache.remove(key)
-        let snapshot = tokenCache
-        lock.unlock()
-
-        let ok: Bool
-        if useFileStorage {
-            ok = persist(snapshot)
-        } else {
-            ok = persistSecureSnapshot(snapshot, interactive: false)
-        }
-        if ok {
-            if !useFileStorage {
-                recordCredentialLengths([key: token.count])
-                markSecureStorePrepared()
-            }
-        }
-        return ok
+        transaction.lock.lock()
+        defer { transaction.lock.unlock() }
+        synchronizeGeneration()
+        let key = cacheKey(service: service, account: account)
+        guard var snapshot = writableSnapshot(interactive: false) else { return false }
+        snapshot[key] = token
+        guard persistSnapshot(snapshot, interactive: false) else { return false }
+        publish(snapshot)
+        recordCredentialLengths([key: token.count])
+        if !useFileStorage { markSecureStorePrepared() }
+        return true
     }
 
     @discardableResult
     func deleteToken(service: String, account: String) -> Bool {
+        transaction.lock.lock()
+        defer { transaction.lock.unlock() }
+        synchronizeGeneration()
         let normalizedService = normalizedServiceName(service)
         let key = cacheKey(service: normalizedService, account: account)
-
-        lock.lock()
-        tokenCache.removeValue(forKey: key)
-        missingCache.insert(key)
-        let snapshot = tokenCache
-        lock.unlock()
-
+        guard var snapshot = writableSnapshot(interactive: false) else { return false }
+        if useFileStorage { snapshot.removeValue(forKey: key) }
+        else { snapshot[key] = "" }
+        guard persistSnapshot(snapshot, interactive: false) else { return false }
+        publish(snapshot)
         removeCredentialLength(for: key)
-        if useFileStorage {
-            return persist(snapshot)
+        if !useFileStorage {
+            deleteSecureStoreItem(service: normalizedService, account: account)
+            if normalizedService == Self.defaultServiceName {
+                for legacyService in Self.historicalLegacyServiceNames {
+                    deleteSecureStoreItem(service: legacyService, account: account)
+                }
+            }
         }
+        return true
+    }
 
-        let ok = persistSecureSnapshot(snapshot, interactive: false)
-        deleteSecureStoreItem(service: normalizedService, account: account)
-        return ok
+    // All vault operations are serialized by storage identity, including cold instances.
+    // Only successful persistence publishes cache state or advances its generation.
+    private func synchronizeGeneration() {
+        guard observedGeneration != transaction.generation else { return }
+        lock.lock()
+        tokenCache.removeAll()
+        missingCache.removeAll()
+        credentialLengthCache = nil
+        secureVaultLoaded = false
+        observedGeneration = transaction.generation
+        lock.unlock()
+        if useFileStorage { loadFromDisk() }
+    }
+
+    var credentialGeneration: UInt64 {
+        transaction.lock.lock()
+        defer { transaction.lock.unlock() }
+        return transaction.generation
+    }
+
+    private func publish(_ snapshot: [String: String]) {
+        lock.lock()
+        tokenCache = snapshot
+        missingCache.removeAll()
+        secureVaultLoaded = true
+        transaction.generation &+= 1
+        observedGeneration = transaction.generation
+        lock.unlock()
+    }
+
+    private func vaultRead(interactive: Bool) -> VaultReadResult {
+        if let readVault = secureStore.readVault { return readVault(interactive) }
+        // Legacy injected adapters use nil for an absent item. The live adapter
+        // always supplies a status-aware reader and never takes this fallback.
+        guard let data = readDataFromSecureStore(service: Self.defaultServiceName,
+                                                account: Self.vaultAccount, interactive: interactive) else {
+            return .missing
+        }
+        guard let snapshot = try? JSONDecoder().decode([String: String].self, from: data) else {
+            return .unavailable
+        }
+        return .snapshot(snapshot)
+    }
+
+    private func writableSnapshot(interactive: Bool) -> [String: String]? {
+        if useFileStorage {
+            guard let storageURL else { return nil }
+            guard fileManager.fileExists(atPath: storageURL.path) else { return [:] }
+            guard let data = try? Data(contentsOf: storageURL) else { return nil }
+            return try? JSONDecoder().decode([String: String].self, from: data)
+        }
+        switch vaultRead(interactive: interactive) {
+        case .snapshot(let snapshot): return snapshot
+        case .missing: return readCurrentServiceItemsForMigration(interactive: false) ?? [:]
+        case .unavailable: return nil
+        }
+    }
+
+    private func persistSnapshot(_ snapshot: [String: String], interactive: Bool) -> Bool {
+        useFileStorage ? persist(snapshot) : persistSecureSnapshot(snapshot, interactive: interactive)
     }
 
     private var hasPreparedSecureStoreAccess: Bool {
@@ -221,15 +334,6 @@ final class KeychainService: @unchecked Sendable {
 
     static func isLegacyServiceName(_ service: String) -> Bool {
         CredentialStoreServiceNames.isLegacyServiceName(service)
-    }
-
-    private func readFromVault(service: String, account: String) -> String? {
-        loadSecureVaultIfNeeded(interactive: false)
-
-        let key = cacheKey(service: service, account: account)
-        lock.lock()
-        defer { lock.unlock() }
-        return tokenCache[key]
     }
 
     private func readCurrentServiceAndMigrateIfPossible(service: String, account: String) -> String? {
@@ -262,16 +366,21 @@ final class KeychainService: @unchecked Sendable {
         return nil
     }
 
-    private func loadSecureVaultIfNeeded(interactive: Bool) {
+    private func loadSecureVaultIfNeeded(interactive: Bool) -> Bool {
         lock.lock()
         let shouldRetryInteractive = interactive && secureVaultLoaded && tokenCache.isEmpty
         if secureVaultLoaded && !shouldRetryInteractive {
             lock.unlock()
-            return
+            return true
         }
         lock.unlock()
 
-        let snapshot = readVaultSnapshotFromSecureStore(interactive: interactive)
+        let snapshot: [String: String]?
+        switch vaultRead(interactive: interactive) {
+        case .snapshot(let stored): snapshot = stored
+        case .missing: snapshot = nil
+        case .unavailable: return false
+        }
         if let snapshot, !snapshot.isEmpty {
             mergeIntoCache(snapshot)
         }
@@ -292,47 +401,47 @@ final class KeychainService: @unchecked Sendable {
         if didLoadAccessibleState {
             markSecureStorePrepared()
         }
+        return true
     }
 
     func prepareSecureStoreAccess() -> Bool {
-        let vaultSnapshot = readVaultSnapshotFromSecureStore(interactive: true)
-        if let vaultSnapshot {
-            mergeIntoCache(vaultSnapshot)
-        }
-
-        let currentItems = vaultSnapshot == nil
-            ? readCurrentServiceItemsForMigration(interactive: false) ?? [:]
-            : [:]
-        if !currentItems.isEmpty {
-            mergeIntoCache(currentItems)
-        }
-
-        let legacyMigration = readLegacyItemsForMigration(interactive: false)
-        if let legacyMigration, !legacyMigration.items.isEmpty {
-            mergeIntoCache(legacyMigration.items)
-        }
-
-        let hasVault = vaultSnapshot != nil
-        let needsPersist = !hasVault || !currentItems.isEmpty || !(legacyMigration?.items.isEmpty ?? true)
-        let didPersistSnapshot: Bool
-        if needsPersist {
-            didPersistSnapshot = persistSecureSnapshot(cachedSnapshot(), interactive: !hasVault)
-        } else {
-            didPersistSnapshot = true
-        }
-
-        guard hasVault || didPersistSnapshot else {
+        transaction.lock.lock()
+        defer { transaction.lock.unlock() }
+        synchronizeGeneration()
+        if useFileStorage { return true }
+        let result = vaultRead(interactive: true)
+        let hasVault: Bool
+        var snapshot: [String: String]
+        switch result {
+        case .snapshot(let stored):
+            snapshot = stored
+            hasVault = true
+        case .missing:
+            snapshot = readCurrentServiceItemsForMigration(interactive: false) ?? [:]
+            hasVault = false
+        case .unavailable:
             return false
         }
-
-        finishSecureStorePreparation()
-        if didPersistSnapshot, let legacyMigration {
-            completeLegacyMigration(accountsByService: legacyMigration.accountsByService)
+        let legacyMigration = readLegacyItemsForMigration(interactive: false)
+        if let legacyMigration {
+            for (key, value) in legacyMigration.items where snapshot[key] == nil {
+                snapshot[key] = value
+            }
         }
+        if !hasVault || !(legacyMigration?.items.isEmpty ?? true) {
+            guard persistSecureSnapshot(snapshot, interactive: !hasVault) else { return false }
+        }
+        publish(snapshot)
+        recordCredentialLengths(snapshot.mapValues { $0.count })
+        finishSecureStorePreparation()
+        if let legacyMigration { completeLegacyMigration(accountsByService: legacyMigration.accountsByService) }
         return true
     }
 
     func isSecureStoreReady() -> Bool {
+        transaction.lock.lock()
+        defer { transaction.lock.unlock() }
+        synchronizeGeneration()
         guard !useFileStorage else {
             return true
         }
@@ -347,21 +456,32 @@ final class KeychainService: @unchecked Sendable {
     /// non-interactive enumeration of the app's own secure-store items.
     /// Only identifiers are returned — never credential values.
     func storedCredentialIdentifiers() -> [String] {
+        transaction.lock.lock()
+        defer { transaction.lock.unlock() }
+        synchronizeGeneration()
+        if !useFileStorage { _ = loadSecureVaultIfNeeded(interactive: false) }
         lock.lock()
-        var identifiers = Set(tokenCache.keys)
+        let tombstones = Set(tokenCache.filter { $0.value.isEmpty }.keys)
+        var identifiers = Set(tokenCache.filter { !$0.value.isEmpty }.keys)
         lock.unlock()
-        identifiers.formUnion(credentialLengthSnapshot().keys)
+        identifiers.formUnion(credentialLengthSnapshot().keys.filter { !tombstones.contains($0) })
 
         if !useFileStorage {
             let items = readAllFromSecureStore(service: Self.defaultServiceName, interactive: false) ?? [:]
             for account in items.keys where account != Self.vaultAccount && !account.isEmpty {
-                identifiers.insert(cacheKey(service: Self.defaultServiceName, account: account))
+                let key = cacheKey(service: Self.defaultServiceName, account: account)
+                if !tombstones.contains(key) { identifiers.insert(key) }
             }
         }
         return identifiers.sorted()
     }
 
     func resetAllStoredCredentials() {
+        transaction.lock.lock()
+        defer { transaction.lock.unlock() }
+        synchronizeGeneration()
+        transaction.generation &+= 1
+        observedGeneration = transaction.generation
         guard !useFileStorage else {
             lock.lock()
             tokenCache.removeAll()
@@ -460,18 +580,11 @@ final class KeychainService: @unchecked Sendable {
     private func mergeIntoVault(_ items: [String: String]) -> Bool {
         guard !items.isEmpty else { return true }
 
-        lock.lock()
-        var merged = tokenCache
-        for (key, value) in items where !value.isEmpty {
-            merged[key] = value
-        }
-        lock.unlock()
-
-        guard persistSecureSnapshot(merged, interactive: false) else {
-            return false
-        }
-
-        mergeIntoCache(items)
+        guard var merged = writableSnapshot(interactive: false) else { return false }
+        for (key, value) in items where !value.isEmpty { merged[key] = value }
+        guard persistSecureSnapshot(merged, interactive: false) else { return false }
+        publish(merged)
+        recordCredentialLengths(items.mapValues { $0.count })
         return true
     }
 
@@ -496,7 +609,7 @@ final class KeychainService: @unchecked Sendable {
     private func mergeIntoCache(_ items: [String: String]) {
         var lengths: [String: Int] = [:]
         lock.lock()
-        for (key, value) in items where !value.isEmpty {
+        for (key, value) in items {
             tokenCache[key] = value
             missingCache.remove(key)
             lengths[key] = value.count
@@ -553,17 +666,6 @@ final class KeychainService: @unchecked Sendable {
         credentialLengthCache = snapshot
         lock.unlock()
         defaults.set(snapshot, forKey: Self.credentialLengthDefaultsKey)
-    }
-
-    private func readVaultSnapshotFromSecureStore(interactive: Bool) -> [String: String]? {
-        guard let data = readDataFromSecureStore(
-            service: Self.defaultServiceName,
-            account: Self.vaultAccount,
-            interactive: interactive
-        ) else {
-            return nil
-        }
-        return try? JSONDecoder().decode([String: String].self, from: data)
     }
 
     private func persistSecureSnapshot(_ snapshot: [String: String], interactive: Bool) -> Bool {
@@ -638,6 +740,25 @@ final class KeychainService: @unchecked Sendable {
         } catch {
             return false
         }
+    }
+
+    private static func liveReadVault(interactive: Bool) -> VaultReadResult {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: defaultServiceName,
+            kSecAttrAccount as String: vaultAccount,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+            kSecUseAuthenticationContext as String: authenticationContext(interactive: interactive)
+        ]
+        var item: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &item)
+        if status == errSecItemNotFound { return .missing }
+        guard status == errSecSuccess, let data = item as? Data,
+              let snapshot = try? JSONDecoder().decode([String: String].self, from: data) else {
+            return .unavailable
+        }
+        return .snapshot(snapshot)
     }
 
     private static func liveReadData(service: String, account: String, interactive: Bool) -> Data? {
@@ -720,9 +841,7 @@ final class KeychainService: @unchecked Sendable {
             return true
         }
 
-        if updateStatus != errSecItemNotFound {
-            SecItemDelete(query as CFDictionary)
-        }
+        guard updateStatus == errSecItemNotFound else { return false }
 
         let addAttributes: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -763,15 +882,21 @@ final class KeychainService: @unchecked Sendable {
 extension KeychainService: CredentialStoring {}
 
 extension KeychainService: UsageCredentialStore {
+    enum PersistenceError: Error { case saveFailed, deleteFailed }
+
     func credential(for providerID: UsageProviderIdentity) async throws -> String? {
         readToken(service: Self.defaultServiceName, account: providerID.rawValue)
     }
 
     func saveCredential(_ credential: String, for providerID: UsageProviderIdentity) async throws {
-        _ = saveToken(credential, service: Self.defaultServiceName, account: providerID.rawValue)
+        guard saveToken(credential, service: Self.defaultServiceName, account: providerID.rawValue) else {
+            throw PersistenceError.saveFailed
+        }
     }
 
     func removeCredential(for providerID: UsageProviderIdentity) async throws {
-        _ = deleteToken(service: Self.defaultServiceName, account: providerID.rawValue)
+        guard deleteToken(service: Self.defaultServiceName, account: providerID.rawValue) else {
+            throw PersistenceError.deleteFailed
+        }
     }
 }

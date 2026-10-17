@@ -327,8 +327,8 @@ final class KeychainServiceTests: XCTestCase {
             store.cachedCredentialLength(service: KeychainService.defaultServiceName, account: account),
             "updated-secret".count
         )
-        XCTAssertEqual(recorder.counts.readData, 0)
-        XCTAssertEqual(recorder.counts.readAll, 0)
+        XCTAssertEqual(recorder.counts.readData, 1)
+        XCTAssertEqual(recorder.counts.readAll, 1)
     }
 
     private func makeDefaults() -> UserDefaults {

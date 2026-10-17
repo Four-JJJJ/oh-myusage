@@ -2,6 +2,8 @@ import Foundation
 import OhMyUsageApplication
 
 final class GrokLocalUsageService {
+    // Callers create services per refresh; retain enumeration metadata across instances.
+    private static let enumerationCache = LocalUsageFileEnumerationCache()
     private let fileManager: FileManager
     private let calendar: Calendar
     private let nowProvider: () -> Date
@@ -56,7 +58,7 @@ final class GrokLocalUsageService {
     }
 
     func fetchEvents(since: Date) throws -> [LocalUsageEvent] {
-        let files = LocalUsageFileEnumerationCache().files(
+        let files = Self.enumerationCache.files(
             identifier: "grok-session-summary",
             roots: [sessionsRootPath],
             cutoff: calendar.date(byAdding: .day, value: -1, to: since) ?? since,

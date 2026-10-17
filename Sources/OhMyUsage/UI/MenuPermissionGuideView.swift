@@ -1,4 +1,5 @@
 import SwiftUI
+import OhMyUsagePresentation
 
 struct MenuPermissionGuideView: View {
     let presentation: MenuPermissionGuidePresentation
