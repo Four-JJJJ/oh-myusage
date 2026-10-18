@@ -389,10 +389,9 @@ final class AppUpdateCoordinator {
             state.updateInstallErrorMessage = nil
             state.updateInstallationInFlight = true
         }
-        if let preparedUpdateInfo = state.preparedUpdateInfo,
-           preparedUpdateInfo.latestVersion == preparedUpdate.version {
-            postUpdateReleaseNotesStore.schedulePresentation(for: preparedUpdateInfo)
-        }
+        // Drop any previously scheduled notes window. In-app updates restart
+        // straight into the menu bar and must not open a release-notes panel.
+        postUpdateReleaseNotesStore.reset()
 
         Task { @MainActor [weak self] in
             guard let self else { return }

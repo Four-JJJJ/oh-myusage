@@ -10,6 +10,7 @@ A macOS menu bar app for monitoring AI plan limits, credits, relay balances, and
 - Covers Xiaomi MIMO, MiniMax, Ailinyu and the other cookie-based relays, plus Qwen, Ollama, OpenCode Go, and the web modes of Codex and Claude; a browser with nothing newer keeps the saved cookie working
 - A rejected credential is retried against the browser immediately, and the wait after a browser with no login is unified to 1 minute, including Trae
 - Manual First and pasted credentials are unchanged and are never replaced; generic relay templates that also accept an API key are not rotated, so a background read cannot overwrite a key you pasted
+- In-app updates no longer stay on “Installing and restarting”; after install the app returns to the menu bar and does not open a release-notes window
 
 Renewal needs the site to stay logged in inside a Chromium browser (Chrome, Arc, Edge); Safari and Firefox logins cannot be read. API keys and logins stored inside another app's own data (Windsurf, Amp, JetBrains, Kiro) still need manual action. See the [release notes](releases/v2.6.1.md).
 

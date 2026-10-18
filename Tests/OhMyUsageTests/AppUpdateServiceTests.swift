@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import XCTest
 @testable import OhMyUsage
@@ -166,6 +167,42 @@ final class AppUpdateServiceTests: XCTestCase {
         } catch {
             XCTFail("Expected invalidMetadata, got \(error).")
         }
+    }
+
+    func testDetachedInstallerSurvivesParentProcessGroupTermination() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("OhMyUsageInstallerDetach-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let markerURL = root.appendingPathComponent("alive")
+        let scriptURL = root.appendingPathComponent("install_update.sh")
+        let script = """
+        #!/bin/sh
+        echo $$ > '\(markerURL.path)'
+        sleep 30
+        """
+        try script.write(to: scriptURL, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scriptURL.path)
+
+        try AppUpdateService.launchDetachedInstaller(scriptURL: scriptURL)
+
+        let deadline = Date().addingTimeInterval(5)
+        var pidText = ""
+        while Date() < deadline {
+            if let text = try? String(contentsOf: markerURL, encoding: .utf8), !text.isEmpty {
+                pidText = text
+                break
+            }
+            Thread.sleep(forTimeInterval: 0.05)
+        }
+        let installerPID = Int32(pidText.trimmingCharacters(in: .whitespacesAndNewlines))
+        XCTAssertNotNil(installerPID)
+        guard let installerPID else { return }
+        defer { kill(installerPID, SIGKILL) }
+
+        XCTAssertNotEqual(getpgid(installerPID), getpgrp(), "Installer must leave the app process group")
+        XCTAssertEqual(kill(installerPID, 0), 0, "Installer must still be running after its launcher exits")
     }
 
     func testPrepareUpdateRequiresMacOSZipAsset() async throws {

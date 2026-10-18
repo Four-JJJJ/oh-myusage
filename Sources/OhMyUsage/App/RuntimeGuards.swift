@@ -79,7 +79,9 @@ final class AppLifecycleDelegate: NSObject, NSApplicationDelegate {
         let viewModel = AppViewModel()
         self.viewModel = viewModel
         statusBarController = StatusBarController(viewModel: viewModel)
-        presentPostUpdateReleaseNotesIfNeeded(currentVersion: viewModel.currentAppVersion)
+        // Clear a notes window scheduled by an older build. Updates should
+        // relaunch into the menu bar without a release-notes panel.
+        postUpdateReleaseNotesStore.reset()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -88,6 +90,13 @@ final class AppLifecycleDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard let viewModel else { return .terminateNow }
+        // The in-app installer waits until this process exits, then replaces the
+        // bundle. Holding termination for a cache flush leaves the UI stuck on
+        // "installing and restarting" because the helper never sees the exit.
+        // Display caches are reconstructible, so quit immediately.
+        if viewModel.updateInstallationInFlight {
+            return .terminateNow
+        }
         guard !isWaitingForCacheFlush else { return .terminateLater }
         isWaitingForCacheFlush = true
         Task { @MainActor [weak self] in
@@ -182,18 +191,5 @@ final class AppLifecycleDelegate: NSObject, NSApplicationDelegate {
         guard let activationObserver else { return }
         DistributedNotificationCenter.default().removeObserver(activationObserver)
         self.activationObserver = nil
-    }
-
-    @MainActor
-    private func presentPostUpdateReleaseNotesIfNeeded(currentVersion: String) {
-        guard let releaseNotes = postUpdateReleaseNotesStore.consumePresentationIfNeeded(
-            currentVersion: currentVersion
-        ) else {
-            return
-        }
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
-            ReleaseNotesWindowController.shared.show(releaseNotes: releaseNotes)
-        }
     }
 }

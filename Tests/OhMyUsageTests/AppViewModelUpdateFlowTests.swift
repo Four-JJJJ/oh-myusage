@@ -34,7 +34,8 @@ final class AppViewModelUpdateFlowTests: XCTestCase {
         await assertEventually("should attempt install after buffering delay") {
             await service.installCallCount() == 1
         }
-        XCTAssertEqual(releaseNotesStore.scheduledVersions, ["2.2.3"])
+        XCTAssertEqual(releaseNotesStore.scheduledVersions, [])
+        XCTAssertEqual(releaseNotesStore.resetCount, 1)
         await assertEventually("failed install should expose retry state") {
             if case .failed = viewModel.menuUpdateDisplayState.kind {
                 return viewModel.updateInstallErrorMessage != nil
@@ -249,11 +250,18 @@ final class AppViewModelUpdateFlowTests: XCTestCase {
 private final class StubPostUpdateReleaseNotesStore: PostUpdateReleaseNotesStoring {
     private let lock = NSLock()
     private var storedScheduledVersions: [String] = []
+    private var storedResetCount = 0
 
     var scheduledVersions: [String] {
         lock.lock()
         defer { lock.unlock() }
         return storedScheduledVersions
+    }
+
+    var resetCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return storedResetCount
     }
 
     func schedulePresentation(for update: AppUpdateInfo) {
@@ -266,7 +274,11 @@ private final class StubPostUpdateReleaseNotesStore: PostUpdateReleaseNotesStori
         nil
     }
 
-    func reset() {}
+    func reset() {
+        lock.lock()
+        storedResetCount += 1
+        lock.unlock()
+    }
 }
 
 private actor StubAppUpdateService: AppUpdateServicing {

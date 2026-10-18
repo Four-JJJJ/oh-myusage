@@ -278,11 +278,34 @@ actor AppUpdateService {
         try script.write(to: installerScriptURL, atomically: true, encoding: .utf8)
         try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: installerScriptURL.path)
 
+        // Detach before `run`. `terminate` signals the app process group, so an
+        // installer that stays in that group dies with the app and the UI stays
+        // on "installing and restarting" until a later force-quit.
+        try Self.launchDetachedInstaller(scriptURL: installerScriptURL)
+    }
+
+    /// Starts `install_update.sh` in its own session. The python process exits
+    /// immediately; the installer keeps running after it and is not killed when
+    /// the app process group receives SIGTERM.
+    static func launchDetachedInstaller(scriptURL: URL) throws {
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/sh")
-        process.arguments = [installerScriptURL.path]
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+        process.arguments = ["-c", detachedInstallerLauncher, scriptURL.path]
         try process.run()
     }
+
+    static let detachedInstallerLauncher = """
+    import os, sys
+    script = sys.argv[1]
+    if os.fork() > 0:
+        raise SystemExit(0)
+    os.setsid()
+    devnull = os.open(os.devnull, os.O_RDWR)
+    os.dup2(devnull, 0)
+    os.dup2(devnull, 1)
+    os.dup2(devnull, 2)
+    os.execv("/bin/sh", ["/bin/sh", script])
+    """
 
     static func normalizeVersion(_ raw: String) -> String {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -397,8 +420,19 @@ actor AppUpdateService {
         PID_TO_WAIT=\(pid)
 
         wait_for_exit() {
+          waited=0
           while kill -0 "$PID_TO_WAIT" 2>/dev/null; do
             sleep 1
+            waited=$((waited + 1))
+            # A stuck terminate reply must not pin the UI forever. After the
+            # grace period, ask the old process to exit so replacement can start.
+            if [ "$waited" -eq 8 ]; then
+              kill -TERM "$PID_TO_WAIT" 2>/dev/null || true
+            fi
+            if [ "$waited" -ge 20 ]; then
+              kill -KILL "$PID_TO_WAIT" 2>/dev/null || true
+              break
+            fi
           done
           sleep 1
         }
