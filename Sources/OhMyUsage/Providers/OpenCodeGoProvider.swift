@@ -162,18 +162,22 @@ final class OpenCodeGoProvider: UsageProvider, @unchecked Sendable {
         if let remoteConfig {
             do {
                 return try await fetchRemoteSnapshot(config: remoteConfig)
+            } catch let error as ProviderError where isRecoverableAuthFailure(error) && !forceRefresh {
+                // The saved cookie was rejected. Re-read the browser once and
+                // retry, the same recovery the other session-cookie sites use,
+                // before falling back to local history.
+                if let recovered = try? await recoverRemoteSnapshot(
+                    official: official,
+                    workspaceID: workspaceID,
+                    rejectedCookie: remoteConfig.cookieHeader
+                ) {
+                    return recovered
+                }
+                guard hasLocalHistory else { throw error }
+                return try localFallbackSnapshot(rows: localRows, reason: error)
             } catch {
                 guard hasLocalHistory else { throw error }
-                var local = try Self.makeLocalSnapshot(
-                    rows: localRows,
-                    descriptor: descriptor,
-                    now: nowProvider(),
-                    sourceLabel: "Local Fallback"
-                )
-                local.valueFreshness = .cachedFallback
-                local.extras["truthSource"] = "local-fallback"
-                local.extras["fallbackReason"] = Self.fallbackReason(for: error)
-                return local
+                return try localFallbackSnapshot(rows: localRows, reason: error)
             }
         }
 
@@ -195,6 +199,49 @@ final class OpenCodeGoProvider: UsageProvider, @unchecked Sendable {
         }
 
         throw ProviderError.unavailable("OpenCode Go usage is unavailable")
+    }
+
+    private func isRecoverableAuthFailure(_ error: ProviderError) -> Bool {
+        switch error {
+        case .unauthorized, .unauthorizedDetail:
+            return true
+        default:
+            return false
+        }
+    }
+
+    private func recoverRemoteSnapshot(
+        official: OfficialProviderConfig,
+        workspaceID: String?,
+        rejectedCookie: String
+    ) async throws -> UsageSnapshot? {
+        guard official.webMode == .autoImport else { return nil }
+        let cookieHeader = try resolveAuthCookieHeader(
+            official: official,
+            storedCookie: nil,
+            forceRefresh: true
+        )
+        guard cookieHeader != rejectedCookie else { return nil }
+        let config = RemoteConfig(
+            workspaceID: workspaceID ?? "",
+            endpointID: resolveEndpointID(),
+            cookieHeader: cookieHeader
+        )
+        guard !config.workspaceID.isEmpty else { return nil }
+        return try await fetchRemoteSnapshot(config: config)
+    }
+
+    private func localFallbackSnapshot(rows: [LocalUsageRow], reason: Error) throws -> UsageSnapshot {
+        var local = try Self.makeLocalSnapshot(
+            rows: rows,
+            descriptor: descriptor,
+            now: nowProvider(),
+            sourceLabel: "Local Fallback"
+        )
+        local.valueFreshness = .cachedFallback
+        local.extras["truthSource"] = "local-fallback"
+        local.extras["fallbackReason"] = Self.fallbackReason(for: reason)
+        return local
     }
 
     private func resolveRemoteConfig(

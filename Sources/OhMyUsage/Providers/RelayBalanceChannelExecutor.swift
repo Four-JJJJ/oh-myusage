@@ -19,9 +19,10 @@ struct RelayBalanceChannelExecutor {
         let requests = RelayRequestResolver.resolveBalanceRequests(manifest: manifest, relayConfig: relayConfig)
         let credentialMode = relayConfig.balanceCredentialMode ?? .manualPreferred
         let requestForCandidates = requests.first ?? RelayRequestResolver.resolveBalanceRequest(manifest: manifest, relayConfig: relayConfig)
-        // The access intent is passed through unchanged: background polls must
-        // never trigger live browser storage reads, and interactive imports only
-        // happen on the user-initiated force-refresh path.
+        // Background polls never touch browser storage on their own. Live reads
+        // happen on a user-initiated force refresh, on the gated recovery path
+        // after a credential is rejected, and — for Browser First session
+        // cookies — on the proactive rotation cadence below.
 
         let savedCredential = credentialResolver.readSavedCredential(auth: relayConfig.balanceAuth)
         let hasMiniMaxAPIKey = manifest.id == "minimax"
@@ -38,6 +39,18 @@ struct RelayBalanceChannelExecutor {
             throw requiredInputError
         }
 
+        // Only a credential that already works is worth rotating ahead of
+        // expiry. With nothing saved, the gated recovery path below does the
+        // first import and records why it happened.
+        let hasSavedCredential = savedCredential?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        let rotateBrowserCookie = await shouldProactivelyRotateBrowserCookie(
+            baseURL: baseURL,
+            manifest: manifest,
+            credentialMode: credentialMode,
+            forceRefresh: forceRefresh,
+            hasSavedCredential: hasSavedCredential
+        )
+
         let primaryCandidates: [RelayCredentialCandidate]
         switch credentialMode {
         case .manualPreferred:
@@ -53,16 +66,19 @@ struct RelayBalanceChannelExecutor {
                 browserAccessIntent: browserAccessIntent
             )
         case .browserPreferred:
+            // Re-read a session cookie on a cadence so it is swapped before it
+            // expires, instead of waiting for the saved copy to be rejected.
+            // Manual First never takes this path.
             primaryCandidates = credentialResolver.resolveBalanceCandidates(
                 baseURL: baseURL,
                 manifest: manifest,
                 relayConfig: relayConfig,
                 request: requestForCandidates,
                 strategies: manifest.authStrategies,
-                includeSavedCredentials: !forceRefresh,
-                includeBrowserCredentials: forceRefresh,
-                includeExpiredSentinel: !forceRefresh,
-                browserAccessIntent: browserAccessIntent
+                includeSavedCredentials: !(forceRefresh || rotateBrowserCookie),
+                includeBrowserCredentials: forceRefresh || rotateBrowserCookie,
+                includeExpiredSentinel: !(forceRefresh || rotateBrowserCookie),
+                browserAccessIntent: (forceRefresh || rotateBrowserCookie) ? .authRecovery : browserAccessIntent
             )
         case .browserOnly:
             // Browser Only still prefers the vault credential persisted by the
@@ -101,7 +117,10 @@ struct RelayBalanceChannelExecutor {
         case .manualPreferred:
             standardFallbackCandidates = []
         case .browserPreferred:
-            standardFallbackCandidates = forceRefresh
+            // A proactive read can come back empty or stale. The saved cookie
+            // still works until the server rejects it, so keep using it
+            // instead of failing the poll.
+            standardFallbackCandidates = (forceRefresh || rotateBrowserCookie)
                 ? credentialResolver.resolveBalanceCandidates(
                     baseURL: baseURL,
                     manifest: manifest,
@@ -230,6 +249,33 @@ struct RelayBalanceChannelExecutor {
         }
 
         throw ProviderError.missingCredential(relayConfig.balanceAuth.keychainAccount ?? "\(descriptor.id)/system-token")
+    }
+
+    private func shouldProactivelyRotateBrowserCookie(
+        baseURL: URL,
+        manifest: RelayAdapterManifest,
+        credentialMode: RelayCredentialMode,
+        forceRefresh: Bool,
+        hasSavedCredential: Bool
+    ) async -> Bool {
+        // Browser Only keeps its contract: background polls use the vault copy
+        // and only touch the browser after it is rejected. Proactive rotation
+        // belongs to Browser First, which is allowed to prefer a newer login.
+        guard hasSavedCredential,
+              !forceRefresh,
+              credentialMode == .browserPreferred,
+              recoveryPolicy.supportsProactiveBrowserCookieRotation(manifest: manifest),
+              recoveryPolicy.relaySupportsBrowserRecovery(manifest: manifest, channel: .balance) else {
+            return false
+        }
+        let host = baseURL.host?.lowercased() ?? ""
+        guard await recoveryPolicy.shouldProactivelyReadBrowserCookie(host: host, channel: .balance) else {
+            return false
+        }
+        // Count the attempt, not the success: a browser that is logged out or
+        // unreadable must not be decrypted again on every poll.
+        await recoveryPolicy.markProactiveBrowserCookieRead(host: host, channel: .balance)
+        return true
     }
 
     private func shouldAttemptMissingSavedCredentialBrowserRecovery(

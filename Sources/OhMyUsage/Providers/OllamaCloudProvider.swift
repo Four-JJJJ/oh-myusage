@@ -9,7 +9,9 @@ final class OllamaCloudProvider: UsageProvider, @unchecked Sendable {
     private let keychain: any TokenCredentialStoring
     private let browserCookieService: any BrowserCookieDetecting
     private let webReadBackoff: WebOverlayRetryBackoff
-    private let webRetryBackoffInterval: TimeInterval = 15 * 60
+    // A missing browser login is retried after a minute, the same window
+    // every session-cookie site uses, instead of staying dark for 15 minutes.
+    private let webRetryBackoffInterval: TimeInterval = 60
 
     let descriptor: ProviderDescriptor
 
@@ -42,7 +44,24 @@ final class OllamaCloudProvider: UsageProvider, @unchecked Sendable {
 
     private func loadFromWeb(forceRefresh: Bool) async throws -> UsageSnapshot {
         let cookie = try await resolveCookieHeader(forceRefresh: forceRefresh)
-        let html = try await requestSettingsHTML(cookieHeader: cookie.header)
+        let html: String
+        do {
+            html = try await requestSettingsHTML(cookieHeader: cookie.header)
+        } catch let error as ProviderError {
+            // A rejected saved cookie is retried once with the live browser
+            // login, matching the other session-cookie sites.
+            guard !forceRefresh,
+                  cookie.source == "Manual",
+                  case .unauthorized = error,
+                  let refreshed = try? await resolveCookieHeader(forceRefresh: true),
+                  refreshed.header != cookie.header else {
+                throw error
+            }
+            let recovered = try await requestSettingsHTML(cookieHeader: refreshed.header)
+            var snapshot = try Self.parseSnapshot(html: recovered, descriptor: descriptor)
+            snapshot.extras["webCookieSource"] = refreshed.source
+            return snapshot
+        }
         var snapshot = try Self.parseSnapshot(html: html, descriptor: descriptor)
         snapshot.extras["webCookieSource"] = cookie.source
         return snapshot

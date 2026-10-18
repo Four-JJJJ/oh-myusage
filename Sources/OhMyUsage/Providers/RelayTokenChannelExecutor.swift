@@ -28,9 +28,10 @@ struct RelayTokenChannelExecutor {
     ) async throws -> TokenChannelResult {
         let host = baseURL.host?.lowercased() ?? ""
         let credentialMode = relayConfig.balanceCredentialMode ?? .manualPreferred
-        // The access intent is passed through unchanged: background polls must
-        // never trigger live browser storage reads, and interactive imports only
-        // happen on the user-initiated force-refresh path.
+        // The token channel carries bearer credentials, so a background poll
+        // never reads the browser for it. Live reads happen on a user-initiated
+        // force refresh and on the gated recovery path after a rejection.
+        // Session-cookie rotation lives in the balance channel.
         let primaryCandidates: [RelayRawTokenCandidate]
         switch credentialMode {
         case .manualPreferred:

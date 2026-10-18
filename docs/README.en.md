@@ -4,6 +4,15 @@ A macOS menu bar app for monitoring AI plan limits, credits, relay balances, and
 
 [Download Latest Release](https://github.com/Four-JJJJ/oh-myusage/releases/latest) · [Install Guide](DOWNLOAD.md) · [Supported Services](PROVIDERS.md) · [中文说明](../README.md)
 
+## V2.6.1
+
+- Session-cookie sites now renew themselves the same way: in Browser First or auto-import mode the app re-reads the browser every 30 minutes and swaps in a newer login before the saved cookie expires, then leaves the browser alone until the window opens again
+- Covers Xiaomi MIMO, MiniMax, Ailinyu and the other cookie-based relays, plus Qwen, Ollama, OpenCode Go, and the web modes of Codex and Claude; a browser with nothing newer keeps the saved cookie working
+- A rejected credential is retried against the browser immediately, and the wait after a browser with no login is unified to 1 minute, including Trae
+- Manual First and pasted credentials are unchanged and are never replaced; generic relay templates that also accept an API key are not rotated, so a background read cannot overwrite a key you pasted
+
+Renewal needs the site to stay logged in inside a Chromium browser (Chrome, Arc, Edge); Safari and Firefox logins cannot be read. API keys and logins stored inside another app's own data (Windsurf, Amp, JetBrains, Kiro) still need manual action. See the [release notes](releases/v2.6.1.md).
+
 ## V2.6.0
 
 - Merge credential writes against the persisted vault under a shared in-process transaction; preserve previous credentials on failure and prevent deleted legacy entries from migrating back

@@ -9,6 +9,7 @@ enum RelayBrowserRecoveryChannel: String {
 
 private actor BrowserRecoveryBackoff {
     private var blockedUntil: [String: Date] = [:]
+    private var lastBrowserCookieReadAt: [String: Date] = [:]
 
     func shouldAttempt(for key: String, forceRefresh: Bool, now: Date = Date()) -> Bool {
         if forceRefresh {
@@ -27,10 +28,35 @@ private actor BrowserRecoveryBackoff {
     func clearFailure(for key: String) {
         blockedUntil.removeValue(forKey: key)
     }
+
+    /// Session cookies such as XiaomiMIMO's have no refresh token, so browser
+    /// modes re-read the live browser cookie on a fixed cadence and swap it in
+    /// before the saved copy expires. The cadence is what keeps background
+    /// polls from decrypting browser cookie stores on every fetch.
+    func shouldProactivelyReadBrowserCookie(
+        for key: String,
+        minimumInterval: TimeInterval,
+        now: Date = Date()
+    ) -> Bool {
+        guard let lastReadAt = lastBrowserCookieReadAt[key] else {
+            return true
+        }
+        return now.timeIntervalSince(lastReadAt) >= max(0, minimumInterval)
+    }
+
+    func markBrowserCookieRead(for key: String, now: Date = Date()) {
+        lastBrowserCookieReadAt[key] = now
+    }
 }
 
 struct RelayRecoveryPolicy {
     private static let browserRecoveryBackoff = BrowserRecoveryBackoff()
+
+    /// How often browser-first and browser-only modes re-read a live browser
+    /// cookie while the saved one still works. Short enough to rotate a
+    /// session cookie before it expires, long enough that background polling
+    /// does not touch browser storage every cycle.
+    static let proactiveBrowserCookieReadInterval: TimeInterval = 30 * 60
 
     let descriptor: ProviderDescriptor
     let credentialResolver: RelayCredentialResolver
@@ -93,6 +119,34 @@ struct RelayRecoveryPolicy {
         await Self.browserRecoveryBackoff.markFailure(
             for: browserRecoveryKey(host: host, channel: channel),
             interval: browserRecoveryBackoffInterval
+        )
+    }
+
+    /// Session cookies have no refresh token, so cookie-only adapters rotate
+    /// the browser copy on the same cadence. Adapters that also accept a
+    /// bearer are left out: their saved credential is usually an API key the
+    /// user pasted, and a background poll must not replace it with whatever
+    /// the browser happens to hold.
+    func supportsProactiveBrowserCookieRotation(manifest: RelayAdapterManifest) -> Bool {
+        let kinds = Set(manifest.authStrategies.map(\.kind))
+        let readsBrowserCookie = kinds.contains(.browserCookieHeader) || kinds.contains(.namedCookie)
+        return readsBrowserCookie && !kinds.contains(.savedBearer) && !kinds.contains(.browserBearer)
+    }
+
+    func shouldProactivelyReadBrowserCookie(
+        host: String,
+        channel: RelayBrowserRecoveryChannel,
+        minimumInterval: TimeInterval = proactiveBrowserCookieReadInterval
+    ) async -> Bool {
+        await Self.browserRecoveryBackoff.shouldProactivelyReadBrowserCookie(
+            for: browserRecoveryKey(host: host, channel: channel),
+            minimumInterval: minimumInterval
+        )
+    }
+
+    func markProactiveBrowserCookieRead(host: String, channel: RelayBrowserRecoveryChannel) async {
+        await Self.browserRecoveryBackoff.markBrowserCookieRead(
+            for: browserRecoveryKey(host: host, channel: channel)
         )
     }
 
@@ -200,17 +254,45 @@ struct RelayRecoveryPolicy {
         case .unauthorized:
             switch manifest.id {
             case "moonshot":
-                return .unauthorizedDetail("Moonshot login expired. Paste a fresh bearer token, or switch to Browser First and log in again in platform.moonshot.cn.")
+                if credentialMode == .manualPreferred {
+                    return .unauthorizedDetail("Moonshot login expired. The saved credential cannot renew itself. Switch to Browser First to re-import it automatically while platform.moonshot.cn stays logged in, or paste a fresh token.")
+                }
+                return .unauthorizedDetail("Moonshot login expired and no newer login was found in the browser. Log in again at platform.moonshot.cn, or paste a fresh token.")
             case "xiaomimimo":
-                return .unauthorizedDetail("XiaomiMIMO login expired. Log in again in platform.xiaomimimo.com and test the connection to re-import the browser Cookie, or paste a fresh Cookie manually.")
+                return sessionCookieExpiredError(
+                    siteName: "XiaomiMIMO",
+                    loginURL: "platform.xiaomimimo.com",
+                    credentialMode: credentialMode
+                )
             case "xiaomimimo-token-plan":
-                return .unauthorizedDetail("XiaomiMIMO Token Plan login expired. Log in again in platform.xiaomimimo.com and test the connection to re-import the browser Cookie, or paste a fresh Cookie manually.")
+                return sessionCookieExpiredError(
+                    siteName: "XiaomiMIMO Token Plan",
+                    loginURL: "platform.xiaomimimo.com",
+                    credentialMode: credentialMode
+                )
             case "minimax":
-                return .unauthorizedDetail("MiniMax login expired. Paste a fresh Cookie, or switch to Browser First and log in again in platform.minimaxi.com.")
+                return sessionCookieExpiredError(
+                    siteName: "MiniMax",
+                    loginURL: "platform.minimaxi.com",
+                    credentialMode: credentialMode
+                )
             case "deepseek":
-                return .unauthorizedDetail("DeepSeek rejected the credential. Paste a valid API key (sk-...) or a fresh platform.deepseek.com userToken, or switch to Browser First and log in again in platform.deepseek.com.")
+                if credentialMode == .manualPreferred {
+                    return .unauthorizedDetail("DeepSeek rejected the saved credential. It cannot renew itself. Switch to Browser First to re-import the browser login automatically, or paste a valid API key (sk-...) or a fresh platform.deepseek.com userToken.")
+                }
+                return .unauthorizedDetail("DeepSeek rejected the credential and no newer login was found in the browser. Log in again at platform.deepseek.com, or paste a valid API key (sk-...) or a fresh userToken.")
             default:
-                return .unauthorized
+                if supportsProactiveBrowserCookieRotation(manifest: manifest) {
+                    return sessionCookieExpiredError(
+                        siteName: manifest.displayName,
+                        loginURL: baseURL.host?.lowercased() ?? manifest.displayName,
+                        credentialMode: credentialMode
+                    )
+                }
+                if credentialMode == .manualPreferred {
+                    return .unauthorizedDetail("The saved credential for \(manifest.displayName) is no longer valid and cannot renew itself. Switch to Browser First to re-import the browser login automatically, or paste a fresh credential.")
+                }
+                return .unauthorizedDetail("\(manifest.displayName) rejected the credential and no newer login was found in the browser. Log in again, or paste a fresh credential.")
             }
         case .invalidResponse(let detail):
             if manifest.id == "xiaomimimo-token-plan",
@@ -242,6 +324,20 @@ struct RelayRecoveryPolicy {
         default:
             return error
         }
+    }
+
+    /// One wording for every session-cookie site: Manual First can only be
+    /// re-pasted, while browser modes renew themselves as long as the site
+    /// stays logged in.
+    private func sessionCookieExpiredError(
+        siteName: String,
+        loginURL: String,
+        credentialMode: RelayCredentialMode
+    ) -> ProviderError {
+        if credentialMode == .manualPreferred {
+            return .unauthorizedDetail("\(siteName) login expired. The saved Cookie cannot renew itself. Switch to Browser First to re-import it automatically while \(loginURL) stays logged in, or paste a fresh Cookie.")
+        }
+        return .unauthorizedDetail("\(siteName) login expired and no newer login was found in the browser. Log in again at \(loginURL); if it is already logged in, grant Full Disk Access and approve Arc/Chrome Safe Storage keychain access, then test again.")
     }
 
     func relayTokenPreflightError(

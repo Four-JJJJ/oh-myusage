@@ -9,7 +9,9 @@ final class ClaudeProvider: UsageProvider, @unchecked Sendable {
     private static let webSegments = OfficialWebSegmentCache()
 
     private let cacheTTL: TimeInterval = 15
-    private let webRetryBackoffInterval: TimeInterval = 15 * 60
+    // A missing browser login is retried after a minute, the same window
+    // every session-cookie site uses, instead of staying dark for 15 minutes.
+    private let webRetryBackoffInterval: TimeInterval = 60
     /// Doc §8.4: web segments use independent TTLs — usage data stays short-lived,
     /// overage/account metadata and the organization id live much longer.
     private let webUsageSegmentTTL: TimeInterval = 15

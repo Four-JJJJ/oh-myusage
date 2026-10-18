@@ -321,8 +321,14 @@ extension QwenProviderTests {
 
         let snapshot = try await provider.fetch()
         XCTAssertEqual(snapshot.extras["webCookieSource"], "Manual")
-        XCTAssertEqual(spy.detectCookieHeaderCallCount, 0, "Background polls must not touch browser cookie stores when the vault cookie is present")
-        XCTAssertEqual(spy.recordedIntents.count, 0)
+        XCTAssertEqual(
+            spy.detectCookieHeaderCallCount, 1,
+            "The first poll of a rotation window re-reads the browser once so a renewed login replaces the saved cookie"
+        )
+
+        let settled = try await provider.fetch()
+        XCTAssertEqual(settled.extras["webCookieSource"], "Manual")
+        XCTAssertEqual(spy.detectCookieHeaderCallCount, 1, "Later polls inside the rotation window keep the saved cookie and leave the browser alone")
     }
 
     func testQwenBackgroundPollWithoutVaultCookieUsesBackgroundIntentOnly() async throws {
@@ -387,11 +393,22 @@ extension QwenProviderTests {
             "Imported cookies are persisted into the app vault under the manual cookie account"
         )
 
-        // Background polls now prefer the vault copy and never re-scan browsers.
-        let background = try await provider.fetch()
-        XCTAssertEqual(background.extras["webCookieSource"], "Manual")
-        XCTAssertEqual(spy.recordedIntents.map(qwenIntentName), ["interactiveImport"])
-        XCTAssertEqual(spy.detectCookieHeaderCallCount, 1)
+        // The next background poll re-reads the browser once and adopts the
+        // newer login, then stays on the saved copy until the rotation window
+        // opens again.
+        spy.cookieHeaderResult = BrowserCookieHeader(header: "sid=rotated-browser-cookie; uid=3", source: "Auto:Test")
+        Self.installGatewayHandler(expectedCookie: "sid=rotated-browser-cookie; uid=3")
+        let rotated = try await provider.fetch()
+        XCTAssertEqual(rotated.extras["webCookieSource"], "Auto:Test")
+        XCTAssertEqual(
+            keychain.readToken(service: KeychainService.defaultServiceName, account: account),
+            "sid=rotated-browser-cookie; uid=3"
+        )
+
+        Self.installGatewayHandler(expectedCookie: "sid=rotated-browser-cookie; uid=3")
+        let settled = try await provider.fetch()
+        XCTAssertEqual(settled.extras["webCookieSource"], "Auto:Test", "A rotated login keeps its browser source inside the window")
+        XCTAssertEqual(spy.detectCookieHeaderCallCount, 2)
     }
 
     private func qwenIntentName(_ intent: BrowserCredentialAccessIntent) -> String {
@@ -525,8 +542,10 @@ extension QwenProviderTests {
         XCTAssertEqual(second.extras["webCookieSource"], "Manual")
         XCTAssertEqual(counter.count("userInfo|vault-cookie"), 1, "an unchanged cookie must not refetch the session context")
         XCTAssertEqual(counter.count("gateway|vault-cookie"), 6, "quota data is always fetched live")
-        XCTAssertEqual(spy.detectCookieHeaderCallCount, 0, "background polls never rescan browser cookie stores while the vault cookie works")
-        XCTAssertEqual(spy.recordedIntents.count, 0)
+        XCTAssertEqual(
+            spy.detectCookieHeaderCallCount, 1,
+            "the browser is re-read once per rotation window, and an unchanged cookie keeps the cached session context"
+        )
     }
 
     func testSessionContextRefetchedWhenCookieValueChanges() async throws {

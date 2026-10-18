@@ -56,42 +56,10 @@ final class OllamaCloudProviderTests: XCTestCase {
         XCTAssertTrue(keychain.saveToken("manual-token", service: service, account: account))
 
         var descriptor = ProviderDescriptor.defaultOfficialOllamaCloud()
+        descriptor.id = "ollama-manual-\(UUID().uuidString)"
         descriptor.officialConfig?.sourceMode = .web
         descriptor.officialConfig?.webMode = .autoImport
         descriptor.officialConfig?.manualCookieAccount = account
-
-        let browser = OllamaMockBrowserCookieService()
-        browser.namedResult = BrowserCookieHeader(header: "__Secure-session=auto-token", source: "Chrome")
-
-        let config = URLSessionConfiguration.ephemeral
-        config.protocolClasses = [OllamaMockURLProtocol.self]
-        let session = URLSession(configuration: config)
-
-        OllamaMockURLProtocol.requestHandler = { request in
-            XCTAssertEqual(request.value(forHTTPHeaderField: "Cookie"), "__Secure-session=manual-token")
-            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
-            return (response, Data(Self.sampleHTML.utf8))
-        }
-        defer { OllamaMockURLProtocol.requestHandler = nil }
-
-        let provider = OllamaCloudProvider(
-            descriptor: descriptor,
-            session: session,
-            keychain: keychain,
-            browserCookieService: browser
-        )
-        let snapshot = try await provider.fetch(forceRefresh: true)
-
-        XCTAssertEqual(snapshot.extras["webCookieSource"], "Manual")
-        XCTAssertEqual(browser.namedLookupCount, 0)
-        XCTAssertEqual(browser.headerLookupCount, 0)
-    }
-
-    func testFetchUsesBrowserCookieWhenManualMissing() async throws {
-        var descriptor = ProviderDescriptor.defaultOfficialOllamaCloud()
-        descriptor.officialConfig?.sourceMode = .web
-        descriptor.officialConfig?.webMode = .autoImport
-        descriptor.officialConfig?.manualCookieAccount = "official/ollama/auto-cookie-\(UUID().uuidString)"
 
         let browser = OllamaMockBrowserCookieService()
         browser.namedResult = BrowserCookieHeader(header: "__Secure-session=auto-token", source: "Chrome")
@@ -110,13 +78,71 @@ final class OllamaCloudProviderTests: XCTestCase {
         let provider = OllamaCloudProvider(
             descriptor: descriptor,
             session: session,
-            keychain: makeTestKeychain(),
+            keychain: keychain,
+            browserCookieService: browser
+        )
+        let snapshot = try await provider.fetch(forceRefresh: true)
+
+        // Auto-import treats the browser as newer than the saved copy, so a
+        // forced refresh adopts it. The saved copy is what gets used once the
+        // rotation window closes.
+        XCTAssertEqual(snapshot.extras["webCookieSource"], "Chrome")
+        XCTAssertEqual(browser.namedLookupCount, 1)
+
+        let settled = try await provider.fetch()
+        XCTAssertEqual(settled.extras["webCookieSource"], "Chrome")
+        XCTAssertEqual(browser.namedLookupCount, 1, "Polls inside the rotation window reuse the saved cookie")
+    }
+
+    func testFetchUsesBrowserCookieWhenManualMissing() async throws {
+        var descriptor = ProviderDescriptor.defaultOfficialOllamaCloud()
+        descriptor.id = "ollama-auto-\(UUID().uuidString)"
+        let account = "official/ollama/auto-cookie-\(UUID().uuidString)"
+        descriptor.officialConfig?.sourceMode = .web
+        descriptor.officialConfig?.webMode = .autoImport
+        descriptor.officialConfig?.manualCookieAccount = account
+
+        let browser = OllamaMockBrowserCookieService()
+        browser.namedResult = BrowserCookieHeader(header: "__Secure-session=auto-token", source: "Chrome")
+
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [OllamaMockURLProtocol.self]
+        let session = URLSession(configuration: config)
+
+        OllamaMockURLProtocol.requestHandler = { request in
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Cookie"), "__Secure-session=auto-token")
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            return (response, Data(Self.sampleHTML.utf8))
+        }
+        defer { OllamaMockURLProtocol.requestHandler = nil }
+
+        let keychain = makeTestKeychain()
+        let provider = OllamaCloudProvider(
+            descriptor: descriptor,
+            session: session,
+            keychain: keychain,
             browserCookieService: browser
         )
         let snapshot = try await provider.fetch(forceRefresh: true)
 
         XCTAssertEqual(snapshot.extras["webCookieSource"], "Chrome")
         XCTAssertEqual(browser.namedLookupCount, 1)
+
+        // Auto-import keeps the saved cookie current: the next poll re-reads
+        // the browser and adopts the newer session.
+        browser.namedResult = BrowserCookieHeader(header: "__Secure-session=rotated-token", source: "Chrome")
+        OllamaMockURLProtocol.requestHandler = { request in
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Cookie"), "__Secure-session=rotated-token")
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            return (response, Data(Self.sampleHTML.utf8))
+        }
+        let rotated = try await provider.fetch()
+        XCTAssertEqual(rotated.extras["webCookieSource"], "Chrome")
+        XCTAssertEqual(browser.namedLookupCount, 2)
+        XCTAssertEqual(
+            keychain.readToken(service: KeychainService.defaultServiceName, account: account),
+            "__Secure-session=rotated-token"
+        )
     }
 
     func testFetchMapsSigninRedirectToUnauthorized() async throws {

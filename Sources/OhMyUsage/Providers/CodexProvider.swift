@@ -11,7 +11,9 @@ final class CodexProvider: UsageProvider, @unchecked Sendable {
 
     private let cacheTTL: TimeInterval = 15
     private let refreshAge: TimeInterval = 8 * 24 * 60 * 60
-    private let webRetryBackoffInterval: TimeInterval = 15 * 60
+    // A missing browser login is retried after a minute, the same window
+    // every session-cookie site uses, instead of staying dark for 15 minutes.
+    private let webRetryBackoffInterval: TimeInterval = 60
     let descriptor: ProviderDescriptor
     private let session: URLSession
     private let keychain: any TokenCredentialStoring

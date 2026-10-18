@@ -15,6 +15,12 @@ struct OfficialBrowserCookieImportStrategy {
 enum OfficialProviderWebOverlayRuntime {
     private static let credentialCache = OfficialWebOverlayCredentialCache(ttl: 60)
 
+    /// How often an auto-importing provider re-reads the browser while a saved
+    /// cookie still works. The same cadence the relay session-cookie sites use,
+    /// so a login renewed in the browser replaces the saved copy before it
+    /// expires instead of only after the server rejects it.
+    static let proactiveBrowserCookieReadInterval: TimeInterval = 30 * 60
+
     static func resolveCookieHeader(
         official: OfficialProviderConfig,
         descriptorID: String,
@@ -26,14 +32,43 @@ enum OfficialProviderWebOverlayRuntime {
         strategy: OfficialBrowserCookieImportStrategy
     ) async throws -> BrowserCookieHeader {
         let service = TokenCredentialStoreServiceNames.defaultServiceName
-        let browserAccessIntent: BrowserCredentialAccessIntent = forceRefresh ? .interactiveImport : .background
 
-        if let account = official.manualCookieAccount,
-           let stored = keychain.readToken(service: service, account: account),
-           let header = strategy.normalizeManualHeader(stored),
-           !header.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return BrowserCookieHeader(header: header, source: "Manual")
+        // A browser import is persisted into the same slot, so the slot alone
+        // does not mean the user pasted it. The remembered source keeps a
+        // rotated login labelled as the browser it came from.
+        let remembered = await rememberedSource(for: official.manualCookieAccount)
+        let storedManual: (header: String, source: String)? = {
+            guard let account = official.manualCookieAccount,
+                  let stored = keychain.readToken(service: service, account: account),
+                  let header = strategy.normalizeManualHeader(stored),
+                  !header.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                return nil
+            }
+            return (header, remembered ?? "Manual")
+        }()
+        let storedManualHeader = storedManual?.header
+
+        // A pasted cookie is only authoritative while auto-import is off, or
+        // while its rotation window is still open. Auto-import re-reads the
+        // browser on the shared cadence and falls back to this copy when the
+        // browser has nothing newer.
+        let canRotateStoredCookie = storedManualHeader != nil && official.webMode == .autoImport
+        let rotateStoredCookie = await shouldRotateStoredCookie(
+            strategy: strategy,
+            descriptorID: descriptorID,
+            forceRefresh: forceRefresh,
+            enabled: canRotateStoredCookie
+        )
+        if let storedManual, !rotateStoredCookie {
+            return BrowserCookieHeader(header: storedManual.header, source: storedManual.source)
         }
+
+        // A rotation re-reads the browser for real, so it needs the same live
+        // lookup a user-initiated import gets. Plain background polls never
+        // reach the browser at all.
+        let browserAccessIntent: BrowserCredentialAccessIntent = (forceRefresh || rotateStoredCookie)
+            ? .interactiveImport
+            : .background
 
         guard official.webMode != .manual else {
             throw ProviderError.missingCredential(official.manualCookieAccount ?? strategy.manualCredentialFallback)
@@ -55,7 +90,9 @@ enum OfficialProviderWebOverlayRuntime {
             hostContains: strategy.hostContains,
             namedCookie: strategy.namedCookie
         )
-        if !forceRefresh,
+        // Rotation exists to notice a login the browser renewed, so it must
+        // not be served the copy cached from the previous import.
+        if !forceRefresh, !rotateStoredCookie,
            let cached = credentialCache.cachedHeader(for: credentialCacheKey) {
             guard let cached else {
                 throw ProviderError.missingCredential(strategy.autoImportMissingCredential)
@@ -85,6 +122,7 @@ enum OfficialProviderWebOverlayRuntime {
             }
             let header = BrowserCookieHeader(header: normalized, source: detected.source)
             credentialCache.store(header, for: credentialCacheKey)
+            await rememberSource(detected.source, for: official.manualCookieAccount)
             return header
         }
 
@@ -102,7 +140,23 @@ enum OfficialProviderWebOverlayRuntime {
             }
             let header = BrowserCookieHeader(header: normalized, source: detected.source)
             credentialCache.store(header, for: credentialCacheKey)
+            await rememberSource(detected.source, for: official.manualCookieAccount)
             return header
+        }
+
+        // The browser had nothing newer. A saved cookie that still works is
+        // more useful than failing the poll, so keep serving it. Re-read it:
+        // an earlier rotation in this same poll may already have replaced the
+        // copy captured at the start.
+        if let account = official.manualCookieAccount,
+           let stored = keychain.readToken(service: service, account: account),
+           let header = strategy.normalizeManualHeader(stored),
+           !header.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let source = await rememberedSource(for: official.manualCookieAccount) ?? storedManual?.source ?? "Manual"
+            return BrowserCookieHeader(header: header, source: source)
+        }
+        if let storedManual {
+            return BrowserCookieHeader(header: storedManual.header, source: storedManual.source)
         }
 
         credentialCache.store(nil, for: credentialCacheKey)
@@ -110,6 +164,57 @@ enum OfficialProviderWebOverlayRuntime {
             await webReadBackoff.markFailure(for: backoffKey, interval: webRetryBackoffInterval)
         }
         throw ProviderError.missingCredential(strategy.autoImportMissingCredential)
+    }
+
+    /// Counts the attempt rather than the success, so a logged-out or
+    /// unreadable browser is not decrypted again on every poll.
+    private static func shouldRotateStoredCookie(
+        strategy: OfficialBrowserCookieImportStrategy,
+        descriptorID: String,
+        forceRefresh: Bool,
+        enabled: Bool
+    ) async -> Bool {
+        guard enabled else {
+            return false
+        }
+        let key = rotationKey(providerKey: strategy.providerKey, descriptorID: descriptorID)
+        // A forced refresh reads the browser immediately, and that read counts:
+        // the following polls stay inside the window instead of reading again.
+        if forceRefresh {
+            await RotationTracker.shared.markRead(for: key)
+            return true
+        }
+        guard await RotationTracker.shared.shouldRead(
+            for: key,
+            minimumInterval: proactiveBrowserCookieReadInterval
+        ) else {
+            return false
+        }
+        await RotationTracker.shared.markRead(for: key)
+        return true
+    }
+
+    /// Keyed by provider and descriptor, not by the cookie account. Pasting a
+    /// new cookie must not reset the window, or every poll would re-read the
+    /// browser.
+    private static func rememberedSource(for account: String?) async -> String? {
+        guard let account = account?.trimmingCharacters(in: .whitespacesAndNewlines), !account.isEmpty else {
+            return nil
+        }
+        return await RotationTracker.shared.savedSource(for: account)
+    }
+
+    private static func rememberSource(_ source: String, for account: String?) async {
+        guard let account = account?.trimmingCharacters(in: .whitespacesAndNewlines), !account.isEmpty else {
+            return
+        }
+        await RotationTracker.shared.rememberSource(source, for: account)
+    }
+
+    private static func rotationKey(providerKey: String, descriptorID: String) -> String {
+        let provider = providerKey.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let identity = descriptorID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return "rotate:\(provider):\(identity)"
     }
 
     static func hasStoredManualCookie(
@@ -175,6 +280,37 @@ enum OfficialProviderWebOverlayRuntime {
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased() ?? "*"
         return "\(provider)|\(identity)|\(host)|\(cookie)"
+    }
+}
+
+/// Remembers when each provider last re-read its browser cookie, so the
+/// rotation cadence survives across fetches without touching the browser on
+/// every poll.
+private actor RotationTracker {
+    static let shared = RotationTracker()
+
+    private var lastReadAt: [String: Date] = [:]
+    private var savedSourceByAccount: [String: String] = [:]
+
+    /// The keychain slot is shared by pasted cookies and browser imports, so
+    /// the source of the last import is remembered alongside it.
+    func savedSource(for account: String) -> String? {
+        savedSourceByAccount[account]
+    }
+
+    func rememberSource(_ source: String, for account: String) {
+        savedSourceByAccount[account] = source
+    }
+
+    func shouldRead(for key: String, minimumInterval: TimeInterval, now: Date = Date()) -> Bool {
+        guard let lastReadAt = lastReadAt[key] else {
+            return true
+        }
+        return now.timeIntervalSince(lastReadAt) >= max(0, minimumInterval)
+    }
+
+    func markRead(for key: String, now: Date = Date()) {
+        lastReadAt[key] = now
     }
 }
 

@@ -210,6 +210,30 @@ final class OpenCodeGoProviderTests: XCTestCase {
             keychain.readToken(service: KeychainService.defaultServiceName, account: cookieAccount),
             "auth=browser_cookie"
         )
+
+        // The saved cookie is rejected on the next poll, so the provider
+        // re-reads the browser and adopts the newer login.
+        browserSpy.namedCookieResult = BrowserCookieHeader(header: "auth=rotated_cookie", source: "Auto:Test")
+        OpenCodeGoMockURLProtocol.requestHandler = { request in
+            let cookie = request.value(forHTTPHeaderField: "Cookie") ?? ""
+            let status = cookie == "auth=browser_cookie" ? 401 : 200
+            XCTAssertTrue(cookie == "auth=browser_cookie" || cookie == "auth=rotated_cookie")
+            let response = HTTPURLResponse(
+                url: try XCTUnwrap(request.url),
+                statusCode: status,
+                httpVersion: nil,
+                headerFields: nil
+            )!
+            return (response, status == 200 ? Data(body.utf8) : Data())
+        }
+
+        let recovered = try await provider.fetch(forceRefresh: false)
+        XCTAssertEqual(recovered.sourceLabel, "Remote")
+        XCTAssertEqual(browserSpy.detectNamedCookieCallCount, 2)
+        XCTAssertEqual(
+            keychain.readToken(service: KeychainService.defaultServiceName, account: cookieAccount),
+            "auth=rotated_cookie"
+        )
     }
 
     func testBuildLocalWindowsRespectsFiveHourUtcWeekAndAnchoredMonth() throws {

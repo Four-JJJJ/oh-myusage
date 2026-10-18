@@ -1583,9 +1583,12 @@ final class OfficialProviderTests: XCTestCase {
             gate: PassthroughOfficialFetchGate()
         )
 
+        // Auto-import re-reads the browser on a forced refresh even when a
+        // cookie is already saved, so a renewed chatgpt.com login is picked up.
+        // The detector returns nothing here, and the saved cookie is used.
         let snapshot = try await provider.fetch(forceRefresh: true)
         XCTAssertEqual(snapshot.sourceLabel, "Web")
-        XCTAssertEqual(spy.detectCookieHeaderCallCount, 0)
+        XCTAssertEqual(spy.detectCookieHeaderCallCount, 1)
     }
 
     func testOfficialKimiPrefersSavedCodingAPIKey() async throws {

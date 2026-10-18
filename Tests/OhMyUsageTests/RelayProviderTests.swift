@@ -562,6 +562,142 @@ final class RelayProviderTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(browserCookieLookupCount, 1)
     }
 
+    func testXiaomimimoBrowserPreferredRotatesSavedCookieBeforeItExpires() async throws {
+        RelayMockURLProtocol.requestHandler = { request in
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Cookie"), "api-platform_serviceToken=rotatedCookie; userId=10001")
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            switch request.url?.path {
+            case "/api/v1/userProfile":
+                return (response, Data(#"{"data":{"nickname":"mimo-user"}}"#.utf8))
+            case "/api/v1/balance":
+                return (response, Data(#"{"data":{"availableBalance":"7.50"}}"#.utf8))
+            default:
+                XCTFail("Unexpected path \(request.url?.path ?? "nil")")
+                return (response, Data(#"{}"#.utf8))
+            }
+        }
+        defer { RelayMockURLProtocol.requestHandler = nil }
+
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [RelayMockURLProtocol.self]
+        let session = URLSession(configuration: config)
+
+        let service = "OhMyUsageTests-\(UUID().uuidString)"
+        let keychain = makeTestKeychain()
+        XCTAssertTrue(
+            keychain.saveToken(
+                "api-platform_serviceToken=staleCookie; userId=10001",
+                service: service,
+                account: "platform.xiaomimimo.com/session-cookie"
+            )
+        )
+        var descriptor = makeRelayDescriptor(
+            service: service,
+            adapterID: "xiaomimimo",
+            baseURL: "https://platform.xiaomimimo.com",
+            balanceAccount: "platform.xiaomimimo.com/session-cookie"
+        )
+        descriptor.relayConfig?.balanceCredentialMode = .browserPreferred
+
+        var browserCookieLookupCount = 0
+        let provider = RelayProvider(
+            descriptor: descriptor,
+            session: session,
+            keychain: keychain,
+            browserCredentialService: BrowserCredentialService(
+                cookieHeaderOverride: { host in
+                    browserCookieLookupCount += 1
+                    guard host == "platform.xiaomimimo.com" else { return nil }
+                    return BrowserDetectedCredential(
+                        value: "api-platform_serviceToken=rotatedCookie; userId=10001",
+                        source: "browser"
+                    )
+                },
+                cacheTTL: 0
+            )
+        )
+
+        let snapshot = try await provider.fetch()
+        XCTAssertEqual(snapshot.remaining ?? -1, 7.50, accuracy: 0.001)
+        XCTAssertEqual(snapshot.rawMeta["account.authSource"], "browserCookieHeader:browser")
+        XCTAssertNil(snapshot.rawMeta["relay.recovery.trigger"])
+        XCTAssertEqual(
+            keychain.readToken(service: service, account: "platform.xiaomimimo.com/session-cookie"),
+            "api-platform_serviceToken=rotatedCookie; userId=10001"
+        )
+        XCTAssertGreaterThanOrEqual(browserCookieLookupCount, 1)
+
+        browserCookieLookupCount = 0
+        RelayMockURLProtocol.requestHandler = { request in
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Cookie"), "api-platform_serviceToken=rotatedCookie; userId=10001")
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            switch request.url?.path {
+            case "/api/v1/userProfile":
+                return (response, Data(#"{"data":{"nickname":"mimo-user"}}"#.utf8))
+            case "/api/v1/balance":
+                return (response, Data(#"{"data":{"availableBalance":"7.50"}}"#.utf8))
+            default:
+                return (response, Data(#"{}"#.utf8))
+            }
+        }
+
+        let second = try await provider.fetch()
+        XCTAssertEqual(second.rawMeta["account.authSource"], "savedCookieHeader")
+        XCTAssertEqual(browserCookieLookupCount, 0)
+    }
+
+    func testXiaomimimoManualPreferredDoesNotRotateSavedCookieFromBrowser() async throws {
+        RelayMockURLProtocol.requestHandler = { request in
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Cookie"), "api-platform_serviceToken=savedCookie; userId=10001")
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            switch request.url?.path {
+            case "/api/v1/userProfile":
+                return (response, Data(#"{"data":{"nickname":"mimo-user"}}"#.utf8))
+            case "/api/v1/balance":
+                return (response, Data(#"{"data":{"availableBalance":"3.00"}}"#.utf8))
+            default:
+                return (response, Data(#"{}"#.utf8))
+            }
+        }
+        defer { RelayMockURLProtocol.requestHandler = nil }
+
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [RelayMockURLProtocol.self]
+        let session = URLSession(configuration: config)
+
+        let service = "OhMyUsageTests-\(UUID().uuidString)"
+        let keychain = makeTestKeychain()
+        XCTAssertTrue(
+            keychain.saveToken(
+                "api-platform_serviceToken=savedCookie; userId=10001",
+                service: service,
+                account: "platform.xiaomimimo.com/session-cookie"
+            )
+        )
+        let descriptor = makeRelayDescriptor(
+            service: service,
+            adapterID: "xiaomimimo",
+            baseURL: "https://platform.xiaomimimo.com",
+            balanceAccount: "platform.xiaomimimo.com/session-cookie"
+        )
+
+        let provider = RelayProvider(
+            descriptor: descriptor,
+            session: session,
+            keychain: keychain,
+            browserCredentialService: BrowserCredentialService(
+                cookieHeaderOverride: { _ in
+                    XCTFail("Manual First must not read the browser while the saved cookie still works")
+                    return nil
+                }
+            )
+        )
+
+        let snapshot = try await provider.fetch()
+        XCTAssertEqual(snapshot.remaining ?? -1, 3.00, accuracy: 0.001)
+        XCTAssertEqual(snapshot.rawMeta["account.authSource"], "savedCookieHeader")
+    }
+
     func testXiaomimimoBrowserCookieCompletesUserIDFromParentDomain() async throws {
         let expectedCookie = "api-platform_serviceToken=freshCookie; api-platform_slh=slh; userId=10001"
         RelayMockURLProtocol.requestHandler = { request in

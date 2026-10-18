@@ -7,7 +7,9 @@ final class TraeProvider: UsageProvider, @unchecked Sendable {
     /// Browser recovery that fails must not be retried on the immediately
     /// following poll (doc §8.4 single-endpoint providers). Relay uses the
     /// same 10 minute recovery backoff interval.
-    private static let browserRecoveryBackoffInterval: TimeInterval = 10 * 60
+    // A rejected token is retried against the browser after a minute, the
+    // same window every session-cookie site uses.
+    private static let browserRecoveryBackoffInterval: TimeInterval = 60
 
     private let session: URLSession
     private let keychain: any TokenCredentialStoring

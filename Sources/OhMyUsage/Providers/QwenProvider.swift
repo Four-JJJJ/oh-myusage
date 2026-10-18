@@ -56,7 +56,9 @@ final class QwenProvider: UsageProvider, @unchecked Sendable {
     private let keychain: any TokenCredentialStoring
     private let browserCookieService: any BrowserCookieDetecting
     private let webReadBackoff: WebOverlayRetryBackoff
-    private let webRetryBackoffInterval: TimeInterval = 15 * 60
+    // A missing browser login is retried after a minute, the same window
+    // every session-cookie site uses, instead of staying dark for 15 minutes.
+    private let webRetryBackoffInterval: TimeInterval = 60
 
     let descriptor: ProviderDescriptor
 
@@ -85,7 +87,22 @@ final class QwenProvider: UsageProvider, @unchecked Sendable {
         }
 
         let cookie = try await resolveCookieHeader(forceRefresh: forceRefresh)
-        return try await performSnapshotFetch(cookie: cookie)
+        do {
+            return try await performSnapshotFetch(cookie: cookie)
+        } catch let error as ProviderError {
+            // A saved cookie the server rejected is retried once against the
+            // live browser login, the same recovery every session-cookie site
+            // gets. The retry only happens when the browser was not already
+            // just read.
+            guard !forceRefresh,
+                  cookie.source == "Manual",
+                  Self.isAuthClassError(error),
+                  let refreshed = try? await resolveCookieHeader(forceRefresh: true),
+                  refreshed.header != cookie.header else {
+                throw error
+            }
+            return try await performSnapshotFetch(cookie: refreshed)
+        }
     }
 
     /// Builds the snapshot for one resolved cookie, reusing the cached session

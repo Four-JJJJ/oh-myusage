@@ -8,7 +8,10 @@ final class RelayProvider: UsageProvider, @unchecked Sendable {
     private let keychain: any TokenCredentialStoring
     private let browserCredentialService: any BrowserCredentialProviding
     private let registry: RelayAdapterRegistry
-    private let browserRecoveryBackoffInterval: TimeInterval = 10 * 60
+    // A rejected session cookie should be retried against the browser soon:
+    // the saved copy cannot renew itself, and a 10 minute silence left the
+    // menu showing a stale auth failure long after the user logged back in.
+    private let browserRecoveryBackoffInterval: TimeInterval = 60
 
     // Plan §8.4: the token channel and the balance channel cache their
     // successful results independently (separate caches and key namespaces),

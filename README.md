@@ -9,6 +9,19 @@ oh-myusage 把官方订阅额度、模型使用窗口、第三方中转余额、
 
 [下载最新版本](https://github.com/Four-JJJJ/oh-myusage/releases/latest) · [安装说明](docs/DOWNLOAD.md) · [支持的服务](docs/PROVIDERS.md) · [扩展指南](docs/EXTENDING.md) · [发布清单](docs/RELEASE_CHECKLIST.md) · [English](docs/README.en.md)
 
+## V2.6.1 更新
+
+V2.6.1 把靠浏览器登录态的站点统一成同一套自动续期，不再每个站点各自处理。
+
+| 方向 | 改进 |
+| --- | --- |
+| 自动续期 | 浏览器优先或自动导入模式下，每 30 分钟从浏览器重新导入一次登录态，在 Cookie 过期前换上新的；浏览器没有更新时继续用旧的 |
+| 覆盖范围 | 小米 MIMO、MiniMax、爱琳语等中转站，以及千问、Ollama、OpenCode Go，还有 Codex 与 Claude 的网页模式 |
+| 失效恢复 | 服务器拒绝旧凭证后立刻再读一次浏览器；读不到登录时的等待从 10 到 15 分钟统一收成 1 分钟，Trae 也是 1 分钟 |
+| 手动模式 | 手动优先与手动粘贴保持不变，只用你保存的那份；过期报错统一说明如何切到浏览器优先或重新粘贴 |
+
+自动续期需要浏览器里该站点保持登录，且使用 Chrome、Arc、Edge 等 Chromium 系浏览器；Safari 与 Firefox 的登录读不出来。API 密钥被吊销、以及登录态锁在 App 自己数据里的站点（Windsurf、Amp、JetBrains、Kiro）仍需手动处理。详见[本版发布说明](docs/releases/v2.6.1.md)。
+
 ## V2.6.0 更新
 
 V2.6.0 聚焦凭证与配置的数据安全、后台任务取消和统计页双语体验，保留既有刷新频率与界面风格。
