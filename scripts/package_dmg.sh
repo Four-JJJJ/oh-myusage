@@ -20,6 +20,13 @@ ZIP_NAME="oh-myusage-macOS.zip"
 ZIP_PATH="$DIST_DIR/$ZIP_NAME"
 RW_DMG_PATH="$TMP_ROOT/$APP_NAME-rw.dmg"
 MOUNT_POINT="$TMP_ROOT/mount"
+# 无论成功失败都回收临时目录：失败路径曾经把含 universal 二进制的
+# /tmp 目录和挂载中的 RW DMG 留在机器上（每次打包几十 MB）。
+cleanup() {
+  hdiutil detach "$MOUNT_POINT" -force >/dev/null 2>&1 || true
+  rm -rf "$TMP_ROOT"
+}
+trap cleanup EXIT
 APP_ZIP_PATH="$TMP_ROOT/$APP_NAME.zip"
 INSTALL_GUIDE_NAME="安装说明（请先看这里）.txt"
 ICON_SOURCE_PATH="$ROOT_DIR/Sources/OhMyUsage/Resources/app_icon_source.png"
@@ -508,7 +515,6 @@ require_cmd shasum
 log "DMG: $DMG_PATH"
 log "ZIP: $ZIP_PATH"
 log "SHA256SUMS: $DIST_DIR/SHA256SUMS.txt"
-log "TMP_APP: $APP_DIR"
 
 # 如实输出公证状态：未公证时必须明确说明，不得出现"已公证"字样。
 if (( NOTARIZE_ENABLED )); then

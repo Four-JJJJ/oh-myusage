@@ -102,24 +102,10 @@ enum SecurityCredentialReader {
             return true
         }
 
-        let args = [
-            "add-generic-password",
-            "-U",
-            "-s", normalizedService,
-            "-a", normalizedAccount,
-            "-w", text
-        ]
-        guard let output = ShellCommand.run(executable: "/usr/bin/security", arguments: args, timeout: 5) else {
-            return false
-        }
-        if output.status == 0 {
-            let now = Date()
-            cache(.value(text), for: CredentialCacheKey(service: normalizedService, account: normalizedAccount, interactive: false), now: now)
-            cache(.value(text), for: CredentialCacheKey(service: normalizedService, account: normalizedAccount, interactive: true), now: now)
-            cache(.value(text), for: CredentialCacheKey(service: normalizedService, account: nil, interactive: false), now: now)
-            cache(.value(text), for: CredentialCacheKey(service: normalizedService, account: nil, interactive: true), now: now)
-            return true
-        }
+        // No `/usr/bin/security -w <text>` fallback: the value would sit in the
+        // helper's argv, visible to `ps` for the process's lifetime. The same
+        // Security framework backs the CLI, so a SecItemAdd failure means the
+        // keychain is genuinely unavailable; report it to the caller instead.
         return false
     }
 

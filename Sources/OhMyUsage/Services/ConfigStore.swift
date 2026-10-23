@@ -109,7 +109,11 @@ final class ConfigStore {
 
         let defaultConfig = AppConfig.default
         try snapshotWriter.preserveFallbackCandidateIfNeeded(preservedFallbackData)
-        try save(defaultConfig)
+        // A plain save clears the candidate file immediately. Corrupt data is
+        // already archived permanently, but the candidate is the only copy of
+        // the lossy raw data, so it has to survive this bootstrap write; the
+        // next user-initiated save clears it.
+        try save(defaultConfig, updateLastKnownGood: true, clearPreservedFallbackCandidate: false)
         if sawPersistedConfigSource {
             log("Fell back to default config after all persisted config sources were invalid or lossy")
         } else {

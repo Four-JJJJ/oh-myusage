@@ -349,11 +349,13 @@ final class ClaudeProvider: UsageProvider, @unchecked Sendable {
     }
 
     private func loadWebSnapshot(forceRefresh: Bool) async throws -> UsageSnapshot {
+        let official = descriptor.officialConfig ?? ProviderDescriptor.defaultOfficialConfig(type: .claude)
         let cookie = try await resolveClaudeCookieHeader(forceRefresh: forceRefresh)
         let segmentIdentity = OfficialWebSegmentCache.credentialIdentity(for: cookie.header)
 
         if let token = extractCookieValue(name: "sessionKey", from: cookie.header),
            let oauthSnapshot = try? await loadWebOAuthSnapshot(token: token, source: cookie.source) {
+            await OfficialProviderWebOverlayRuntime.persistConfirmedCookie(cookie, official: official, keychain: keychain)
             return oauthSnapshot
         }
 
@@ -397,6 +399,7 @@ final class ClaudeProvider: UsageProvider, @unchecked Sendable {
             snapshot.accountLabel = email
         }
         snapshot.extras["webCookieSource"] = cookie.source
+        await OfficialProviderWebOverlayRuntime.persistConfirmedCookie(cookie, official: official, keychain: keychain)
         return snapshot
     }
 

@@ -88,21 +88,35 @@ final class QwenProvider: UsageProvider, @unchecked Sendable {
 
         let cookie = try await resolveCookieHeader(forceRefresh: forceRefresh)
         do {
-            return try await performSnapshotFetch(cookie: cookie)
+            let snapshot = try await performSnapshotFetch(cookie: cookie)
+            await Self.persistConfirmed(cookie: cookie, official: official, keychain: keychain)
+            return snapshot
         } catch let error as ProviderError {
             // A saved cookie the server rejected is retried once against the
             // live browser login, the same recovery every session-cookie site
-            // gets. The retry only happens when the browser was not already
-            // just read.
+            // gets. The retry only happens when this poll did not already
+            // read the browser — the flag covers stored cookies that came
+            // from an earlier rotation too, unlike the source label it used
+            // to be gated on.
             guard !forceRefresh,
-                  cookie.source == "Manual",
+                  !cookie.readBrowserDuringResolution,
                   Self.isAuthClassError(error),
                   let refreshed = try? await resolveCookieHeader(forceRefresh: true),
                   refreshed.header != cookie.header else {
                 throw error
             }
-            return try await performSnapshotFetch(cookie: refreshed)
+            let snapshot = try await performSnapshotFetch(cookie: refreshed)
+            await Self.persistConfirmed(cookie: refreshed, official: official, keychain: keychain)
+            return snapshot
         }
+    }
+
+    private static func persistConfirmed(
+        cookie: BrowserCookieHeader,
+        official: OfficialProviderConfig,
+        keychain: TokenCredentialStoring
+    ) async {
+        await OfficialProviderWebOverlayRuntime.persistConfirmedCookie(cookie, official: official, keychain: keychain)
     }
 
     /// Builds the snapshot for one resolved cookie, reusing the cached session

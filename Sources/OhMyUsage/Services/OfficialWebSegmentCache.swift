@@ -37,6 +37,21 @@ actor OfficialWebSegmentCache {
             expiresAt: currentDate.addingTimeInterval(max(0, ttl))
         )
         purgeExpiredLocked(now: currentDate)
+        evictOverCapacityLocked()
+    }
+
+    /// Keys rotate whenever the web cookie changes, so a long session with
+    /// repeated logins would otherwise let unexpired bodies accumulate.
+    private func evictOverCapacityLocked() {
+        let maxEntries = 64
+        guard entries.count > maxEntries else { return }
+        let sorted = entries.sorted { lhs, rhs in
+            lhs.value.expiresAt < rhs.value.expiresAt
+                || (lhs.value.expiresAt == rhs.value.expiresAt && lhs.key < rhs.key)
+        }
+        for (key, _) in sorted.prefix(entries.count - maxEntries) {
+            entries[key] = nil
+        }
     }
 
     func storeString(_ value: String, for key: String, ttl: TimeInterval) {

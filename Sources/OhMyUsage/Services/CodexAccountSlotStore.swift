@@ -473,6 +473,8 @@ final class CodexAccountSlotStore {
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         guard let data = try? encoder.encode(SlotFile(slots: slots)) else { return }
-        try? data.write(to: fileURL, options: .atomic)
+        // Slot files persist full snapshots including account metadata, so
+        // they are written with the same 0600 staging write as the profiles.
+        try? PrivateProfileFile(url: fileURL, fileManager: FileManager.default).write(data)
     }
 }

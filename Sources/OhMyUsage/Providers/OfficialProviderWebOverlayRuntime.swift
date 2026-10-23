@@ -48,6 +48,19 @@ enum OfficialProviderWebOverlayRuntime {
         }()
         let storedManualHeader = storedManual?.header
 
+        // Re-reads the slot rather than reusing `storedManual`, and treats the
+        // source remembered at the start of the poll as the slot's label.
+        func storedFallbackCookie() -> BrowserCookieHeader? {
+            if let account = official.manualCookieAccount,
+               let stored = keychain.readToken(service: service, account: account),
+               let header = strategy.normalizeManualHeader(stored),
+               !header.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                let source = remembered ?? storedManual?.source ?? "Manual"
+                return BrowserCookieHeader(header: header, source: source)
+            }
+            return storedManual.map { BrowserCookieHeader(header: $0.header, source: $0.source) }
+        }
+
         // A pasted cookie is only authoritative while auto-import is off, or
         // while its rotation window is still open. Auto-import re-reads the
         // browser on the shared cadence and falls back to this copy when the
@@ -101,10 +114,23 @@ enum OfficialProviderWebOverlayRuntime {
         }
 
         if let webReadBackoff {
-            guard await webReadBackoff.shouldAttempt(for: backoffKey, forceRefresh: forceRefresh) else {
+            let mayAttempt = await webReadBackoff.shouldAttempt(for: backoffKey, forceRefresh: forceRefresh)
+            if !mayAttempt {
+                // A recent failed browser read must not turn a working saved
+                // cookie into a missing-credential poll.
+                if let stored = storedFallbackCookie() {
+                    return stored
+                }
                 throw ProviderError.missingCredential(strategy.autoImportMissingCredential)
             }
         }
+
+        // A first import (nothing stored yet) persists right away: there is no
+        // working cookie to lose. A rotation instead hands the detected header
+        // out with `pendingPersistHeader` and only reaches the keychain after
+        // the request built from it succeeds, so a stale browser login cannot
+        // silently destroy a cookie that still works.
+        let persistImmediately = storedManualHeader == nil
 
         if let namedCookie = strategy.namedCookie,
            let detected = browserCookieService.detectNamedCookie(
@@ -114,49 +140,54 @@ enum OfficialProviderWebOverlayRuntime {
                accessIntent: browserAccessIntent
            ),
            let normalized = strategy.normalizeDetectedHeader(detected.header) {
-            if let account = official.manualCookieAccount {
-                _ = keychain.saveToken(normalized, service: service, account: account)
+            if persistImmediately {
+                if let account = official.manualCookieAccount {
+                    _ = keychain.saveToken(normalized, service: service, account: account)
+                }
+                await rememberSource(detected.source, for: official.manualCookieAccount)
             }
             if let webReadBackoff {
                 await webReadBackoff.clearFailure(for: backoffKey)
             }
-            let header = BrowserCookieHeader(header: normalized, source: detected.source)
+            let header = BrowserCookieHeader(
+                header: normalized,
+                source: detected.source,
+                readBrowserDuringResolution: true,
+                pendingPersistHeader: persistImmediately ? nil : normalized
+            )
             credentialCache.store(header, for: credentialCacheKey)
-            await rememberSource(detected.source, for: official.manualCookieAccount)
             return header
         }
 
         if let detected = browserCookieService.detectCookieHeader(
-            hostContains: strategy.hostContains,
-            order: nil,
-            accessIntent: browserAccessIntent
-        ),
+               hostContains: strategy.hostContains,
+               order: nil,
+               accessIntent: browserAccessIntent
+           ),
            let normalized = strategy.normalizeDetectedHeader(detected.header) {
-            if let account = official.manualCookieAccount {
-                _ = keychain.saveToken(normalized, service: service, account: account)
+            if persistImmediately {
+                if let account = official.manualCookieAccount {
+                    _ = keychain.saveToken(normalized, service: service, account: account)
+                }
+                await rememberSource(detected.source, for: official.manualCookieAccount)
             }
             if let webReadBackoff {
                 await webReadBackoff.clearFailure(for: backoffKey)
             }
-            let header = BrowserCookieHeader(header: normalized, source: detected.source)
+            let header = BrowserCookieHeader(
+                header: normalized,
+                source: detected.source,
+                readBrowserDuringResolution: true,
+                pendingPersistHeader: persistImmediately ? nil : normalized
+            )
             credentialCache.store(header, for: credentialCacheKey)
-            await rememberSource(detected.source, for: official.manualCookieAccount)
             return header
         }
 
         // The browser had nothing newer. A saved cookie that still works is
-        // more useful than failing the poll, so keep serving it. Re-read it:
-        // an earlier rotation in this same poll may already have replaced the
-        // copy captured at the start.
-        if let account = official.manualCookieAccount,
-           let stored = keychain.readToken(service: service, account: account),
-           let header = strategy.normalizeManualHeader(stored),
-           !header.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            let source = await rememberedSource(for: official.manualCookieAccount) ?? storedManual?.source ?? "Manual"
-            return BrowserCookieHeader(header: header, source: source)
-        }
-        if let storedManual {
-            return BrowserCookieHeader(header: storedManual.header, source: storedManual.source)
+        // more useful than failing the poll, so keep serving it.
+        if let stored = storedFallbackCookie() {
+            return stored
         }
 
         credentialCache.store(nil, for: credentialCacheKey)
@@ -164,6 +195,23 @@ enum OfficialProviderWebOverlayRuntime {
             await webReadBackoff.markFailure(for: backoffKey, interval: webRetryBackoffInterval)
         }
         throw ProviderError.missingCredential(strategy.autoImportMissingCredential)
+    }
+
+    /// Persists a browser-detected cookie once the request built from it has
+    /// succeeded. Rotated cookies carry `pendingPersistHeader` precisely so a
+    /// stale browser login never replaces a stored cookie the server still
+    /// accepts.
+    static func persistConfirmedCookie(
+        _ cookie: BrowserCookieHeader,
+        official: OfficialProviderConfig,
+        keychain: any TokenCredentialStoring
+    ) async {
+        guard let pending = cookie.pendingPersistHeader,
+              let account = official.manualCookieAccount else {
+            return
+        }
+        _ = keychain.saveToken(pending, service: TokenCredentialStoreServiceNames.defaultServiceName, account: account)
+        await rememberSource(cookie.source, for: account)
     }
 
     /// Counts the attempt rather than the success, so a logged-out or

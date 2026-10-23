@@ -115,7 +115,9 @@ final class ConfigSnapshotWriter {
     }
 
     private func writeData(_ data: Data, to url: URL) throws {
-        try data.write(to: url, options: .atomic)
+        // Config carries relay headers the user may have pasted credentials
+        // into, so it gets the same 0600 staging write the profile stores use.
+        try PrivateProfileFile(url: url, fileManager: fileManager).write(data)
     }
 
     private func writeLastKnownGoodIfEligible(_ data: Data, overwriteExisting: Bool) throws {

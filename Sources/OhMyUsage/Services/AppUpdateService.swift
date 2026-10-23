@@ -36,9 +36,12 @@ protocol AppUpdateServicing: Actor {
 enum AppUpdateError: LocalizedError {
     case invalidMetadata
     case missingZipAsset
+    case missingChecksum
     case checksumMismatch
+    case signatureVerificationFailed(String)
     case extractedAppNotFound
     case unsupportedInstallLocation
+    case installerLaunchFailed
 
     var errorDescription: String? {
         switch self {
@@ -46,12 +49,18 @@ enum AppUpdateError: LocalizedError {
             return "Invalid update metadata"
         case .missingZipAsset:
             return "No macOS ZIP asset is available for automatic update"
+        case .missingChecksum:
+            return "Update manifest does not provide a download checksum"
         case .checksumMismatch:
             return "Downloaded update checksum mismatch"
+        case .signatureVerificationFailed(let reason):
+            return "Updated app failed signature verification: \(reason)"
         case .extractedAppNotFound:
             return "Updated app bundle was not found in the extracted archive"
         case .unsupportedInstallLocation:
             return "Automatic update requires running from an .app bundle"
+        case .installerLaunchFailed:
+            return "Update installer failed to start"
         }
     }
 }
@@ -207,6 +216,14 @@ actor AppUpdateService {
         guard let asset = update.zipAsset else {
             throw AppUpdateError.missingZipAsset
         }
+        // The manifest and the download share an origin, so the published hash
+        // is the only anchor the update chain has. Without it a substituted
+        // asset would install unchallenged, so a manifest that omits it is
+        // rejected rather than trusted — before any bytes are fetched.
+        guard let expectedHash = asset.sha256?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !expectedHash.isEmpty else {
+            throw AppUpdateError.missingChecksum
+        }
 
         let root = fileManager.temporaryDirectory
             .appendingPathComponent("OhMyUsageUpdate-\(UUID().uuidString)", isDirectory: true)
@@ -231,12 +248,9 @@ actor AppUpdateService {
         }
         try fileManager.moveItem(at: temporaryFileURL, to: downloadURL)
 
-        if let expectedHash = asset.sha256?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !expectedHash.isEmpty {
-            let actualHash = try Self.sha256Hex(for: downloadURL)
-            if actualHash.caseInsensitiveCompare(expectedHash) != .orderedSame {
-                throw AppUpdateError.checksumMismatch
-            }
+        let actualHash = try Self.sha256Hex(for: downloadURL)
+        if actualHash.caseInsensitiveCompare(expectedHash) != .orderedSame {
+            throw AppUpdateError.checksumMismatch
         }
 
         try Self.runProcess(
@@ -247,6 +261,8 @@ actor AppUpdateService {
         guard let appBundleURL = Self.findAppBundle(in: extractRoot, fileManager: fileManager) else {
             throw AppUpdateError.extractedAppNotFound
         }
+
+        try Self.verifyAppBundleSignature(at: appBundleURL)
 
         return PreparedAppUpdate(
             version: update.latestVersion,
@@ -292,6 +308,13 @@ actor AppUpdateService {
         process.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
         process.arguments = ["-c", detachedInstallerLauncher, scriptURL.path]
         try process.run()
+        // The launcher exits right after forking. A non-zero exit means the
+        // detached installer never started, and reporting success then would
+        // quit the app into an update that never happens.
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else {
+            throw AppUpdateError.installerLaunchFailed
+        }
     }
 
     static let detachedInstallerLauncher = """
@@ -352,6 +375,49 @@ actor AppUpdateService {
             return true
         }) {}
         return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// A matching checksum says the archive is what the manifest listed, but
+    /// the manifest itself has no independent signature. The extracted bundle
+    /// must still carry a structurally valid code signature, and when the
+    /// running app is identity signed the update must come from the same team.
+    static func verifyAppBundleSignature(at appBundleURL: URL) throws {
+        try runProcess(
+            executablePath: "/usr/bin/codesign",
+            arguments: ["--verify", "--deep", "--strict", appBundleURL.path]
+        )
+
+        guard let runningTeam = teamIdentifier(forAppBundleAt: Bundle.main.bundleURL) else {
+            return
+        }
+        guard teamIdentifier(forAppBundleAt: appBundleURL) == runningTeam else {
+            throw AppUpdateError.signatureVerificationFailed("signed by a different team than the installed app")
+        }
+    }
+
+    /// Ad-hoc builds report no team; `nil` means "no identity to pin".
+    private static func teamIdentifier(forAppBundleAt url: URL) -> String? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
+        process.arguments = ["-dv", "--verbose=4", url.path]
+        let details = Pipe()
+        process.standardError = details
+        process.standardOutput = Pipe()
+        do {
+            try process.run()
+        } catch {
+            return nil
+        }
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else { return nil }
+        let text = String(data: details.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        for line in text.split(separator: "\n") {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            guard trimmed.hasPrefix("TeamIdentifier=") else { continue }
+            let value = trimmed.dropFirst("TeamIdentifier=".count).trimmingCharacters(in: .whitespaces)
+            return (value.isEmpty || value == "not set") ? nil : value
+        }
+        return nil
     }
 
     private static func findAppBundle(in root: URL, fileManager: FileManager) -> URL? {

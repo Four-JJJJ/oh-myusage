@@ -86,6 +86,11 @@ enum RelayRequestResolver {
         return deduped
     }
 
+    /// Vendor hosts the built-in adapters intentionally query on an origin
+    /// other than the configured relay base URL. Anything else in an absolute
+    /// `path` would send the relay credentials to a third-party host.
+    private static let trustedAbsoluteHostSuffixes: Set<String> = ["minimaxi.com", "deepseek.com"]
+
     static func relayURL(baseURL: URL, rawPath: String) -> URL {
         let trimmed = rawPath.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
@@ -93,6 +98,11 @@ enum RelayRequestResolver {
         }
         if trimmed.hasPrefix("http://") || trimmed.hasPrefix("https://"),
            let absolute = URL(string: trimmed) {
+            guard isAllowedAbsoluteURL(absolute, relativeTo: baseURL) else {
+                // An absolute override outside the configured origin is treated
+                // as a plain path so the request stays on the user's relay.
+                return baseURL.appending(path: normalizedPath(trimmed))
+            }
             return absolute
         }
 
@@ -107,6 +117,24 @@ enum RelayRequestResolver {
         components?.path = pathPart.isEmpty ? "/" : pathPart
         components?.percentEncodedQuery = queryPart.isEmpty ? nil : queryPart
         return components?.url ?? baseURL.appending(path: pathPart.isEmpty ? "/" : pathPart)
+    }
+
+    /// An absolute request path is allowed only on the relay's own host (same
+    /// scheme, so an http override cannot downgrade an https relay) or on the
+    /// vendor hosts the built-in probes use, and those only over https.
+    static func isAllowedAbsoluteURL(_ url: URL, relativeTo baseURL: URL) -> Bool {
+        guard let host = url.host?.lowercased(), !host.isEmpty else {
+            return false
+        }
+        if let baseHost = baseURL.host?.lowercased(), !baseHost.isEmpty, host == baseHost {
+            let scheme = url.scheme?.lowercased() ?? ""
+            let baseScheme = baseURL.scheme?.lowercased() ?? "https"
+            return scheme == baseScheme
+        }
+        guard url.scheme?.lowercased() == "https" else {
+            return false
+        }
+        return trustedAbsoluteHostSuffixes.contains { host == $0 || host.hasSuffix(".\($0)") }
     }
 
     static func relayRootURL(from raw: String) -> URL? {

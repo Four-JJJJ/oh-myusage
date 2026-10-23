@@ -3,10 +3,25 @@ import Foundation
 public struct BrowserCookieHeader: Equatable, Sendable {
     public let header: String
     public let source: String
+    /// True when resolving this header already performed a live browser read
+    /// during this poll. A cookie resolved that way is already the browser's
+    /// best answer, so re-reading it cannot rescue a rejected request.
+    public let readBrowserDuringResolution: Bool
+    /// A browser-detected header that replaced a stored cookie and is waiting
+    /// for a successful request before it is persisted, so a stale browser
+    /// login cannot silently destroy a working saved cookie.
+    public let pendingPersistHeader: String?
 
-    public init(header: String, source: String) {
+    public init(
+        header: String,
+        source: String,
+        readBrowserDuringResolution: Bool = false,
+        pendingPersistHeader: String? = nil
+    ) {
         self.header = header
         self.source = source
+        self.readBrowserDuringResolution = readBrowserDuringResolution
+        self.pendingPersistHeader = pendingPersistHeader
     }
 }
 

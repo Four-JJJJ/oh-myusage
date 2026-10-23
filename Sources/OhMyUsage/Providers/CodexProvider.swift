@@ -183,6 +183,7 @@ final class CodexProvider: UsageProvider, @unchecked Sendable {
     }
 
     private func loadWebSnapshot(forceRefresh: Bool) async throws -> UsageSnapshot {
+        let official = descriptor.officialConfig ?? ProviderDescriptor.defaultOfficialConfig(type: .codex)
         let cookie = try await resolveCodexCookieHeader(forceRefresh: forceRefresh)
         let (data, response) = try await requestUsage(
             authorization: .cookie(cookie.header),
@@ -203,6 +204,7 @@ final class CodexProvider: UsageProvider, @unchecked Sendable {
             accountLabel: nil,
             fingerprint: Self.credentialFingerprint(cookie.header)
         )
+        await OfficialProviderWebOverlayRuntime.persistConfirmedCookie(cookie, official: official, keychain: keychain)
         return snapshot
     }
 

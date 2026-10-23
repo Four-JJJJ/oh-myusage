@@ -43,15 +43,18 @@ final class OllamaCloudProvider: UsageProvider, @unchecked Sendable {
     }
 
     private func loadFromWeb(forceRefresh: Bool) async throws -> UsageSnapshot {
+        let official = descriptor.officialConfig ?? ProviderDescriptor.defaultOfficialConfig(type: .ollamaCloud)
         let cookie = try await resolveCookieHeader(forceRefresh: forceRefresh)
         let html: String
         do {
             html = try await requestSettingsHTML(cookieHeader: cookie.header)
         } catch let error as ProviderError {
             // A rejected saved cookie is retried once with the live browser
-            // login, matching the other session-cookie sites.
+            // login, matching the other session-cookie sites. Gated on the
+            // browser-read flag so a stored cookie from an earlier rotation
+            // still gets the retry.
             guard !forceRefresh,
-                  cookie.source == "Manual",
+                  !cookie.readBrowserDuringResolution,
                   case .unauthorized = error,
                   let refreshed = try? await resolveCookieHeader(forceRefresh: true),
                   refreshed.header != cookie.header else {
@@ -60,10 +63,12 @@ final class OllamaCloudProvider: UsageProvider, @unchecked Sendable {
             let recovered = try await requestSettingsHTML(cookieHeader: refreshed.header)
             var snapshot = try Self.parseSnapshot(html: recovered, descriptor: descriptor)
             snapshot.extras["webCookieSource"] = refreshed.source
+            await OfficialProviderWebOverlayRuntime.persistConfirmedCookie(refreshed, official: official, keychain: keychain)
             return snapshot
         }
         var snapshot = try Self.parseSnapshot(html: html, descriptor: descriptor)
         snapshot.extras["webCookieSource"] = cookie.source
+        await OfficialProviderWebOverlayRuntime.persistConfirmedCookie(cookie, official: official, keychain: keychain)
         return snapshot
     }
 

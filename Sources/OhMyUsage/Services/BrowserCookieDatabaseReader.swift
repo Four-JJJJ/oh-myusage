@@ -157,6 +157,15 @@ final class BrowserCookieDatabaseReader {
         hostContains: String,
         accessIntent: BrowserCredentialAccessIntent = .interactiveImport
     ) -> String? {
+        // Both values reach SQL string literals executed by the sqlite3 CLI as
+        // full statements, and both originate outside this type (relay adapter
+        // manifests, configured base URLs). Reject anything outside the shape
+        // those inputs legitimately take; the doubling in the sanitizer is
+        // defense in depth for the day an allowed set grows a quote.
+        guard let cookieName = CookieQuerySanitizer.cookieName(cookieName),
+              let hostContains = CookieQuerySanitizer.hostContains(hostContains) else {
+            return nil
+        }
         let queries = [
             "SELECT value, hex(encrypted_value) FROM cookies WHERE name='\(cookieName)' AND host_key LIKE '%\(hostContains)%' ORDER BY LENGTH(value) DESC, LENGTH(encrypted_value) DESC;",
             "SELECT value, hex(encrypted_value) FROM cookies WHERE name='\(cookieName)' AND domain LIKE '%\(hostContains)%' ORDER BY LENGTH(value) DESC, LENGTH(encrypted_value) DESC;",
@@ -209,6 +218,9 @@ final class BrowserCookieDatabaseReader {
         hostContains: String,
         accessIntent: BrowserCredentialAccessIntent = .interactiveImport
     ) -> String? {
+        guard let hostContains = CookieQuerySanitizer.hostContains(hostContains) else {
+            return nil
+        }
         let queries = [
             "SELECT name, value, hex(encrypted_value) FROM cookies WHERE host_key LIKE '%\(hostContains)%' ORDER BY name;",
             "SELECT name, value, hex(encrypted_value) FROM cookies WHERE domain LIKE '%\(hostContains)%' ORDER BY name;",
@@ -475,6 +487,32 @@ final class BrowserCookieDatabaseReader {
             "/usr/bin/sqlite3",
         ]
         return candidates.first(where: { fileManager.isExecutableFile(atPath: $0) })
+    }
+}
+
+/// Relay adapter manifests and user-configured base URLs both feed the cookie
+/// query filters, and the sqlite3 CLI executes the built statement as-is. Keep
+/// the filters to the characters DNS hosts and RFC 6265 cookie names actually
+/// use, so neither input can break out of the SQL string literal.
+private enum CookieQuerySanitizer {
+    private static let hostCharacters = Set("abcdefghijklmnopqrstuvwxyz0123456789.-")
+    private static let cookieNameCharacters = hostCharacters
+        .union("ABCDEFGHIJKLMNOPQRSTUVWXYZ_!#$%&*+^|~")
+
+    static func cookieName(_ raw: String) -> String? {
+        literal(raw, allowed: cookieNameCharacters)
+    }
+
+    static func hostContains(_ raw: String) -> String? {
+        literal(raw.lowercased(), allowed: hostCharacters)
+    }
+
+    private static func literal(_ raw: String, allowed: Set<Character>) -> String? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed.allSatisfy({ allowed.contains($0) }) else {
+            return nil
+        }
+        return trimmed.replacingOccurrences(of: "'", with: "''")
     }
 }
 
