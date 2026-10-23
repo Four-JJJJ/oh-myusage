@@ -118,6 +118,7 @@ extension SettingsView {
                 settingsCapsuleButton(viewModel.text(.permissionCancel)) {
                     dialogState.isNewAPISiteDialogPresented = false
                 }
+                .keyboardShortcut(.cancelAction)
             }
         }
         .padding(16)

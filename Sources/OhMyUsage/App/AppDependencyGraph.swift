@@ -11,6 +11,7 @@ struct AppDependencyGraph {
     let credentialAccessService: CredentialAccessService
     let codexSlotStore: CodexAccountSlotStore
     let codexProfileStore: CodexAccountProfileStore
+    let claudeProfileStore: ClaudeAccountProfileStore
     let codexDesktopAuthService: CodexDesktopAuthService
     let claudeDesktopAuthService: ClaudeDesktopAuthService
     let codexDesktopAppService: CodexDesktopAppService

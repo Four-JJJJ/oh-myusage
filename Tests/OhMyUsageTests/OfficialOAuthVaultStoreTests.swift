@@ -124,6 +124,71 @@ final class OfficialOAuthVaultStoreTests: XCTestCase {
         XCTAssertFalse(store.isMigrationComplete(provider: .codex))
     }
 
+    // MARK: - Per-profile slot accounts (P0-2 multi-account storage)
+
+    func testProfileAccountConstantsUseCanonicalNames() {
+        XCTAssertEqual(
+            OfficialOAuthVaultAccounts.profileAccount(for: .codex, slotID: .a),
+            "official/codex/profile/A/oauth-json"
+        )
+        XCTAssertEqual(
+            OfficialOAuthVaultAccounts.profileAccount(for: .claude, slotID: CodexSlotID(rawValue: "B")),
+            "official/claude/profile/B/oauth-json"
+        )
+    }
+
+    func testProfileSlotAccountsRoundTripPerSlotWithoutTouchingProviderEntry() {
+        let (defaults, suiteName) = makeTestDefaults()
+        defer { removeTestDefaults(named: suiteName) }
+        let keychain = makeTestKeychain()
+        let store = OfficialOAuthVaultStore(keychain: keychain, defaults: defaults)
+        let slotA = Self.sampleCodexAuthJSON(accountID: "acc-slot-a")
+        let slotB = Self.sampleCodexAuthJSON(accountID: "acc-slot-b")
+
+        XCTAssertTrue(store.saveProfileOAuthJSON(provider: .codex, slotID: .a, rawJSON: slotA))
+        XCTAssertTrue(store.saveProfileOAuthJSON(provider: .codex, slotID: .b, rawJSON: slotB))
+        XCTAssertEqual(store.readProfileOAuthJSON(provider: .codex, slotID: .a), slotA)
+        XCTAssertEqual(store.readProfileOAuthJSON(provider: .codex, slotID: .b), slotB)
+        XCTAssertNil(store.readProfileOAuthJSON(provider: .codex, slotID: CodexSlotID(rawValue: "C")))
+
+        // Slot writes never touch the provider-wide "current" entry.
+        XCTAssertNil(store.readOAuthJSON(provider: .codex))
+        XCTAssertNil(
+            keychain.readToken(
+                service: "oh-myusage",
+                account: OfficialOAuthVaultAccounts.codexOAuthJSON
+            )
+        )
+    }
+
+    func testSaveProfileOAuthJSONRejectsInvalidPayloadWithoutWriting() {
+        let (defaults, suiteName) = makeTestDefaults()
+        defer { removeTestDefaults(named: suiteName) }
+        let keychain = makeTestKeychain()
+        let store = OfficialOAuthVaultStore(keychain: keychain, defaults: defaults)
+
+        XCTAssertFalse(store.saveProfileOAuthJSON(provider: .codex, slotID: .a, rawJSON: "not-json"))
+        XCTAssertFalse(store.saveProfileOAuthJSON(provider: .claude, slotID: .a, rawJSON: #"{"claudeAiOauth":{}}"#))
+        XCTAssertNil(store.readProfileOAuthJSON(provider: .codex, slotID: .a))
+        XCTAssertNil(store.readProfileOAuthJSON(provider: .claude, slotID: .a))
+    }
+
+    func testDeleteProfileOAuthJSONRemovesOnlyThatSlot() {
+        let (defaults, suiteName) = makeTestDefaults()
+        defer { removeTestDefaults(named: suiteName) }
+        let keychain = makeTestKeychain()
+        let store = OfficialOAuthVaultStore(keychain: keychain, defaults: defaults)
+        let slotA = Self.sampleClaudeCredentialsJSON()
+        let slotB = Self.sampleClaudeCredentialsJSON()
+
+        XCTAssertTrue(store.saveProfileOAuthJSON(provider: .claude, slotID: .a, rawJSON: slotA))
+        XCTAssertTrue(store.saveProfileOAuthJSON(provider: .claude, slotID: .b, rawJSON: slotB))
+
+        XCTAssertTrue(store.deleteProfileOAuthJSON(provider: .claude, slotID: .a))
+        XCTAssertNil(store.readProfileOAuthJSON(provider: .claude, slotID: .a))
+        XCTAssertEqual(store.readProfileOAuthJSON(provider: .claude, slotID: .b), slotB)
+    }
+
     // MARK: - Fixtures (fake values only)
 
     private final class SendableCounter: @unchecked Sendable {

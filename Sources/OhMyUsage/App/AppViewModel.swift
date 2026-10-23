@@ -20,7 +20,7 @@ final class AppViewModel {
     let codexDesktopAppService: CodexDesktopAppService
     let oauthImportOrchestrator: OAuthImportOrchestrator
     let claudeSlotStore = ClaudeAccountSlotStore()
-    let claudeProfileStore = ClaudeAccountProfileStore()
+    let claudeProfileStore: ClaudeAccountProfileStore
     let claudeProfileSnapshotService = ClaudeProfileSnapshotService()
     let claudeDesktopAuthService: ClaudeDesktopAuthService
     let launchAtLoginService = LaunchAtLoginService()
@@ -285,7 +285,8 @@ final class AppViewModel {
         appUpdateService: any AppUpdateServicing = AppUpdateService(),
         postUpdateReleaseNotesStore: any PostUpdateReleaseNotesStoring = PostUpdateReleaseNotesStore(),
         codexSlotStore: CodexAccountSlotStore = CodexAccountSlotStore(),
-        codexProfileStore: CodexAccountProfileStore = CodexAccountProfileStore(),
+        codexProfileStore: CodexAccountProfileStore? = nil,
+        claudeProfileStore: ClaudeAccountProfileStore? = nil,
         codexDesktopAuthService: CodexDesktopAuthService? = nil,
         codexDesktopAppService: CodexDesktopAppService = CodexDesktopAppService(),
         codexProfileSnapshotService: CodexProfileSnapshotService = CodexProfileSnapshotService(),
@@ -304,6 +305,7 @@ final class AppViewModel {
             postUpdateReleaseNotesStore: postUpdateReleaseNotesStore,
             codexSlotStore: codexSlotStore,
             codexProfileStore: codexProfileStore,
+            claudeProfileStore: claudeProfileStore,
             codexDesktopAuthService: codexDesktopAuthService,
             codexDesktopAppService: codexDesktopAppService,
             codexProfileSnapshotService: codexProfileSnapshotService,
@@ -337,7 +339,8 @@ final class AppViewModel {
         appUpdateService: any AppUpdateServicing,
         postUpdateReleaseNotesStore: any PostUpdateReleaseNotesStoring = PostUpdateReleaseNotesStore(),
         codexSlotStore: CodexAccountSlotStore = CodexAccountSlotStore(),
-        codexProfileStore: CodexAccountProfileStore = CodexAccountProfileStore(),
+        codexProfileStore: CodexAccountProfileStore? = nil,
+        claudeProfileStore: ClaudeAccountProfileStore? = nil,
         codexDesktopAuthService: CodexDesktopAuthService? = nil,
         codexDesktopAppService: CodexDesktopAppService = CodexDesktopAppService(),
         codexProfileSnapshotService: CodexProfileSnapshotService = CodexProfileSnapshotService(),
@@ -357,6 +360,7 @@ final class AppViewModel {
             postUpdateReleaseNotesStore: postUpdateReleaseNotesStore,
             codexSlotStore: codexSlotStore,
             codexProfileStore: codexProfileStore,
+            claudeProfileStore: claudeProfileStore,
             codexDesktopAuthService: codexDesktopAuthService,
             codexDesktopAppService: codexDesktopAppService,
             codexProfileSnapshotService: codexProfileSnapshotService,
@@ -401,6 +405,7 @@ final class AppViewModel {
         self.credentialAccessService = dependencyGraph.credentialAccessService
         self.codexSlotStore = dependencyGraph.codexSlotStore
         self.codexProfileStore = dependencyGraph.codexProfileStore
+        self.claudeProfileStore = dependencyGraph.claudeProfileStore
         self.codexDesktopAuthService = dependencyGraph.codexDesktopAuthService
         self.codexDesktopAppService = dependencyGraph.codexDesktopAppService
         // Phase 1 §7.6: OAuth imports persist their normalized JSON into the app

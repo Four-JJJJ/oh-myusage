@@ -9,6 +9,19 @@ oh-myusage 把官方订阅额度、模型使用窗口、第三方中转余额、
 
 [下载最新版本](https://github.com/Four-JJJJ/oh-myusage/releases/latest) · [安装说明](docs/DOWNLOAD.md) · [支持的服务](docs/PROVIDERS.md) · [扩展指南](docs/EXTENDING.md) · [发布清单](docs/RELEASE_CHECKLIST.md) · [English](docs/README.en.md)
 
+## V2.6.5 更新
+
+V2.6.5 完成凭证安全的最后一块拼图，并收尾中枢类拆分与可访问性。
+
+| 方向 | 改进 |
+| --- | --- |
+| 凭证存储 | 官方账号 profile 文件不再保存 OAuth token，启动时无损迁入钥匙串（按账号槽位寻址，vault 写成功才剥离文件，失败保全可重试） |
+| 刷新统一 | Codex/Claude 轮询层刷新切换到共享 `OAuthRefreshPipeline`，回写失败可观测且不失败化刷新 |
+| 代码组织 | `AppConfigurationModel`（1,033 行）与 `RelayResponseInterpreter`（1,200 行）各自拆为 5 个职责文件（纯移动零行为变化） |
+| 可访问性 | 约 20 类无文字交互目标补双语标签与悬停提示；开关/复选框暴露选中状态；弹层取消/保存键补键盘快捷键 |
+
+⚠️ 迁移完成后降级到 2.6.4 及更早版本需重新导入受影响账号。全量 1,483 项测试 0 失败，全仓零警告。详见[本版发布说明](docs/releases/v2.6.5.md)。
+
 ## V2.6.4 更新
 
 V2.6.4 完成行为统一与健壮性收尾：HTTP 校验全量归一、凭证回写可观测、配置枚举降级。

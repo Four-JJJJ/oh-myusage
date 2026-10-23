@@ -975,7 +975,8 @@ extension SettingsView {
                             isOn: tokenChannelBinding,
                             offTrackColor: Color.white.opacity(0.15),
                             onTrackColor: Color.white.opacity(0.40),
-                            knobColor: Color.white.opacity(0.88)
+                            knobColor: Color.white.opacity(0.88),
+                            accessibilityLabel: viewModel.text(.enableTokenChannel)
                         )
                         .allowsHitTesting(false)
                         Spacer(minLength: 0)
@@ -999,7 +1000,8 @@ extension SettingsView {
                             isOn: accountChannelBinding,
                             offTrackColor: Color.white.opacity(0.15),
                             onTrackColor: Color.white.opacity(0.40),
-                            knobColor: Color.white.opacity(0.88)
+                            knobColor: Color.white.opacity(0.88),
+                            accessibilityLabel: viewModel.text(.enableAccountChannel)
                         )
                         .allowsHitTesting(false)
                         Spacer(minLength: 0)

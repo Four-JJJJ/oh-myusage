@@ -17,6 +17,15 @@ enum OfficialOAuthVaultAccounts {
             return claudeOAuthJSON
         }
     }
+
+    /// Per-slot vault account for profile-scoped OAuth JSON (multi-account
+    /// profile token storage). The profile file keeps metadata only; the token
+    /// for slot `slotID` lives under this account. The provider-wide account
+    /// above continues to hold the *current* system credential and is kept in
+    /// sync by the desktop auth services, so both layouts coexist.
+    static func profileAccount(for provider: OAuthImportProvider, slotID: CodexSlotID) -> String {
+        "official/\(provider == .codex ? "codex" : "claude")/profile/\(slotID.rawValue)/oauth-json"
+    }
 }
 
 /// Vault persistence for the normalized OAuth JSON of the official Codex / Claude
@@ -75,6 +84,50 @@ final class OfficialOAuthVaultStore: @unchecked Sendable {
             return nil
         }
         return trimmed
+    }
+
+    // MARK: - Per-profile slot reads / writes (multi-account profiles)
+
+    /// Non-interactive read of the profile-scoped OAuth JSON for one slot.
+    /// Returns nil when the slot account is absent or empty.
+    func readProfileOAuthJSON(provider: OAuthImportProvider, slotID: CodexSlotID) -> String? {
+        let raw = keychain.readToken(
+            service: TokenCredentialStoreServiceNames.defaultServiceName,
+            account: OfficialOAuthVaultAccounts.profileAccount(for: provider, slotID: slotID)
+        )
+        guard let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !trimmed.isEmpty else {
+            return nil
+        }
+        return trimmed
+    }
+
+    /// Parse-verifies `rawJSON` and stores it as the profile-scoped OAuth JSON
+    /// for one slot. Returns false when verification or the vault write fails.
+    @discardableResult
+    func saveProfileOAuthJSON(
+        provider: OAuthImportProvider,
+        slotID: CodexSlotID,
+        rawJSON: String
+    ) -> Bool {
+        guard let verified = verifiedOAuthJSON(provider: provider, rawJSON: rawJSON) else {
+            return false
+        }
+        return keychain.saveToken(
+            verified,
+            service: TokenCredentialStoreServiceNames.defaultServiceName,
+            account: OfficialOAuthVaultAccounts.profileAccount(for: provider, slotID: slotID)
+        )
+    }
+
+    /// Deletes the profile-scoped OAuth JSON for one slot. Only for explicit
+    /// cleanup paths; ordinary profile removal keeps the token (lossless).
+    @discardableResult
+    func deleteProfileOAuthJSON(provider: OAuthImportProvider, slotID: CodexSlotID) -> Bool {
+        keychain.deleteToken(
+            service: TokenCredentialStoreServiceNames.defaultServiceName,
+            account: OfficialOAuthVaultAccounts.profileAccount(for: provider, slotID: slotID)
+        )
     }
 
     // MARK: - Writes (verify first)

@@ -146,19 +146,31 @@ struct MenuContentView: View {
             }
 
             HStack(spacing: headerActionSpacing) {
-                headerIconButton(iconName: "refresh_icon", fallback: "arrow.clockwise") {
+                headerIconButton(
+                    iconName: "refresh_icon",
+                    fallback: "arrow.clockwise",
+                    label: viewModel.localizedText("刷新", "Refresh")
+                ) {
                     // Doc §9.4/§10.1: the menu can only see the visible cards,
                     // so the in-menu refresh entry refreshes visible providers.
                     viewModel.refreshNow(scope: .visible)
                 }
-                headerIconButton(iconName: "settings_icon", fallback: "gearshape") {
+                headerIconButton(
+                    iconName: "settings_icon",
+                    fallback: "gearshape",
+                    label: viewModel.localizedText("打开设置", "Open Settings")
+                ) {
                     if let onOpenSettings {
                         onOpenSettings()
                     } else {
                         SettingsWindowController.shared.show(viewModel: viewModel)
                     }
                 }
-                headerIconButton(iconName: "quit_icon", fallback: "power") {
+                headerIconButton(
+                    iconName: "quit_icon",
+                    fallback: "power",
+                    label: viewModel.localizedText("退出应用", "Quit App")
+                ) {
                     NSApplication.shared.terminate(nil)
                 }
             }
@@ -210,7 +222,12 @@ struct MenuContentView: View {
         return min(maxHeight, measured)
     }
 
-    private func headerIconButton(iconName: String, fallback: String, action: @escaping () -> Void) -> some View {
+    private func headerIconButton(
+        iconName: String,
+        fallback: String,
+        label: String,
+        action: @escaping () -> Void
+    ) -> some View {
         // 顶部图标按钮样式入口（尺寸、图标颜色、点击样式）。
         Button(action: action) {
             BundledIconView(
@@ -222,6 +239,8 @@ struct MenuContentView: View {
         }
         .buttonStyle(.plain)
         .frame(width: headerActionIconSize, height: headerActionIconSize)
+        .accessibilityLabel(label)
+        .help(label)
     }
 
     private func headerUpdateTint(for tone: MenuDashboardHeaderUpdatePresentation.Tone) -> Color {

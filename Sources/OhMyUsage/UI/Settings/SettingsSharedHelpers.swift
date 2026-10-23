@@ -102,7 +102,8 @@ extension SettingsView {
                 isOn: isOn,
                 offTrackColor: SettingsVisualTokens.Fill.control,
                 onTrackColor: SettingsVisualTokens.Text.tertiary,
-                knobColor: SettingsVisualTokens.Fill.knob
+                knobColor: SettingsVisualTokens.Fill.knob,
+                accessibilityLabel: title
             )
         }
     }

@@ -55,7 +55,8 @@ struct SettingsToggleRowView: View {
                 isOn: $isOn,
                 offTrackColor: Color.white.opacity(0.15),
                 onTrackColor: Color(hex: 0x69BD64),
-                knobColor: Color.white.opacity(0.88)
+                knobColor: Color.white.opacity(0.88),
+                accessibilityLabel: title
             )
 
             Spacer(minLength: 0)

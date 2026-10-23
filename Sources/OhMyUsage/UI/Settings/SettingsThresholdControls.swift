@@ -249,6 +249,9 @@ struct SettingsThresholdValueField: View {
     var range: ClosedRange<Double> = 0...100
     var onValueCommit: ((Double) -> Void)? = nil
     var onEditingChanged: (Bool) -> Void
+    /// 步进按钮无障碍文案（双语文案由调用方传入）；nil 时不覆盖默认行为。
+    var increaseAccessibilityLabel: String? = nil
+    var decreaseAccessibilityLabel: String? = nil
 
     @FocusState private var isFocused: Bool
     @State private var draftText = ""
@@ -287,6 +290,8 @@ struct SettingsThresholdValueField: View {
                         .frame(width: 12, height: 12)
                 }
                 .buttonStyle(.plain)
+                .optionalAccessibilityLabel(increaseAccessibilityLabel)
+                .optionalHelp(increaseAccessibilityLabel)
 
                 Button {
                     adjust(by: -step)
@@ -297,6 +302,8 @@ struct SettingsThresholdValueField: View {
                         .frame(width: 12, height: 12)
                 }
                 .buttonStyle(.plain)
+                .optionalAccessibilityLabel(decreaseAccessibilityLabel)
+                .optionalHelp(decreaseAccessibilityLabel)
             }
         }
         .padding(.leading, 8)
@@ -403,7 +410,9 @@ extension SettingsView {
                 style: valueStyle,
                 displayTextOverride: displayTextOverride,
                 onValueCommit: onValueCommit,
-                onEditingChanged: onEditingChanged
+                onEditingChanged: onEditingChanged,
+                increaseAccessibilityLabel: viewModel.localizedText("增大 \(title)", "Increase \(title)"),
+                decreaseAccessibilityLabel: viewModel.localizedText("减小 \(title)", "Decrease \(title)")
             )
         }
         .frame(maxWidth: .infinity, minHeight: 28, maxHeight: 28, alignment: .leading)

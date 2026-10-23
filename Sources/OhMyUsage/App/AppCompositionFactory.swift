@@ -15,7 +15,8 @@ enum AppCompositionFactory {
         appUpdateService: any AppUpdateServicing = AppUpdateService(),
         postUpdateReleaseNotesStore: any PostUpdateReleaseNotesStoring = PostUpdateReleaseNotesStore(),
         codexSlotStore: CodexAccountSlotStore = CodexAccountSlotStore(),
-        codexProfileStore: CodexAccountProfileStore = CodexAccountProfileStore(),
+        codexProfileStore: CodexAccountProfileStore? = nil,
+        claudeProfileStore: ClaudeAccountProfileStore? = nil,
         codexDesktopAuthService: CodexDesktopAuthService? = nil,
         claudeDesktopAuthService: ClaudeDesktopAuthService? = nil,
         codexDesktopAppService: CodexDesktopAppService = CodexDesktopAppService(),
@@ -33,6 +34,11 @@ enum AppCompositionFactory {
         // Phase 1 §7.6: the Codex / Claude OAuth JSON vault accounts are read and
         // written through the shared broker-backed vault store.
         let oauthVaultStore = OfficialOAuthVaultStore(keychain: credentialBroker)
+        // P0-2: profile stores keep token JSON in the vault only; the profile
+        // files carry metadata. Caller-injected stores (tests / recovery probes)
+        // keep their own construction semantics.
+        let resolvedCodexProfileStore = codexProfileStore ?? CodexAccountProfileStore(oauthVault: oauthVaultStore)
+        let resolvedClaudeProfileStore = claudeProfileStore ?? ClaudeAccountProfileStore(oauthVault: oauthVaultStore)
         // Doc §9.5: one shared NWPathMonitor-backed reachability monitor. The
         // refresh model and scheduler read `isNetworkOnline` to pause background
         // refresh while offline; AppViewModel.start() wires the recovery callback.
@@ -52,7 +58,8 @@ enum AppCompositionFactory {
                 credentialBroker: credentialBroker
             ),
             codexSlotStore: codexSlotStore,
-            codexProfileStore: codexProfileStore,
+            codexProfileStore: resolvedCodexProfileStore,
+            claudeProfileStore: resolvedClaudeProfileStore,
             codexDesktopAuthService: resolvedCodexDesktopAuthService,
             claudeDesktopAuthService: resolvedClaudeDesktopAuthService,
             codexDesktopAppService: codexDesktopAppService,

@@ -696,6 +696,351 @@ final class OfficialProviderTests: XCTestCase {
         XCTAssertFalse(vaultJSON.contains("stale-vault-claude-access"))
     }
 
+    // MARK: - Provider refresh through the shared pipeline (P2-4)
+
+    func testCodexProviderRefreshWritesRefreshedJSONIntoCredentialFileAndVault() async throws {
+        let homeDirectory = try makeTemporaryHomeDirectory(prefix: "codex-provider-pipeline")
+        let authPath = homeDirectory.appendingPathComponent(".config/codex/auth.json")
+        let idToken = makeJWT(email: "pipeline@example.com")
+        let staleJSON = #"""
+        {
+          "last_refresh": "2020-01-01T00:00:00Z",
+          "tokens": {
+            "access_token": "stale-access",
+            "refresh_token": "codex-refresh-token",
+            "account_id": "codex-account",
+            "id_token": "\#(idToken)"
+          }
+        }
+        """#
+        try writeText(staleJSON, to: authPath)
+
+        OfficialMockURLProtocol.requestHandler = { request in
+            let url = try XCTUnwrap(request.url)
+            XCTAssertEqual(url.absoluteString, "https://auth.openai.com/oauth/token")
+            XCTAssertEqual(request.httpMethod, "POST")
+            let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            let bodyJSON = #"""
+            {
+              "access_token": "fresh-access",
+              "refresh_token": "fresh-refresh",
+              "id_token": "\#(idToken)"
+            }
+            """#
+            return (response, Data(bodyJSON.utf8))
+        }
+        defer { OfficialMockURLProtocol.requestHandler = nil }
+
+        let (defaults, suiteName) = makeTestDefaults()
+        defer { removeTestDefaults(named: suiteName) }
+        let keychain = makeTestKeychain()
+        let vault = OfficialOAuthVaultStore(keychain: keychain, defaults: defaults)
+
+        var descriptor = ProviderDescriptor.defaultOfficialCodex()
+        descriptor.id = "codex-provider-pipeline-\(UUID().uuidString)"
+        descriptor.officialConfig?.sourceMode = .api
+        descriptor.officialConfig?.webMode = .disabled
+
+        let provider = CodexProvider(
+            descriptor: descriptor,
+            session: makeMockURLSession(),
+            keychain: keychain,
+            browserCookieService: BrowserCookieService(),
+            cache: FetchedAtOfficialSnapshotCache(),
+            gate: PassthroughOfficialFetchGate(),
+            homeDirectory: { homeDirectory.path },
+            environment: { [:] },
+            oauthVault: vault
+        )
+
+        let credentials = CodexCredentials(
+            accessToken: "stale-access",
+            refreshToken: "codex-refresh-token",
+            accountId: "codex-account",
+            idToken: idToken,
+            lastRefresh: nil,
+            source: .file(authPath.path),
+            rawJSON: staleJSON
+        )
+
+        let refreshed = try await provider.refresh(credentials: credentials)
+
+        XCTAssertEqual(refreshed.accessToken, "fresh-access")
+        XCTAssertEqual(refreshed.refreshToken, "fresh-refresh")
+        XCTAssertEqual(refreshed.accountId, "codex-account")
+        XCTAssertNotNil(refreshed.lastRefresh)
+        guard case let .file(refreshedPath) = refreshed.source else {
+            return XCTFail("refresh must keep the credential source unchanged")
+        }
+        XCTAssertEqual(refreshedPath, authPath.path)
+        XCTAssertTrue(refreshed.rawJSON?.contains("fresh-access") == true)
+
+        let onDisk = try JSONSerialization.jsonObject(with: Data(contentsOf: authPath)) as? [String: Any]
+        let tokens = try XCTUnwrap(onDisk?["tokens"] as? [String: Any])
+        XCTAssertEqual(tokens["access_token"] as? String, "fresh-access")
+        XCTAssertEqual(tokens["refresh_token"] as? String, "fresh-refresh")
+        XCTAssertNotNil(onDisk?["last_refresh"] as? String)
+
+        let vaultJSON = try XCTUnwrap(vault.readOAuthJSON(provider: .codex))
+        XCTAssertTrue(vaultJSON.contains("fresh-access"))
+        XCTAssertTrue(vaultJSON.contains("fresh-refresh"))
+        XCTAssertFalse(vaultJSON.contains("stale-access"))
+        XCTAssertTrue(vault.isMigrationComplete(provider: .codex))
+    }
+
+    func testCodexProviderRefreshWithoutRawJSONPersistsFileAndSkipsVault() async throws {
+        let homeDirectory = try makeTemporaryHomeDirectory(prefix: "codex-provider-no-raw")
+        let authPath = homeDirectory.appendingPathComponent(".config/codex/auth.json")
+        let idToken = makeJWT(email: "no-raw@example.com")
+        try writeText(
+            #"""
+            {
+              "tokens": {
+                "access_token": "stale-access",
+                "refresh_token": "codex-refresh-token",
+                "account_id": "codex-account",
+                "id_token": "\#(idToken)"
+              }
+            }
+            """#,
+            to: authPath
+        )
+
+        OfficialMockURLProtocol.requestHandler = { request in
+            let url = try XCTUnwrap(request.url)
+            XCTAssertEqual(url.absoluteString, "https://auth.openai.com/oauth/token")
+            let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            let bodyJSON = #"{"access_token":"fresh-access","refresh_token":"fresh-refresh"}"#
+            return (response, Data(bodyJSON.utf8))
+        }
+        defer { OfficialMockURLProtocol.requestHandler = nil }
+
+        let (defaults, suiteName) = makeTestDefaults()
+        defer { removeTestDefaults(named: suiteName) }
+        let keychain = makeTestKeychain()
+        let vault = OfficialOAuthVaultStore(keychain: keychain, defaults: defaults)
+
+        var descriptor = ProviderDescriptor.defaultOfficialCodex()
+        descriptor.id = "codex-provider-no-raw-\(UUID().uuidString)"
+        descriptor.officialConfig?.sourceMode = .api
+        descriptor.officialConfig?.webMode = .disabled
+
+        let provider = CodexProvider(
+            descriptor: descriptor,
+            session: makeMockURLSession(),
+            keychain: keychain,
+            browserCookieService: BrowserCookieService(),
+            cache: FetchedAtOfficialSnapshotCache(),
+            gate: PassthroughOfficialFetchGate(),
+            homeDirectory: { homeDirectory.path },
+            environment: { [:] },
+            oauthVault: vault
+        )
+
+        let credentials = CodexCredentials(
+            accessToken: "stale-access",
+            refreshToken: "codex-refresh-token",
+            accountId: "codex-account",
+            idToken: idToken,
+            lastRefresh: nil,
+            source: .file(authPath.path),
+            rawJSON: nil
+        )
+
+        let refreshed = try await provider.refresh(credentials: credentials)
+
+        // Struct-level merge still happens and the source file is persisted.
+        XCTAssertEqual(refreshed.accessToken, "fresh-access")
+        XCTAssertEqual(refreshed.refreshToken, "fresh-refresh")
+        let persisted = try String(contentsOf: authPath, encoding: .utf8)
+        XCTAssertTrue(persisted.contains("fresh-access"))
+        XCTAssertTrue(persisted.contains("fresh-refresh"))
+
+        // The vault write is skipped exactly like the previous flow.
+        XCTAssertNil(vault.readOAuthJSON(provider: .codex))
+        XCTAssertFalse(vault.isMigrationComplete(provider: .codex))
+    }
+
+    func testClaudeProviderRefreshWritesRefreshedJSONIntoCredentialFileAndVault() async throws {
+        let homeDirectory = try makeTemporaryHomeDirectory(prefix: "claude-provider-pipeline")
+        let credentialPath = homeDirectory.appendingPathComponent(".claude/.credentials.json")
+        let staleJSON = #"""
+        {
+          "claudeAiOauth": {
+            "accessToken": "stale-claude-access",
+            "refreshToken": "claude-refresh-token",
+            "expiresAt": 1000,
+            "subscriptionType": "pro",
+            "scopes": ["user:profile"]
+          }
+        }
+        """#
+        try writeText(staleJSON, to: credentialPath)
+
+        OfficialMockURLProtocol.requestHandler = { request in
+            let url = try XCTUnwrap(request.url)
+            XCTAssertEqual(url.absoluteString, "https://platform.claude.com/v1/oauth/token")
+            XCTAssertEqual(request.httpMethod, "POST")
+            let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            let bodyJSON = """
+            {
+              "access_token": "fresh-claude-access",
+              "refresh_token": "fresh-claude-refresh",
+              "expires_in": 3600
+            }
+            """
+            return (response, Data(bodyJSON.utf8))
+        }
+        defer { OfficialMockURLProtocol.requestHandler = nil }
+
+        let (defaults, suiteName) = makeTestDefaults()
+        defer { removeTestDefaults(named: suiteName) }
+        let keychain = makeTestKeychain()
+        let vault = OfficialOAuthVaultStore(keychain: keychain, defaults: defaults)
+
+        var descriptor = ProviderDescriptor.defaultOfficialClaude()
+        descriptor.id = "claude-provider-pipeline-\(UUID().uuidString)"
+        descriptor.officialConfig?.sourceMode = .api
+        descriptor.officialConfig?.webMode = .disabled
+
+        let provider = ClaudeProvider(
+            descriptor: descriptor,
+            session: makeMockURLSession(),
+            keychain: keychain,
+            browserCookieService: BrowserCookieService(),
+            cache: FetchedAtOfficialSnapshotCache(),
+            gate: PassthroughOfficialFetchGate(),
+            homeDirectory: { homeDirectory.path },
+            oauthVault: vault
+        )
+
+        let credentials = ClaudeCredentials(
+            accessToken: "stale-claude-access",
+            refreshToken: "claude-refresh-token",
+            expiresAtMs: 1000,
+            subscriptionType: "pro",
+            scopes: ["user:profile"],
+            source: .file(credentialPath.path),
+            inferenceOnly: false,
+            rawJSON: staleJSON
+        )
+
+        let refreshStartedAt = Date()
+        let refreshed = try await provider.refresh(credentials: credentials)
+
+        XCTAssertEqual(refreshed.accessToken, "fresh-claude-access")
+        XCTAssertEqual(refreshed.refreshToken, "fresh-claude-refresh")
+        XCTAssertEqual(refreshed.subscriptionType, "pro")
+        XCTAssertFalse(refreshed.inferenceOnly)
+        guard case let .file(refreshedPath) = refreshed.source else {
+            return XCTFail("refresh must keep the credential source unchanged")
+        }
+        XCTAssertEqual(refreshedPath, credentialPath.path)
+        XCTAssertTrue(refreshed.rawJSON?.contains("fresh-claude-access") == true)
+
+        // expiresAt is restamped only because the response carries expires_in.
+        let refreshedExpiresAt = try XCTUnwrap(refreshed.expiresAtMs)
+        XCTAssertGreaterThan(refreshedExpiresAt, refreshStartedAt.timeIntervalSince1970 * 1000 + 3_500_000)
+        XCTAssertLessThan(refreshedExpiresAt, Date().timeIntervalSince1970 * 1000 + 3_700_000)
+
+        let onDisk = try JSONSerialization.jsonObject(with: Data(contentsOf: credentialPath)) as? [String: Any]
+        let oauth = try XCTUnwrap(onDisk?["claudeAiOauth"] as? [String: Any])
+        XCTAssertEqual(oauth["accessToken"] as? String, "fresh-claude-access")
+        XCTAssertEqual(oauth["refreshToken"] as? String, "fresh-claude-refresh")
+        XCTAssertEqual(oauth["subscriptionType"] as? String, "pro")
+        XCTAssertEqual(
+            oauth["expiresAt"] as? Double ?? -1,
+            refreshedExpiresAt,
+            accuracy: 2_000
+        )
+
+        let vaultJSON = try XCTUnwrap(vault.readOAuthJSON(provider: .claude))
+        XCTAssertTrue(vaultJSON.contains("fresh-claude-access"))
+        XCTAssertTrue(vaultJSON.contains("fresh-claude-refresh"))
+        XCTAssertFalse(vaultJSON.contains("stale-claude-access"))
+        XCTAssertTrue(vault.isMigrationComplete(provider: .claude))
+    }
+
+    func testClaudeProviderRefreshWithoutRawJSONPersistsFileAndSkipsVault() async throws {
+        let homeDirectory = try makeTemporaryHomeDirectory(prefix: "claude-provider-no-raw")
+        let credentialPath = homeDirectory.appendingPathComponent(".claude/.credentials.json")
+        try writeText(
+            #"""
+            {
+              "claudeAiOauth": {
+                "accessToken": "stale-claude-access",
+                "refreshToken": "claude-refresh-token",
+                "expiresAt": 1000,
+                "subscriptionType": "pro",
+                "scopes": ["user:profile"]
+              }
+            }
+            """#,
+            to: credentialPath
+        )
+
+        OfficialMockURLProtocol.requestHandler = { request in
+            let url = try XCTUnwrap(request.url)
+            XCTAssertEqual(url.absoluteString, "https://platform.claude.com/v1/oauth/token")
+            let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            let bodyJSON = """
+            {
+              "access_token": "fresh-claude-access",
+              "refresh_token": "fresh-claude-refresh",
+              "expires_in": 3600
+            }
+            """
+            return (response, Data(bodyJSON.utf8))
+        }
+        defer { OfficialMockURLProtocol.requestHandler = nil }
+
+        let (defaults, suiteName) = makeTestDefaults()
+        defer { removeTestDefaults(named: suiteName) }
+        let keychain = makeTestKeychain()
+        let vault = OfficialOAuthVaultStore(keychain: keychain, defaults: defaults)
+
+        var descriptor = ProviderDescriptor.defaultOfficialClaude()
+        descriptor.id = "claude-provider-no-raw-\(UUID().uuidString)"
+        descriptor.officialConfig?.sourceMode = .api
+        descriptor.officialConfig?.webMode = .disabled
+
+        let provider = ClaudeProvider(
+            descriptor: descriptor,
+            session: makeMockURLSession(),
+            keychain: keychain,
+            browserCookieService: BrowserCookieService(),
+            cache: FetchedAtOfficialSnapshotCache(),
+            gate: PassthroughOfficialFetchGate(),
+            homeDirectory: { homeDirectory.path },
+            oauthVault: vault
+        )
+
+        let credentials = ClaudeCredentials(
+            accessToken: "stale-claude-access",
+            refreshToken: "claude-refresh-token",
+            expiresAtMs: 1000,
+            subscriptionType: "pro",
+            scopes: ["user:profile"],
+            source: .file(credentialPath.path),
+            inferenceOnly: false,
+            rawJSON: nil
+        )
+
+        let refreshed = try await provider.refresh(credentials: credentials)
+
+        // Struct-level merge still happens and the source file is persisted.
+        XCTAssertEqual(refreshed.accessToken, "fresh-claude-access")
+        XCTAssertEqual(refreshed.refreshToken, "fresh-claude-refresh")
+        XCTAssertNotNil(refreshed.expiresAtMs)
+        let persisted = try String(contentsOf: credentialPath, encoding: .utf8)
+        XCTAssertTrue(persisted.contains("fresh-claude-access"))
+        XCTAssertTrue(persisted.contains("fresh-claude-refresh"))
+
+        // The vault write is skipped exactly like the previous flow.
+        XCTAssertNil(vault.readOAuthJSON(provider: .claude))
+        XCTAssertFalse(vault.isMigrationComplete(provider: .claude))
+    }
+
     // MARK: - Doc §8.4 provider request optimization (Codex)
 
     func testCodexAPISkipsWebOverlayWhenUsageIsComplete() async throws {

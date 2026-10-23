@@ -154,6 +154,58 @@ final class AppViewModelCodexSwitchTests: XCTestCase {
         XCTAssertTrue(stored.authJSON.contains("refresh-token-refreshed"))
     }
 
+    func testSwitchCodexProfileWithVaultBackedStoreAppliesFullTokenAndKeepsFileTokenFree() async throws {
+        let (defaults, suiteName) = makeTestDefaults()
+        defer { removeTestDefaults(named: suiteName) }
+        let vault = OfficialOAuthVaultStore(keychain: makeTestKeychain(), defaults: defaults)
+        let fixture = try makeFixture(restartResult: .relaunched, codexProfileVault: vault)
+        let viewModel = fixture.viewModel
+        let token = Self.sampleAuthJSON(
+            accountID: "acc-b",
+            email: "b@example.com",
+            accessToken: "vault-switch-token"
+        )
+
+        let detail = viewModel.saveCodexProfile(
+            slotID: .b,
+            displayName: "Codex B",
+            note: nil,
+            authJSON: token
+        )
+        XCTAssertEqual(detail, viewModel.text(.codexProfileImported))
+        fixture.profileStore.flushPendingDiskWrites()
+
+        // The token lives in the vault only; the profile file keeps metadata.
+        let trimmedToken = token.trimmingCharacters(in: .whitespacesAndNewlines)
+        let profileFileText = try String(
+            contentsOf: fixture.root.appendingPathComponent("codex_profiles.json"),
+            encoding: .utf8
+        )
+        XCTAssertFalse(profileFileText.contains("vault-switch-token"))
+        XCTAssertTrue(profileFileText.contains("Codex B"))
+        XCTAssertEqual(vault.readProfileOAuthJSON(provider: .codex, slotID: .b), trimmedToken)
+
+        await viewModel.switchCodexProfile(slotID: .b)
+
+        // The switch applied the full vault-resolved token to the desktop CLI
+        // auth file: applyProfile rejects empty/invalid tokens and the switch
+        // would have surfaced an error instead of succeeding.
+        XCTAssertEqual(viewModel.codexSwitchFeedback[.b]?.isError, false)
+        XCTAssertEqual(fixture.restartCounter.value, 1)
+        let desktopAuthText = try String(
+            contentsOf: fixture.root.appendingPathComponent("auth.json"),
+            encoding: .utf8
+        )
+        XCTAssertTrue(desktopAuthText.contains("vault-switch-token"))
+        XCTAssertEqual(fixture.profileStore.profile(slotID: .b)?.authJSON, trimmedToken)
+        // And the profile file is still token-free after the verified switch.
+        let postSwitchFileText = try String(
+            contentsOf: fixture.root.appendingPathComponent("codex_profiles.json"),
+            encoding: .utf8
+        )
+        XCTAssertFalse(postSwitchFileText.contains("vault-switch-token"))
+    }
+
     func testSwitchCodexProfileStillAppliesDesktopAuthWhenPreflightRefreshFails() async throws {
         CodexSwitchMockURLProtocol.requestHandler = { request in
             let url = request.url?.absoluteString ?? ""
@@ -230,7 +282,8 @@ final class AppViewModelCodexSwitchTests: XCTestCase {
         restartResult: CodexDesktopAppRestartResult,
         providerFactory: ((URL) -> ProviderFactorying)? = nil,
         codexProfileSnapshotService: CodexProfileSnapshotService? = nil,
-        keychainWrites: LockedStringLog? = nil
+        keychainWrites: LockedStringLog? = nil,
+        codexProfileVault: OfficialOAuthVaultStore? = nil
     ) throws -> (
         viewModel: AppViewModel,
         restartCounter: LockedCounter,
@@ -242,7 +295,8 @@ final class AppViewModelCodexSwitchTests: XCTestCase {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
 
         let profileStore = CodexAccountProfileStore(
-            fileURL: root.appendingPathComponent("codex_profiles.json")
+            fileURL: root.appendingPathComponent("codex_profiles.json"),
+            oauthVault: codexProfileVault
         )
         let slotStore = CodexAccountSlotStore(
             fileURL: root.appendingPathComponent("codex_slots.json")

@@ -1,5 +1,28 @@
 import SwiftUI
 
+extension View {
+    /// 可选无障碍标签：label 非 nil 时才应用 `.accessibilityLabel`，
+    /// 纯 a11y 修饰符，不影响视觉布局/渲染。
+    @ViewBuilder
+    func optionalAccessibilityLabel(_ label: String?) -> some View {
+        if let label {
+            accessibilityLabel(label)
+        } else {
+            self
+        }
+    }
+
+    /// 可选悬停提示：text 非 nil 时才应用 `.help`，避免出现空气泡。
+    @ViewBuilder
+    func optionalHelp(_ text: String?) -> some View {
+        if let text {
+            help(text)
+        } else {
+            self
+        }
+    }
+}
+
 struct SettingsSmoothedRoundedRectangle: InsettableShape {
     var cornerRadius: CGFloat
     var smoothing: CGFloat
@@ -125,6 +148,8 @@ struct SettingsToggleSwitch: View {
     var offTrackColor: Color
     var onTrackColor: Color
     var knobColor: Color
+    /// 无障碍标签（双语文案由调用方传入）；nil 时不覆盖默认行为。
+    var accessibilityLabel: String? = nil
 
     var body: some View {
         Button {
@@ -145,6 +170,8 @@ struct SettingsToggleSwitch: View {
             .frame(width: 56, height: 24)
         }
         .buttonStyle(.plain)
+        .optionalAccessibilityLabel(accessibilityLabel)
+        .accessibilityAddTraits(isOn ? [.isSelected] : [])
     }
 }
 
@@ -152,6 +179,8 @@ struct SettingsCheckbox: View {
     @Binding var isOn: Bool
     var size: CGFloat = 12
     var cornerRadius: CGFloat = 3
+    /// 无障碍标签（双语文案由调用方传入）；nil 时不覆盖默认行为。
+    var accessibilityLabel: String? = nil
 
     var body: some View {
         Button {
@@ -169,5 +198,7 @@ struct SettingsCheckbox: View {
                 }
         }
         .buttonStyle(.plain)
+        .optionalAccessibilityLabel(accessibilityLabel)
+        .accessibilityAddTraits(isOn ? [.isSelected] : [])
     }
 }

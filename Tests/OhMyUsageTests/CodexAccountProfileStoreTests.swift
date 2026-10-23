@@ -477,6 +477,258 @@ final class CodexAccountProfileStoreTests: XCTestCase {
         XCTAssertEqual(reloaded.profile(slotID: .a)?.displayName, "Persisted")
     }
 
+    // MARK: - Vault-backed token storage (P0-2)
+
+    func testVaultMigrationMovesLegacyFileTokenIntoVaultAndStripsFile() throws {
+        let path = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("codex-profile-tests-\(UUID().uuidString).json")
+        let legacyToken = sampleAuthJSON(
+            accountID: "acc-vault",
+            email: "vault@example.com",
+            accessToken: "legacy-access-token"
+        )
+        // Seed a legacy (pre-vault) profile file that still embeds the token.
+        let seedStore = CodexAccountProfileStore(fileURL: path)
+        _ = try seedStore.saveProfile(
+            slotID: .a,
+            displayName: "Vault Migrated",
+            note: "keep-me",
+            authJSON: legacyToken,
+            currentFingerprint: nil
+        )
+        seedStore.flushPendingDiskWrites()
+        XCTAssertTrue(try String(contentsOf: path, encoding: .utf8).contains("legacy-access-token"))
+
+        let vault = try makeVault()
+        let store = CodexAccountProfileStore(fileURL: path, oauthVault: vault)
+        store.flushPendingDiskWrites()
+
+        let trimmedToken = legacyToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        XCTAssertEqual(vault.readProfileOAuthJSON(provider: .codex, slotID: .a), trimmedToken)
+
+        let fileText = try String(contentsOf: path, encoding: .utf8)
+        XCTAssertFalse(fileText.contains("legacy-access-token"))
+        XCTAssertTrue(fileText.contains("Vault Migrated"))
+        XCTAssertTrue(fileText.contains("acc-vault"))
+
+        // The in-memory copy keeps the resolved token for switch/refresh callers.
+        let profile = try XCTUnwrap(store.profile(slotID: .a))
+        XCTAssertEqual(profile.authJSON, trimmedToken)
+        XCTAssertEqual(profile.accountId, "acc-vault")
+        XCTAssertEqual(profile.accountEmail, "vault@example.com")
+        XCTAssertEqual(profile.displayName, "Vault Migrated")
+        XCTAssertEqual(profile.note, "keep-me")
+        XCTAssertNotNil(profile.credentialFingerprint)
+    }
+
+    func testVaultMigrationIsIdempotentAcrossReloads() throws {
+        let path = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("codex-profile-tests-\(UUID().uuidString).json")
+        let legacyToken = sampleAuthJSON(
+            accountID: "acc-idempotent",
+            email: "idempotent@example.com",
+            accessToken: "idempotent-access-token"
+        )
+        let seedStore = CodexAccountProfileStore(fileURL: path)
+        _ = try seedStore.saveProfile(slotID: .a, displayName: "Idempotent", note: nil, authJSON: legacyToken, currentFingerprint: nil)
+        seedStore.flushPendingDiskWrites()
+
+        let vault = try makeVault()
+        let firstPass = CodexAccountProfileStore(fileURL: path, oauthVault: vault)
+        firstPass.flushPendingDiskWrites()
+        let fingerprintAfterMigration = try fileFingerprint(at: path)
+        let trimmedToken = legacyToken.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // Re-loading the already-migrated file must not rewrite it and must
+        // keep resolving the token from the vault.
+        let reloaded = CodexAccountProfileStore(fileURL: path, oauthVault: vault)
+        reloaded.flushPendingDiskWrites()
+        XCTAssertEqual(try fileFingerprint(at: path), fingerprintAfterMigration)
+        XCTAssertEqual(vault.readProfileOAuthJSON(provider: .codex, slotID: .a), trimmedToken)
+        XCTAssertEqual(reloaded.profile(slotID: .a)?.authJSON, trimmedToken)
+        XCTAssertEqual(reloaded.profile(slotID: .a)?.displayName, "Idempotent")
+    }
+
+    func testVaultWriteFailureKeepsTokenInFileForRetry() throws {
+        let path = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("codex-profile-tests-\(UUID().uuidString).json")
+        let legacyToken = sampleAuthJSON(
+            accountID: "acc-fail",
+            email: "fail@example.com",
+            accessToken: "failing-vault-token"
+        )
+        let seedStore = CodexAccountProfileStore(fileURL: path)
+        _ = try seedStore.saveProfile(slotID: .a, displayName: "Failing", note: nil, authJSON: legacyToken, currentFingerprint: nil)
+        seedStore.flushPendingDiskWrites()
+
+        let failingVault = OfficialOAuthVaultStore(
+            keychain: FailingTokenCredentialStore(),
+            defaults: makeTestDefaultsForTeardown()
+        )
+        let store = CodexAccountProfileStore(fileURL: path, oauthVault: failingVault)
+        store.flushPendingDiskWrites()
+
+        // The file is NOT stripped when the vault write fails — the token stays
+        // available and behavior does not regress.
+        var fileText = try String(contentsOf: path, encoding: .utf8)
+        XCTAssertTrue(fileText.contains("failing-vault-token"))
+        XCTAssertEqual(
+            store.profile(slotID: .a)?.authJSON,
+            legacyToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
+
+        // New saves also fall back to the file while the vault is failing.
+        let fallbackToken = sampleAuthJSON(
+            accountID: "acc-fallback",
+            email: "fallback@example.com",
+            accessToken: "fallback-access-token"
+        )
+        _ = try store.saveProfile(slotID: .b, displayName: "Fallback", note: nil, authJSON: fallbackToken, currentFingerprint: nil)
+        store.flushPendingDiskWrites()
+        fileText = try String(contentsOf: path, encoding: .utf8)
+        XCTAssertTrue(fileText.contains("fallback-access-token"))
+        XCTAssertNil(failingVault.readProfileOAuthJSON(provider: .codex, slotID: .b))
+
+        // A healthy vault on the next load migrates both tokens losslessly.
+        let healthyVault = try makeVault()
+        let recovered = CodexAccountProfileStore(fileURL: path, oauthVault: healthyVault)
+        recovered.flushPendingDiskWrites()
+        let recoveredText = try String(contentsOf: path, encoding: .utf8)
+        XCTAssertFalse(recoveredText.contains("failing-vault-token"))
+        XCTAssertFalse(recoveredText.contains("fallback-access-token"))
+        XCTAssertEqual(
+            healthyVault.readProfileOAuthJSON(provider: .codex, slotID: .a),
+            legacyToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
+        XCTAssertEqual(
+            healthyVault.readProfileOAuthJSON(provider: .codex, slotID: .b),
+            fallbackToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
+    }
+
+    func testSaveProfileWithVaultStoresTokenInVaultOnly() throws {
+        let path = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("codex-profile-tests-\(UUID().uuidString).json")
+        let vault = try makeVault()
+        let store = CodexAccountProfileStore(fileURL: path, oauthVault: vault)
+        let token = sampleAuthJSON(
+            accountID: "acc-new",
+            email: "new@example.com",
+            accessToken: "vault-only-token"
+        )
+
+        let profile = try store.saveProfile(
+            slotID: .b,
+            displayName: "Vault Only",
+            note: nil,
+            authJSON: token,
+            currentFingerprint: nil
+        )
+        store.flushPendingDiskWrites()
+
+        let trimmedToken = token.trimmingCharacters(in: .whitespacesAndNewlines)
+        XCTAssertEqual(vault.readProfileOAuthJSON(provider: .codex, slotID: .b), trimmedToken)
+        let fileText = try String(contentsOf: path, encoding: .utf8)
+        XCTAssertFalse(fileText.contains("vault-only-token"))
+        XCTAssertTrue(fileText.contains("Vault Only"))
+        // The returned (in-memory) profile still carries the full token.
+        XCTAssertEqual(profile.authJSON, trimmedToken)
+        XCTAssertEqual(store.profile(slotID: .b)?.authJSON, trimmedToken)
+    }
+
+    func testUpdateStoredAuthJSONRotatesVaultTokenAndKeepsFileTokenFree() throws {
+        let path = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("codex-profile-tests-\(UUID().uuidString).json")
+        let vault = try makeVault()
+        let store = CodexAccountProfileStore(fileURL: path, oauthVault: vault)
+        let originalToken = sampleAuthJSON(
+            accountID: "acc-rotate",
+            email: "rotate@example.com",
+            accessToken: "original-access-token"
+        )
+        _ = try store.saveProfile(slotID: .a, displayName: "Rotate", note: nil, authJSON: originalToken, currentFingerprint: nil)
+        store.flushPendingDiskWrites()
+
+        let rotatedToken = sampleAuthJSON(
+            accountID: "acc-rotate",
+            email: "rotate@example.com",
+            accessToken: "rotated-access-token"
+        )
+        let updated = try XCTUnwrap(
+            store.updateStoredAuthJSON(slotID: .a, authJSON: rotatedToken)
+        )
+        store.flushPendingDiskWrites()
+
+        XCTAssertEqual(
+            vault.readProfileOAuthJSON(provider: .codex, slotID: .a),
+            rotatedToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
+        XCTAssertEqual(
+            updated.authJSON,
+            rotatedToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
+        let fileText = try String(contentsOf: path, encoding: .utf8)
+        XCTAssertFalse(fileText.contains("original-access-token"))
+        XCTAssertFalse(fileText.contains("rotated-access-token"))
+    }
+
+    func testMetadataOnlyProfileResolvesTokenFromProviderVaultFallback() throws {
+        let path = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("codex-profile-tests-\(UUID().uuidString).json")
+        let token = sampleAuthJSON(
+            accountID: "acc-fallback",
+            email: "fallback@example.com",
+            accessToken: "fallback-current-token"
+        )
+        let trimmedToken = token.trimmingCharacters(in: .whitespacesAndNewlines)
+        let originalVault = try makeVault()
+        let seedStore = CodexAccountProfileStore(fileURL: path, oauthVault: originalVault)
+        _ = try seedStore.saveProfile(slotID: .a, displayName: "Fallback", note: nil, authJSON: token, currentFingerprint: nil)
+        seedStore.flushPendingDiskWrites()
+
+        // Fresh vault whose only content is the provider-wide "current" entry
+        // with a fingerprint matching the stored profile.
+        let recoveryVault = try makeVault()
+        XCTAssertTrue(recoveryVault.saveOAuthJSON(provider: .codex, rawJSON: trimmedToken))
+
+        let store = CodexAccountProfileStore(fileURL: path, oauthVault: recoveryVault)
+        XCTAssertEqual(store.profile(slotID: .a)?.authJSON, trimmedToken)
+        // The per-slot entry was backfilled from the provider-wide copy.
+        XCTAssertEqual(recoveryVault.readProfileOAuthJSON(provider: .codex, slotID: .a), trimmedToken)
+    }
+
+    func testRemoveProfileKeepsVaultTokenEntry() throws {
+        let path = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("codex-profile-tests-\(UUID().uuidString).json")
+        let vault = try makeVault()
+        let store = CodexAccountProfileStore(fileURL: path, oauthVault: vault)
+        let token = sampleAuthJSON(accountID: "acc-remove", email: "remove@example.com", accessToken: "remove-token")
+        _ = try store.saveProfile(slotID: .a, displayName: "Remove", note: nil, authJSON: token, currentFingerprint: nil)
+        store.flushPendingDiskWrites()
+
+        _ = store.removeProfile(slotID: .a)
+        store.flushPendingDiskWrites()
+
+        // Conservative on purpose: removing a profile never destroys the last
+        // copy of the credential.
+        XCTAssertEqual(
+            vault.readProfileOAuthJSON(provider: .codex, slotID: .a),
+            token.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
+        XCTAssertNil(store.profile(slotID: .a))
+    }
+
+    private func makeVault() throws -> OfficialOAuthVaultStore {
+        OfficialOAuthVaultStore(keychain: makeTestKeychain(), defaults: makeTestDefaultsForTeardown())
+    }
+
+    /// Isolated `UserDefaults` domain that is removed when the test finishes.
+    private func makeTestDefaultsForTeardown() -> UserDefaults {
+        let (defaults, suiteName) = makeTestDefaults()
+        addTeardownBlock { removeTestDefaults(named: suiteName) }
+        return defaults
+    }
+
     /// Identifies a physical write: `PrivateProfileFile` always writes through
     /// a fresh staging file and renames it, so an actual disk write necessarily
     /// changes the inode (and the mtime).

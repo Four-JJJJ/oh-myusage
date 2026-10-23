@@ -59,13 +59,19 @@ extension SettingsView {
     func relayProviderSidebarRow(_ provider: ProviderDescriptor) -> some View {
         let isSelected = navigationState.selectedProviderID == provider.id
         return HStack(spacing: 6) {
-            SettingsCheckbox(isOn: Binding(
-                get: { provider.enabled },
-                set: {
-                    viewModel.setEnabled($0, providerID: provider.id)
-                    navigationState.selectedProviderID = provider.id
-                }
-            ))
+            SettingsCheckbox(
+                isOn: Binding(
+                    get: { provider.enabled },
+                    set: {
+                        viewModel.setEnabled($0, providerID: provider.id)
+                        navigationState.selectedProviderID = provider.id
+                    }
+                ),
+                accessibilityLabel: viewModel.localizedText(
+                    "启用 \(sidebarDisplayName(for: provider))",
+                    "Enable \(sidebarDisplayName(for: provider))"
+                )
+            )
 
             relayProviderIcon(size: SettingsVisualTokens.Sidebar.iconSize)
                 .frame(
@@ -387,6 +393,7 @@ extension SettingsView {
             .buttonStyle(.plain)
             .padding(.trailing, 8)
             .accessibilityLabel(viewModel.localizedText("保存名称", "Save name"))
+            .help(viewModel.localizedText("保存名称", "Save name"))
         }
         .frame(width: 240, height: 24, alignment: .leading)
         .background(
@@ -407,6 +414,7 @@ extension SettingsView {
         .frame(width: 14, height: 14)
         .contentShape(Rectangle())
         .accessibilityLabel(accessibilityLabel)
+        .help(accessibilityLabel)
     }
 
     @ViewBuilder
@@ -452,7 +460,11 @@ extension SettingsView {
                 ),
                 offTrackColor: SettingsVisualTokens.Fill.control,
                 onTrackColor: SettingsVisualTokens.Text.tertiary,
-                knobColor: SettingsVisualTokens.Text.primary
+                knobColor: SettingsVisualTokens.Text.primary,
+                accessibilityLabel: viewModel.localizedText(
+                    "启用 \(sidebarDisplayName(for: provider))",
+                    "Enable \(sidebarDisplayName(for: provider))"
+                )
             )
         }
         .frame(width: 88, height: 24, alignment: .trailing)
@@ -711,13 +723,19 @@ extension SettingsView {
         let displayName = sidebarDisplayName(for: provider)
         let isAPI = OfficialSettingsCategory.resolve(for: provider) == .api
         return HStack(spacing: 6) {
-            SettingsCheckbox(isOn: Binding(
-                get: { provider.enabled },
-                set: {
-                    viewModel.setEnabled($0, providerID: provider.id)
-                    navigationState.selectedProviderID = provider.id
-                }
-            ))
+            SettingsCheckbox(
+                isOn: Binding(
+                    get: { provider.enabled },
+                    set: {
+                        viewModel.setEnabled($0, providerID: provider.id)
+                        navigationState.selectedProviderID = provider.id
+                    }
+                ),
+                accessibilityLabel: viewModel.localizedText(
+                    "启用 \(displayName)",
+                    "Enable \(displayName)"
+                )
+            )
 
             providerIcon(for: provider, size: SettingsVisualTokens.Sidebar.iconSize)
                 .frame(
@@ -875,7 +893,11 @@ extension SettingsView {
                     ),
                     offTrackColor: SettingsVisualTokens.Fill.control,
                     onTrackColor: SettingsVisualTokens.Text.tertiary,
-                    knobColor: SettingsVisualTokens.Text.primary
+                    knobColor: SettingsVisualTokens.Text.primary,
+                    accessibilityLabel: viewModel.localizedText(
+                        "启用 \(sidebarDisplayName(for: provider))",
+                        "Enable \(sidebarDisplayName(for: provider))"
+                    )
                 )
             }
         }

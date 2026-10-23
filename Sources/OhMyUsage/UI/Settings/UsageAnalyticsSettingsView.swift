@@ -99,6 +99,7 @@ struct UsageAnalyticsSettingsView: View {
             }
             .buttonStyle(.plain)
             .help(copy.text(.refresh))
+            .accessibilityLabel(copy.text(.refresh))
         }
         .padding(.horizontal, 24)
         .padding(.top, 24)

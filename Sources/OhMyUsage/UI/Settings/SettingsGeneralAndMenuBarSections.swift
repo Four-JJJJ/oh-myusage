@@ -16,7 +16,8 @@ extension SettingsView {
                         ),
                         offTrackColor: Color.white.opacity(0.15),
                         onTrackColor: Color.white.opacity(0.40),
-                        knobColor: Color.white.opacity(0.80)
+                        knobColor: Color.white.opacity(0.80),
+                        accessibilityLabel: settingsLaunchTitle
                     )
                 }
 
@@ -117,7 +118,8 @@ extension SettingsView {
                         ),
                         offTrackColor: Color.white.opacity(0.15),
                         onTrackColor: Color.white.opacity(0.40),
-                        knobColor: Color.white.opacity(0.80)
+                        knobColor: Color.white.opacity(0.80),
+                        accessibilityLabel: settingsStatusBarMultiUsageTitle
                     )
                 }
 

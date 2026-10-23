@@ -201,8 +201,10 @@ extension SettingsView {
         HStack(spacing: 8) {
             Spacer(minLength: 0)
             profileDialogButton(viewModel.text(.permissionCancel), action: cancel)
+                .keyboardShortcut(.cancelAction)
             if let save {
                 profileDialogButton(viewModel.text(.save), dismissInputFocus: true, action: save)
+                    .keyboardShortcut(.defaultAction)
             }
         }
     }

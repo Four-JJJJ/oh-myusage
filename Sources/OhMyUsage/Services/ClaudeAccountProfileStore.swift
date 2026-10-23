@@ -52,6 +52,10 @@ final class ClaudeAccountProfileStore: @unchecked Sendable {
     private let fileURL: URL
     private let fileManager: FileManager
     private let protectedFile: PrivateProfileFile
+    /// OAuth vault holding the authoritative per-slot credentials JSON. When
+    /// nil (test/recovery probes) the store keeps its legacy behavior: tokens
+    /// stay in the profile file untouched.
+    private let oauthVault: OfficialOAuthVaultStore?
     /// Official refreshes re-sync profile state on the main actor every cycle,
     /// so JSON encoding and file IO live on this serial queue; MainActor callers
     /// only touch the in-memory mirror and enqueue writes.
@@ -59,14 +63,24 @@ final class ClaudeAccountProfileStore: @unchecked Sendable {
     /// Guards the in-memory profile mirror (read-modify-write atomicity). Never
     /// held while the IO queue executes a write.
     private let stateLock = NSLock()
-    /// In-memory mirror of the persisted `ProfileFile`, always normalized.
+    /// In-memory mirror of the persisted `ProfileFile`, always normalized. In
+    /// vault mode the in-memory copy keeps the resolved token so existing
+    /// callers (switch/refresh/UI) work unchanged; only the encoded disk
+    /// payload strips tokens.
     private var cachedProfiles: [ClaudeAccountProfile]
     private var cachedIgnoredFingerprints: Set<String>
+    /// stateLock-guarded: slots whose in-memory token is confirmed persisted in
+    /// the OAuth vault. Only these slots strip the token from the profile file.
+    private var vaultSyncedSlots: Set<CodexSlotID> = []
     /// IO-queue confined: the last payload successfully written to disk. Saves
     /// whose encoded content matches it are skipped entirely.
     private var lastWrittenData: Data?
 
-    init(fileManager: FileManager = .default, fileURL: URL? = nil) {
+    init(
+        fileManager: FileManager = .default,
+        fileURL: URL? = nil,
+        oauthVault: OfficialOAuthVaultStore? = nil
+    ) {
         self.fileManager = fileManager
         if let fileURL {
             self.fileURL = fileURL
@@ -74,19 +88,66 @@ final class ClaudeAccountProfileStore: @unchecked Sendable {
             self.fileURL = PrivateProfileFile.defaultURL(name: "claude_profiles.json", fileManager: fileManager)
         }
         self.protectedFile = PrivateProfileFile(url: self.fileURL, fileManager: fileManager, ownsParentDirectory: fileURL == nil)
+        self.oauthVault = oauthVault
         do { try protectedFile.protectExistingFile() }
         catch { NSLog("[ClaudeAccountProfileStore] Unable to restrict profile file permissions") }
         self.cachedProfiles = []
         self.cachedIgnoredFingerprints = []
         // One-time cold-start read, serialized on the IO queue so every disk
-        // access for this store is queue-confined. The loaded state also seeds
-        // the dedupe fingerprint so a no-op first save never rewrites the file.
+        // access for this store is queue-confined. In vault mode this also runs
+        // the lossless token migration: file tokens move into the vault first
+        // and the file is only rewritten (without tokens) after the vault write
+        // succeeded. The loaded state seeds the dedupe fingerprint so a no-op
+        // first save never rewrites the file.
         ioQueue.sync {
             let file = self.loadFileOnIOQueue()
-            let normalized = file.profiles.map { Self.normalizedProfile($0) }
+            var normalized = file.profiles.map { Self.normalizedProfile($0) }
+            let ignoredFingerprints = Set(file.ignoredFingerprints?.map { $0.lowercased() } ?? [])
+            var syncedSlots: Set<CodexSlotID> = []
+            var strippedAnyToken = false
+            if let vault = oauthVault {
+                for index in normalized.indices {
+                    let slotID = normalized[index].slotID
+                    let trimmed = normalized[index].credentialsJSON?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                    if !trimmed.isEmpty {
+                        // Legacy inline token: copy it into the vault first. The
+                        // file keeps the plaintext copy until that write is
+                        // confirmed, so a failed write only delays migration to
+                        // the next launch — it can never lose the credential.
+                        if vault.saveProfileOAuthJSON(provider: .claude, slotID: slotID, rawJSON: trimmed) {
+                            syncedSlots.insert(slotID)
+                            strippedAnyToken = true
+                        }
+                    } else {
+                        // Metadata-only profile: the vault is the token
+                        // authority; resolve the in-memory copy for callers.
+                        if let resolved = Self.resolveVaultToken(
+                            vault: vault,
+                            slotID: slotID,
+                            fingerprint: normalized[index].credentialFingerprint
+                        ) {
+                            normalized[index].credentialsJSON = resolved
+                            syncedSlots.insert(slotID)
+                        } else {
+                            normalized[index].credentialsJSON = nil
+                        }
+                    }
+                }
+            }
             self.cachedProfiles = normalized
-            self.cachedIgnoredFingerprints = Set(file.ignoredFingerprints?.map { $0.lowercased() } ?? [])
-            self.lastWrittenData = Self.encodedData(profiles: normalized, ignoredFingerprints: self.cachedIgnoredFingerprints)
+            self.cachedIgnoredFingerprints = ignoredFingerprints
+            self.vaultSyncedSlots = syncedSlots
+            let persistedData = Self.encodedData(
+                profiles: Self.strippingVaultTokens(normalized, slots: syncedSlots),
+                ignoredFingerprints: ignoredFingerprints
+            )
+            if strippedAnyToken, let persistedData {
+                // The vault now holds these tokens, so the file must not keep
+                // plaintext copies until the next unrelated commit rewrites it.
+                do { try protectedFile.write(persistedData) }
+                catch { NSLog("[ClaudeAccountProfileStore] Failed to strip migrated tokens: \(error.localizedDescription)") }
+            }
+            self.lastWrittenData = persistedData
         }
     }
 
@@ -179,6 +240,11 @@ final class ClaudeAccountProfileStore: @unchecked Sendable {
             items.append(profile)
         }
 
+        syncVaultTokenLocked(
+            slotID: slotID,
+            previousToken: cachedProfiles.first(where: { $0.slotID == slotID })?.credentialsJSON,
+            newToken: resolvedCredentialsJSON
+        )
         commitLocked(items: items, ignoredFingerprints: ignoredFingerprints)
         return profile
     }
@@ -235,6 +301,7 @@ final class ClaudeAccountProfileStore: @unchecked Sendable {
         guard let index = cachedProfiles.firstIndex(where: { $0.slotID == slotID }) else { return nil }
         var items = cachedProfiles
         var profile = items[index]
+        let previousToken = profile.credentialsJSON
         let payload = Self.applyingAccountEmailFallback(parsedPayload, configDir: profile.configDir)
         profile.credentialsJSON = trimmed
         profile.accountId = payload.accountId
@@ -243,6 +310,7 @@ final class ClaudeAccountProfileStore: @unchecked Sendable {
         profile.lastImportedAt = Date()
         profile = Self.normalizedProfile(profile)
         items[index] = profile
+        syncVaultTokenLocked(slotID: slotID, previousToken: previousToken, newToken: trimmed)
         commitLocked(items: items, ignoredFingerprints: cachedIgnoredFingerprints)
         return profile
     }
@@ -258,6 +326,9 @@ final class ClaudeAccountProfileStore: @unchecked Sendable {
             ignoredFingerprints.insert(removed)
         }
         items.removeAll { $0.slotID == slotID }
+        // The vault slot entry is intentionally kept: dropping a profile must
+        // never destroy the only remaining copy of the credential.
+        vaultSyncedSlots.remove(slotID)
         commitLocked(items: items, ignoredFingerprints: ignoredFingerprints)
         return items.sorted { $0.slotID < $1.slotID }
     }
@@ -419,6 +490,11 @@ final class ClaudeAccountProfileStore: @unchecked Sendable {
                 items[existing] = profile
                 profileChanged = true
             }
+            syncVaultTokenLocked(
+                slotID: profile.slotID,
+                previousToken: normalizedProfileCredentials,
+                newToken: trimmed
+            )
 
             let currentChanged = applyCurrentFingerprint(currentFingerprint, to: &items)
             if profileChanged || currentChanged {
@@ -446,6 +522,7 @@ final class ClaudeAccountProfileStore: @unchecked Sendable {
                 isCurrentSystemAccount: true
             )
         )
+        syncVaultTokenLocked(slotID: slotID, previousToken: nil, newToken: trimmed)
         _ = applyCurrentFingerprint(currentFingerprint, to: &items)
         commitLocked(items: items, ignoredFingerprints: ignoredFingerprints)
         return items.sorted { $0.slotID < $1.slotID }
@@ -455,6 +532,7 @@ final class ClaudeAccountProfileStore: @unchecked Sendable {
         stateLock.lock()
         cachedProfiles = []
         cachedIgnoredFingerprints = []
+        vaultSyncedSlots = []
         ioQueue.async { [weak self] in
             guard let self else { return }
             try? self.fileManager.removeItem(at: self.fileURL)
@@ -1011,13 +1089,83 @@ final class ClaudeAccountProfileStore: @unchecked Sendable {
 
     /// Must be called with `stateLock` held. Updates the in-memory mirror and
     /// enqueues the encode + write on the IO queue; enqueue order matches
-    /// mutation order, and content-identical payloads are dropped there.
+    /// mutation order, and content-identical payloads are dropped there. In
+    /// vault mode the encoded payload strips tokens for slots confirmed in the
+    /// vault (the in-memory mirror keeps the resolved token for callers).
     private func commitLocked(items: [ClaudeAccountProfile], ignoredFingerprints: Set<String>) {
         cachedProfiles = items
         cachedIgnoredFingerprints = ignoredFingerprints
+        let stripSlots = oauthVault != nil ? vaultSyncedSlots : []
         ioQueue.async { [weak self] in
             guard let self else { return }
-            self.writeIfNeeded(Self.encodedData(profiles: items, ignoredFingerprints: ignoredFingerprints))
+            self.writeIfNeeded(Self.encodedData(
+                profiles: Self.strippingVaultTokens(items, slots: stripSlots),
+                ignoredFingerprints: ignoredFingerprints
+            ))
+        }
+    }
+
+    /// Must be called with `stateLock` held. Persists the slot token into the
+    /// vault; on success the slot is marked safe to strip from the file. When
+    /// there is no vault, or the write fails, the slot is unmarked so the file
+    /// keeps the token (never both stores empty) and migration retries later.
+    /// Unchanged tokens on already-synced slots skip the keychain entirely.
+    private func syncVaultTokenLocked(slotID: CodexSlotID, previousToken: String?, newToken: String) {
+        guard let oauthVault else { return }
+        let trimmedNew = newToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedNew.isEmpty else {
+            vaultSyncedSlots.remove(slotID)
+            return
+        }
+        if vaultSyncedSlots.contains(slotID),
+           previousToken?.trimmingCharacters(in: .whitespacesAndNewlines) == trimmedNew {
+            return
+        }
+        if oauthVault.saveProfileOAuthJSON(provider: .claude, slotID: slotID, rawJSON: trimmedNew) {
+            vaultSyncedSlots.insert(slotID)
+        } else {
+            vaultSyncedSlots.remove(slotID)
+        }
+    }
+
+    /// Resolves the in-memory token for a metadata-only profile: the per-slot
+    /// vault entry, or — as a self-healing fallback for a cleared slot entry —
+    /// the provider-wide vault entry when its fingerprint matches the profile.
+    private static func resolveVaultToken(
+        vault: OfficialOAuthVaultStore,
+        slotID: CodexSlotID,
+        fingerprint: String?
+    ) -> String? {
+        if let slotJSON = vault.readProfileOAuthJSON(provider: .claude, slotID: slotID) {
+            return slotJSON
+        }
+        guard let fingerprint = normalizedFingerprint(fingerprint),
+              let currentJSON = vault.readOAuthJSON(provider: .claude),
+              let payload = try? Self.parseCredentialsJSON(currentJSON),
+              normalizedFingerprint(payload.credentialFingerprint) == fingerprint else {
+            return nil
+        }
+        // Fingerprint match means this profile IS the current system account;
+        // backfill the per-slot entry from the provider-wide copy.
+        _ = vault.saveProfileOAuthJSON(provider: .claude, slotID: slotID, rawJSON: currentJSON)
+        return currentJSON
+    }
+
+    /// Returns copies with the token removed for slots whose token is confirmed
+    /// persisted in the vault; the encoded profile file keeps metadata only.
+    /// Slots without a confirmed vault copy keep their token so a failed vault
+    /// write can never leave both stores empty.
+    private static func strippingVaultTokens(
+        _ profiles: [ClaudeAccountProfile],
+        slots: Set<CodexSlotID>
+    ) -> [ClaudeAccountProfile] {
+        guard !slots.isEmpty else { return profiles }
+        return profiles.map { profile in
+            guard slots.contains(profile.slotID),
+                  !(profile.credentialsJSON ?? "").isEmpty else { return profile }
+            var stripped = profile
+            stripped.credentialsJSON = nil
+            return stripped
         }
     }
 

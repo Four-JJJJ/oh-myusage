@@ -248,25 +248,69 @@ final class ClaudeProvider: UsageProvider, @unchecked Sendable {
         return nowMs + 5 * 60 * 1000 >= expiresAtMs
     }
 
-    private func refresh(credentials: ClaudeCredentials) async throws -> ClaudeCredentials {
+    /// Refreshes the OAuth credential through the shared desktop refresh
+    /// pipeline (`ClaudeDesktopAuthService.oauthRefreshConfiguration`): the
+    /// refresh request, the response field merge, the `.credentials.json`
+    /// merge write-back and the app-vault write-back all happen inside the
+    /// pipeline. The provider only supplies the raw JSON document, the refresh
+    /// token and the source file path, then rebuilds its credential struct
+    /// from the pipeline's refreshed JSON. Internal so tests can drive the
+    /// chain directly.
+    func refresh(credentials: ClaudeCredentials) async throws -> ClaudeCredentials {
         guard let refreshToken = credentials.refreshToken else {
             throw ProviderError.unauthorized
         }
 
-        var request = URLRequest(url: URL(string: "https://platform.claude.com/v1/oauth/token")!)
-        request.httpMethod = "POST"
-        request.timeoutInterval = 15
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONSerialization.data(withJSONObject: [
-            "grant_type": "refresh_token",
-            "refresh_token": refreshToken,
-            "client_id": "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
-            "scope": "user:profile user:inference user:sessions:claude_code user:mcp_servers"
-        ])
+        if let rawJSON = credentials.rawJSON {
+            // Only the file the credential was loaded from is written back,
+            // matching the previous per-provider flow.
+            var filePaths: [String] = []
+            if case let .file(path) = credentials.source {
+                filePaths.append(path)
+            }
 
+            let pipeline = OAuthRefreshPipeline(
+                configuration: ClaudeDesktopAuthService.oauthRefreshConfiguration
+            )
+            guard let result = try await pipeline.refreshCredential(
+                session: session,
+                rawJSON: rawJSON,
+                refreshToken: refreshToken,
+                filePaths: filePaths,
+                vault: oauthVault
+            ) else {
+                // The pipeline only returns nil for a blank refresh token,
+                // which cannot be refreshed — the previous flow relied on the
+                // token endpoint rejecting it with 400/401 (unauthorized).
+                throw ProviderError.unauthorized
+            }
+
+            let refreshedRawJSON = result.refreshedRawJSON
+            guard let data = refreshedRawJSON.data(using: .utf8),
+                  let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+                  let updated = parseClaudeCredentials(
+                    json: json,
+                    source: credentials.source,
+                    rawJSON: refreshedRawJSON
+                  ) else {
+                throw ProviderError.invalidResponse("refreshed claude oauth json unparsable")
+            }
+            return updated
+        }
+
+        // Thin legacy path for credentials without a raw JSON document. Every
+        // real Claude source with a refresh token (app vault / credentials
+        // file / external keychain) parses the document — the only no-document
+        // source is the CLAUDE_CODE_OAUTH_TOKEN environment override, which
+        // never carries a refresh token — so this is defensive only. It keeps
+        // the previous semantics exactly — struct-level merge plus
+        // credential-file write-back — and skips the vault, which stores the
+        // raw JSON document the pipeline would need. Synthesizing a document
+        // instead would start writing the vault here, which the old path
+        // never did.
         let refresh = try await OfficialProviderAuthRuntime.requestOAuthRefresh(
             session: session,
-            request: request,
+            request: try ClaudeDesktopAuthService.oauthRefreshConfiguration.makeRefreshRequest(refreshToken),
             invalidResponseMessage: "refresh invalid response",
             missingAccessTokenMessage: "missing refresh access_token",
             httpErrorMessage: { "refresh http \($0)" }
@@ -278,37 +322,15 @@ final class ClaudeProvider: UsageProvider, @unchecked Sendable {
         if let expiresIn = OfficialValueParser.double(refresh.json["expires_in"]) {
             updated.expiresAtMs = Date().timeIntervalSince1970 * 1000 + expiresIn * 1000
         }
+
         if case let .file(path) = credentials.source {
             persist(credentials: updated, path: path)
         }
-        updateVaultAfterRefresh(credentials: updated)
         return updated
     }
 
-    /// Persists the refreshed normalized OAuth JSON into the app vault (Phase 1 §7.6).
-    /// Best effort: verification and the write happen inside the vault store, and the
-    /// local file remains the non-interactive fallback when the vault write fails.
-    private func updateVaultAfterRefresh(credentials: ClaudeCredentials) {
-        guard let baseRawJSON = credentials.rawJSON else { return }
-        guard let normalized = try? OfficialProfileSnapshotRuntime.mutateJSONObjectString(
-            baseRawJSON,
-            invalidResponseMessage: "invalid claude oauth json",
-            writingOptions: [.prettyPrinted, .sortedKeys],
-            mutate: { json in
-                var oauth = (json["claudeAiOauth"] as? [String: Any]) ?? [:]
-                oauth["accessToken"] = credentials.accessToken
-                oauth["refreshToken"] = credentials.refreshToken
-                oauth["expiresAt"] = credentials.expiresAtMs
-                oauth["subscriptionType"] = credentials.subscriptionType
-                json["claudeAiOauth"] = oauth
-            }
-        ) else {
-            OAuthRefreshPipeline.standardLog("Claude: failed to normalize the refreshed OAuth JSON for the app vault; the local credential file remains the fallback")
-            return
-        }
-        oauthVault.saveOAuthJSON(provider: .claude, rawJSON: normalized)
-    }
-
+    /// Legacy struct-level persistence for the defensive no-raw-JSON refresh
+    /// path above; the main pipeline path writes the merged JSON itself.
     private func persist(credentials: ClaudeCredentials, path: String) {
         OfficialProviderAuthRuntime.updateJSONObjectFile(path: path) { json in
             var oauth = (json["claudeAiOauth"] as? [String: Any]) ?? [:]
@@ -953,7 +975,9 @@ final class ClaudeProvider: UsageProvider, @unchecked Sendable {
     }
 }
 
-private struct ClaudeCredentials {
+/// Credential snapshot for one polling cycle. Internal so tests can drive
+/// `refresh(credentials:)` directly, including the no-raw-JSON legacy path.
+struct ClaudeCredentials {
     var accessToken: String
     var refreshToken: String?
     var expiresAtMs: Double?
@@ -968,7 +992,7 @@ private struct ClaudeCredentials {
     }
 }
 
-private enum ClaudeCredentialSource {
+enum ClaudeCredentialSource {
     case file(String)
     case keychain
     case environment

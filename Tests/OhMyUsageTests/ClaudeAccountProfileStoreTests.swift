@@ -657,6 +657,291 @@ final class ClaudeAccountProfileStoreTests: XCTestCase {
         XCTAssertEqual(reloaded.profile(slotID: .a)?.displayName, "Persisted")
     }
 
+    // MARK: - Vault-backed token storage (P0-2)
+
+    func testVaultMigrationMovesLegacyFileTokenIntoVaultAndStripsFile() throws {
+        let path = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("claude-profile-tests-\(UUID().uuidString).json")
+        let legacyToken = sampleCredentialsJSON(
+            accountID: "acc-vault",
+            email: "vault@example.com",
+            accessToken: "legacy-claude-access"
+        )
+        // Seed a legacy (pre-vault) profile file that still embeds the token.
+        let seedStore = ClaudeAccountProfileStore(fileURL: path)
+        _ = try seedStore.saveProfile(
+            slotID: .a,
+            displayName: "Vault Migrated",
+            note: "keep-me",
+            source: .manualCredentials,
+            configDir: nil,
+            credentialsJSON: legacyToken,
+            currentFingerprint: nil
+        )
+        seedStore.flushPendingDiskWrites()
+        XCTAssertTrue(try String(contentsOf: path, encoding: .utf8).contains("legacy-claude-access"))
+
+        let vault = try makeVault()
+        let store = ClaudeAccountProfileStore(fileURL: path, oauthVault: vault)
+        store.flushPendingDiskWrites()
+
+        XCTAssertEqual(vault.readProfileOAuthJSON(provider: .claude, slotID: .a), legacyToken)
+
+        let fileText = try String(contentsOf: path, encoding: .utf8)
+        XCTAssertFalse(fileText.contains("legacy-claude-access"))
+        XCTAssertTrue(fileText.contains("Vault Migrated"))
+        XCTAssertTrue(fileText.contains("acc-vault"))
+
+        // The in-memory copy keeps the resolved token for switch/refresh callers.
+        let profile = try XCTUnwrap(store.profile(slotID: .a))
+        XCTAssertEqual(profile.credentialsJSON, legacyToken)
+        XCTAssertEqual(profile.accountId, "acc-vault")
+        XCTAssertEqual(profile.accountEmail, "vault@example.com")
+        XCTAssertEqual(profile.displayName, "Vault Migrated")
+        XCTAssertEqual(profile.note, "keep-me")
+        XCTAssertNotNil(profile.credentialFingerprint)
+        XCTAssertEqual(try store.resolvedCredentialsJSON(for: profile), legacyToken)
+    }
+
+    func testVaultMigrationIsIdempotentAcrossReloads() throws {
+        let path = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("claude-profile-tests-\(UUID().uuidString).json")
+        let legacyToken = sampleCredentialsJSON(
+            accountID: "acc-idempotent",
+            email: "idempotent@example.com",
+            accessToken: "idempotent-claude-access"
+        )
+        let seedStore = ClaudeAccountProfileStore(fileURL: path)
+        _ = try seedStore.saveProfile(
+            slotID: .a,
+            displayName: "Idempotent",
+            note: nil,
+            source: .manualCredentials,
+            configDir: nil,
+            credentialsJSON: legacyToken,
+            currentFingerprint: nil
+        )
+        seedStore.flushPendingDiskWrites()
+
+        let vault = try makeVault()
+        let firstPass = ClaudeAccountProfileStore(fileURL: path, oauthVault: vault)
+        firstPass.flushPendingDiskWrites()
+        let fingerprintAfterMigration = try fileFingerprint(at: path)
+
+        // Re-loading the already-migrated file must not rewrite it and must
+        // keep resolving the token from the vault.
+        let reloaded = ClaudeAccountProfileStore(fileURL: path, oauthVault: vault)
+        reloaded.flushPendingDiskWrites()
+        XCTAssertEqual(try fileFingerprint(at: path), fingerprintAfterMigration)
+        XCTAssertEqual(vault.readProfileOAuthJSON(provider: .claude, slotID: .a), legacyToken)
+        XCTAssertEqual(reloaded.profile(slotID: .a)?.credentialsJSON, legacyToken)
+        XCTAssertEqual(reloaded.profile(slotID: .a)?.displayName, "Idempotent")
+    }
+
+    func testVaultWriteFailureKeepsTokenInFileForRetry() throws {
+        let path = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("claude-profile-tests-\(UUID().uuidString).json")
+        let legacyToken = sampleCredentialsJSON(
+            accountID: "acc-fail",
+            email: "fail@example.com",
+            accessToken: "failing-vault-claude"
+        )
+        let seedStore = ClaudeAccountProfileStore(fileURL: path)
+        _ = try seedStore.saveProfile(
+            slotID: .a,
+            displayName: "Failing",
+            note: nil,
+            source: .manualCredentials,
+            configDir: nil,
+            credentialsJSON: legacyToken,
+            currentFingerprint: nil
+        )
+        seedStore.flushPendingDiskWrites()
+
+        let failingVault = OfficialOAuthVaultStore(
+            keychain: FailingTokenCredentialStore(),
+            defaults: makeTestDefaultsForTeardown()
+        )
+        let store = ClaudeAccountProfileStore(fileURL: path, oauthVault: failingVault)
+        store.flushPendingDiskWrites()
+
+        // The file is NOT stripped when the vault write fails — the token stays
+        // available and behavior does not regress.
+        var fileText = try String(contentsOf: path, encoding: .utf8)
+        XCTAssertTrue(fileText.contains("failing-vault-claude"))
+        XCTAssertEqual(store.profile(slotID: .a)?.credentialsJSON, legacyToken)
+
+        // New saves also fall back to the file while the vault is failing.
+        let fallbackToken = sampleCredentialsJSON(
+            accountID: "acc-fallback",
+            email: "fallback@example.com",
+            accessToken: "fallback-claude-access"
+        )
+        _ = try store.saveProfile(
+            slotID: .b,
+            displayName: "Fallback",
+            note: nil,
+            source: .manualCredentials,
+            configDir: nil,
+            credentialsJSON: fallbackToken,
+            currentFingerprint: nil
+        )
+        store.flushPendingDiskWrites()
+        fileText = try String(contentsOf: path, encoding: .utf8)
+        XCTAssertTrue(fileText.contains("fallback-claude-access"))
+        XCTAssertNil(failingVault.readProfileOAuthJSON(provider: .claude, slotID: .b))
+
+        // A healthy vault on the next load migrates both tokens losslessly.
+        let healthyVault = try makeVault()
+        let recovered = ClaudeAccountProfileStore(fileURL: path, oauthVault: healthyVault)
+        recovered.flushPendingDiskWrites()
+        let recoveredText = try String(contentsOf: path, encoding: .utf8)
+        XCTAssertFalse(recoveredText.contains("failing-vault-claude"))
+        XCTAssertFalse(recoveredText.contains("fallback-claude-access"))
+        XCTAssertEqual(healthyVault.readProfileOAuthJSON(provider: .claude, slotID: .a), legacyToken)
+        XCTAssertEqual(healthyVault.readProfileOAuthJSON(provider: .claude, slotID: .b), fallbackToken)
+    }
+
+    func testSaveProfileWithVaultStoresTokenInVaultOnly() throws {
+        let path = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("claude-profile-tests-\(UUID().uuidString).json")
+        let vault = try makeVault()
+        let store = ClaudeAccountProfileStore(fileURL: path, oauthVault: vault)
+        let token = sampleCredentialsJSON(
+            accountID: "acc-new",
+            email: "new@example.com",
+            accessToken: "vault-only-claude"
+        )
+
+        let profile = try store.saveProfile(
+            slotID: .b,
+            displayName: "Vault Only",
+            note: nil,
+            source: .manualCredentials,
+            configDir: nil,
+            credentialsJSON: token,
+            currentFingerprint: nil
+        )
+        store.flushPendingDiskWrites()
+
+        XCTAssertEqual(vault.readProfileOAuthJSON(provider: .claude, slotID: .b), token)
+        let fileText = try String(contentsOf: path, encoding: .utf8)
+        XCTAssertFalse(fileText.contains("vault-only-claude"))
+        XCTAssertTrue(fileText.contains("Vault Only"))
+        // The returned (in-memory) profile still carries the full token.
+        XCTAssertEqual(profile.credentialsJSON, token)
+        XCTAssertEqual(store.profile(slotID: .b)?.credentialsJSON, token)
+    }
+
+    func testUpdateStoredCredentialsRotatesVaultTokenAndKeepsFileTokenFree() throws {
+        let path = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("claude-profile-tests-\(UUID().uuidString).json")
+        let vault = try makeVault()
+        let store = ClaudeAccountProfileStore(fileURL: path, oauthVault: vault)
+        let originalToken = sampleCredentialsJSON(
+            accountID: "acc-rotate",
+            email: "rotate@example.com",
+            accessToken: "original-claude-access"
+        )
+        _ = try store.saveProfile(
+            slotID: .a,
+            displayName: "Rotate",
+            note: nil,
+            source: .manualCredentials,
+            configDir: nil,
+            credentialsJSON: originalToken,
+            currentFingerprint: nil
+        )
+        store.flushPendingDiskWrites()
+
+        let rotatedToken = sampleCredentialsJSON(
+            accountID: "acc-rotate",
+            email: "rotate@example.com",
+            accessToken: "rotated-claude-access"
+        )
+        let updated = try XCTUnwrap(store.updateStoredCredentials(slotID: .a, credentialsJSON: rotatedToken))
+        store.flushPendingDiskWrites()
+
+        XCTAssertEqual(vault.readProfileOAuthJSON(provider: .claude, slotID: .a), rotatedToken)
+        XCTAssertEqual(updated.credentialsJSON, rotatedToken)
+        let fileText = try String(contentsOf: path, encoding: .utf8)
+        XCTAssertFalse(fileText.contains("original-claude-access"))
+        XCTAssertFalse(fileText.contains("rotated-claude-access"))
+    }
+
+    func testMetadataOnlyProfileResolvesTokenFromProviderVaultFallback() throws {
+        let path = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("claude-profile-tests-\(UUID().uuidString).json")
+        let token = sampleCredentialsJSON(
+            accountID: "acc-fallback",
+            email: "fallback@example.com",
+            accessToken: "fallback-current-claude"
+        )
+        let originalVault = try makeVault()
+        let seedStore = ClaudeAccountProfileStore(fileURL: path, oauthVault: originalVault)
+        _ = try seedStore.saveProfile(
+            slotID: .a,
+            displayName: "Fallback",
+            note: nil,
+            source: .manualCredentials,
+            configDir: nil,
+            credentialsJSON: token,
+            currentFingerprint: nil
+        )
+        seedStore.flushPendingDiskWrites()
+
+        // Fresh vault whose only content is the provider-wide "current" entry
+        // with a fingerprint matching the stored profile.
+        let recoveryVault = try makeVault()
+        XCTAssertTrue(recoveryVault.saveOAuthJSON(provider: .claude, rawJSON: token))
+
+        let store = ClaudeAccountProfileStore(fileURL: path, oauthVault: recoveryVault)
+        XCTAssertEqual(store.profile(slotID: .a)?.credentialsJSON, token)
+        // The per-slot entry was backfilled from the provider-wide copy.
+        XCTAssertEqual(recoveryVault.readProfileOAuthJSON(provider: .claude, slotID: .a), token)
+    }
+
+    func testRemoveProfileKeepsVaultTokenEntry() throws {
+        let path = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("claude-profile-tests-\(UUID().uuidString).json")
+        let vault = try makeVault()
+        let store = ClaudeAccountProfileStore(fileURL: path, oauthVault: vault)
+        let token = sampleCredentialsJSON(
+            accountID: "acc-remove",
+            email: "remove@example.com",
+            accessToken: "remove-claude-access"
+        )
+        _ = try store.saveProfile(
+            slotID: .a,
+            displayName: "Remove",
+            note: nil,
+            source: .manualCredentials,
+            configDir: nil,
+            credentialsJSON: token,
+            currentFingerprint: nil
+        )
+        store.flushPendingDiskWrites()
+
+        _ = store.removeProfile(slotID: .a)
+        store.flushPendingDiskWrites()
+
+        // Conservative on purpose: removing a profile never destroys the last
+        // copy of the credential.
+        XCTAssertEqual(vault.readProfileOAuthJSON(provider: .claude, slotID: .a), token)
+        XCTAssertNil(store.profile(slotID: .a))
+    }
+
+    private func makeVault() throws -> OfficialOAuthVaultStore {
+        OfficialOAuthVaultStore(keychain: makeTestKeychain(), defaults: makeTestDefaultsForTeardown())
+    }
+
+    /// Isolated `UserDefaults` domain that is removed when the test finishes.
+    private func makeTestDefaultsForTeardown() -> UserDefaults {
+        let (defaults, suiteName) = makeTestDefaults()
+        addTeardownBlock { removeTestDefaults(named: suiteName) }
+        return defaults
+    }
+
     /// Identifies a physical write: `PrivateProfileFile` always writes through
     /// a fresh staging file and renames it, so an actual disk write necessarily
     /// changes the inode (and the mtime).
