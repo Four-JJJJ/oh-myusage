@@ -590,15 +590,7 @@ final class GeminiProvider: UsageProvider, @unchecked Sendable {
         guard let http = response as? HTTPURLResponse else {
             throw ProviderError.invalidResponse("Gemini non-http response")
         }
-        if http.statusCode == 401 || http.statusCode == 403 {
-            throw ProviderError.unauthorized
-        }
-        if http.statusCode == 429 {
-            throw ProviderError.rateLimited
-        }
-        guard (200...299).contains(http.statusCode) else {
-            throw ProviderError.invalidResponse("Gemini http \(http.statusCode)")
-        }
+        try HTTPResponseValidation.validate(http, urlDescription: "Gemini", body: data)
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw ProviderError.invalidResponse("Gemini response decode failed")
         }
@@ -618,7 +610,7 @@ final class GeminiProvider: UsageProvider, @unchecked Sendable {
 
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse,
-              (200...299).contains(http.statusCode),
+              HTTPResponseValidation.isSuccess(http),
               let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             return projectID
         }

@@ -37,27 +37,21 @@ public struct RelayHTTPClient {
         guard let http = response as? HTTPURLResponse else {
             throw ProviderError.invalidResponse("non-http response")
         }
-        if http.statusCode == 401 || http.statusCode == 403 {
-            if let message = extractErrorMessage(from: data), !message.isEmpty {
-                throw ProviderError.unauthorizedDetail(message)
+        try HTTPResponseValidation.validate(
+            http,
+            urlDescription: "",
+            body: data,
+            expectingJSON: false,
+            unauthorizedMessage: { _, body in
+                if let body, let message = extractErrorMessage(from: body), !message.isEmpty {
+                    return message
+                }
+                if url.host?.contains("xiaomimimo.com") == true {
+                    return "xiaomimimo login expired; paste a fresh Cookie or switch to Browser First"
+                }
+                return nil
             }
-            if url.host?.contains("xiaomimimo.com") == true {
-                throw ProviderError.unauthorizedDetail("xiaomimimo login expired; paste a fresh Cookie or switch to Browser First")
-            }
-            throw ProviderError.unauthorized
-        }
-        if http.statusCode == 429 {
-            if let deadline = ProviderRateLimitError.parseRetryAfter(http.value(forHTTPHeaderField: "Retry-After")) {
-                throw ProviderRateLimitError(retryNotBefore: deadline)
-            }
-            throw ProviderError.rateLimited
-        }
-        if http.statusCode == 408 || (500...599).contains(http.statusCode) {
-            throw ProviderError.timeout("http \(http.statusCode)")
-        }
-        guard (200...299).contains(http.statusCode) else {
-            throw ProviderError.invalidResponse("http \(http.statusCode)")
-        }
+        )
 
         do {
             return try JSONSerialization.jsonObject(with: data)
@@ -79,22 +73,16 @@ public struct RelayHTTPClient {
         guard let http = response as? HTTPURLResponse else {
             throw ProviderError.invalidResponse("non-http response")
         }
-
-        if http.statusCode == 401 {
-            if let message = extractErrorMessage(from: data), !message.isEmpty {
-                throw ProviderError.unauthorizedDetail(message)
+        try HTTPResponseValidation.validate(
+            http,
+            urlDescription: "",
+            body: data,
+            expectingJSON: false,
+            unauthorizedStatusCodes: [401],
+            unauthorizedMessage: { _, body in
+                body.flatMap { extractErrorMessage(from: $0) }
             }
-            throw ProviderError.unauthorized
-        }
-        if http.statusCode == 429 {
-            if let deadline = ProviderRateLimitError.parseRetryAfter(http.value(forHTTPHeaderField: "Retry-After")) {
-                throw ProviderRateLimitError(retryNotBefore: deadline)
-            }
-            throw ProviderError.rateLimited
-        }
-        guard (200...299).contains(http.statusCode) else {
-            throw ProviderError.invalidResponse("http \(http.statusCode)")
-        }
+        )
 
         do {
             return try JSONDecoder().decode(T.self, from: data)

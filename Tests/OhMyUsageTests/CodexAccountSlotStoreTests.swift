@@ -262,6 +262,64 @@ final class CodexAccountSlotStoreTests: XCTestCase {
         XCTAssertNil(slots[0].lastSnapshot.rawMeta["codex.sessionWindowStabilized"])
     }
 
+    func testIdenticalConsecutiveSavesSkipTheSecondDiskWrite() throws {
+        let path = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("codex-slot-tests-\(UUID().uuidString).json")
+        let store = CodexAccountSlotStore(staleInterval: 10_000, fileURL: path)
+        let now = Date(timeIntervalSince1970: 6_000)
+        let snapshot = makeSnapshot(accountID: "dedupe")
+
+        _ = store.upsertActive(snapshot: snapshot, now: now)
+        store.flushPendingDiskWrites()
+        let firstWrite = try fileFingerprint(at: path)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: path.path))
+
+        // Same snapshot + same timestamp ⇒ identical encoded payload; the
+        // store must skip the second disk write (inode + mtime untouched).
+        _ = store.upsertActive(snapshot: snapshot, now: now)
+        store.flushPendingDiskWrites()
+        XCTAssertEqual(try fileFingerprint(at: path), firstWrite)
+
+        // Changed content must still reach the disk.
+        _ = store.upsertActive(snapshot: makeSnapshot(accountID: "dedupe-2"), now: now)
+        store.flushPendingDiskWrites()
+        XCTAssertNotEqual(try fileFingerprint(at: path), firstWrite)
+    }
+
+    func testSaveThenReloadRoundTripsThroughDiskAfterFlush() throws {
+        let path = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("codex-slot-tests-\(UUID().uuidString).json")
+        let store = CodexAccountSlotStore(staleInterval: 10_000, fileURL: path)
+        let now = Date(timeIntervalSince1970: 6_100)
+        let snapshot = makeSnapshot(accountID: "persist-me")
+
+        _ = store.upsertActive(snapshot: snapshot, now: now)
+        store.flushPendingDiskWrites()
+
+        let reloaded = CodexAccountSlotStore(staleInterval: 10_000, fileURL: path)
+        XCTAssertEqual(reloaded.visibleSlots(now: now).count, 1)
+        XCTAssertEqual(
+            reloaded.visibleSlots(now: now).first?.accountKey,
+            store.visibleSlots(now: now).first?.accountKey
+        )
+    }
+
+    /// Identifies a physical write: `PrivateProfileFile` always writes through
+    /// a fresh staging file and renames it, so an actual disk write necessarily
+    /// changes the inode (and the mtime).
+    private struct WriteFingerprint: Equatable {
+        var inode: Int
+        var modificationDate: Date
+    }
+
+    private func fileFingerprint(at url: URL) throws -> WriteFingerprint {
+        let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+        return WriteFingerprint(
+            inode: try XCTUnwrap(attributes[.systemFileNumber] as? Int),
+            modificationDate: try XCTUnwrap(attributes[.modificationDate] as? Date)
+        )
+    }
+
     private func makeStore(staleInterval: TimeInterval) -> CodexAccountSlotStore {
         let path = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("codex-slot-tests-\(UUID().uuidString).json")

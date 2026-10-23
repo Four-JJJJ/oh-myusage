@@ -19,11 +19,11 @@ enum SettingsThresholdValueStyle {
         case .percent:
             return "\(Int(round(value)))"
         case .number:
-            let formatter = NumberFormatter()
-            formatter.numberStyle = .decimal
-            formatter.maximumFractionDigits = 2
-            formatter.minimumFractionDigits = 0
-            return formatter.string(from: NSNumber(value: value)) ?? String(format: "%.2f", value)
+            return SharedNumberFormatting.decimal(
+                value,
+                minFractionDigits: 0,
+                maxFractionDigits: 2
+            )
         }
     }
 

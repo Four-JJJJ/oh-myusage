@@ -11,7 +11,7 @@ struct ClaudeAccountSlot: Codable, Equatable, Identifiable {
     var isActive: Bool
 }
 
-final class ClaudeAccountSlotStore {
+final class ClaudeAccountSlotStore: @unchecked Sendable {
     private struct SlotFile: Codable {
         var slots: [ClaudeAccountSlot]
     }
@@ -19,7 +19,17 @@ final class ClaudeAccountSlotStore {
     private let fileURL: URL
     private let fileManager: FileManager
     private let staleInterval: TimeInterval
+    /// Official refreshes persist slot state from the main actor every cycle,
+    /// so JSON encoding and file IO live on this serial queue; MainActor callers
+    /// only mutate in-memory state and enqueue writes.
+    private let ioQueue = DispatchQueue(label: "OhMyUsage.claudeSlotStore.io", qos: .utility)
+    /// Guards the in-memory slot state (read-modify-write atomicity). Never held
+    /// while the IO queue executes a write.
+    private let stateLock = NSLock()
     private var slots: [ClaudeAccountSlot]
+    /// IO-queue confined: the last payload successfully written to disk. Saves
+    /// whose encoded content matches it are skipped entirely.
+    private var lastWrittenData: Data?
 
     init(
         fileManager: FileManager = .default,
@@ -36,27 +46,51 @@ final class ClaudeAccountSlotStore {
         }
         self.staleInterval = staleInterval
         self.slots = []
-        self.slots = load()
+        // One-time cold-start read, serialized on the IO queue so every disk
+        // access for this store is queue-confined. The loaded state also seeds
+        // the dedupe fingerprint so a no-op first save never rewrites the file.
+        ioQueue.sync {
+            self.slots = self.loadSlotsOnIOQueue()
+            self.lastWrittenData = Self.encodedData(for: self.slots)
+        }
     }
 
     func reset() {
+        stateLock.lock()
         slots = []
-        try? fileManager.removeItem(at: fileURL)
+        ioQueue.async { [weak self] in
+            guard let self else { return }
+            try? self.fileManager.removeItem(at: self.fileURL)
+            self.lastWrittenData = nil
+        }
+        stateLock.unlock()
+    }
+
+    /// Order fence for save-then-load semantics across store instances: blocks
+    /// until every enqueued write/removal has completed on the IO queue.
+    func flushPendingDiskWrites() {
+        ioQueue.sync {}
     }
 
     func visibleSlots(now: Date = Date()) -> [ClaudeAccountSlot] {
-        removeStaleSlots(now: now)
-        return slots.sorted(by: sortRule)
+        stateLock.lock()
+        removeStaleSlotsLocked(now: now)
+        let current = slots
+        stateLock.unlock()
+        return current.sorted(by: sortRule)
     }
 
     func remove(slotID: CodexSlotID, now: Date = Date()) -> [ClaudeAccountSlot] {
-        removeStaleSlots(now: now)
+        stateLock.lock()
+        removeStaleSlotsLocked(now: now)
         let originalCount = slots.count
         slots.removeAll { $0.slotID == slotID }
         if slots.count != originalCount {
-            save()
+            enqueueSaveLocked()
         }
-        return slots.sorted(by: sortRule)
+        let current = slots
+        stateLock.unlock()
+        return current.sorted(by: sortRule)
     }
 
     func upsertActive(snapshot: UsageSnapshot, now: Date = Date()) -> [ClaudeAccountSlot] {
@@ -64,7 +98,10 @@ final class ClaudeAccountSlotStore {
         let displayName = Self.accountLabel(from: snapshot)
         let preferredSlotID = Self.explicitSlotID(from: snapshot)
 
-        removeStaleSlots(now: now)
+        stateLock.lock()
+        defer { stateLock.unlock() }
+
+        removeStaleSlotsLocked(now: now)
 
         for index in slots.indices {
             slots[index].isActive = false
@@ -83,7 +120,7 @@ final class ClaudeAccountSlotStore {
             slots[existing].lastSnapshot = snapshot
             slots[existing].lastSeenAt = now
             slots[existing].isActive = true
-            save()
+            enqueueSaveLocked()
             return slots.sorted(by: sortRule)
         }
 
@@ -93,7 +130,7 @@ final class ClaudeAccountSlotStore {
             slots[unknown].lastSnapshot = snapshot
             slots[unknown].lastSeenAt = now
             slots[unknown].isActive = true
-            save()
+            enqueueSaveLocked()
             return slots.sorted(by: sortRule)
         }
 
@@ -109,7 +146,7 @@ final class ClaudeAccountSlotStore {
                 isActive: true
             )
         )
-        save()
+        enqueueSaveLocked()
         return slots.sorted(by: sortRule)
     }
 
@@ -122,7 +159,10 @@ final class ClaudeAccountSlotStore {
         let displayName = Self.accountLabel(from: snapshot)
         let resolvedSlotID = preferredSlotID ?? Self.explicitSlotID(from: snapshot)
 
-        removeStaleSlots(now: now)
+        stateLock.lock()
+        defer { stateLock.unlock() }
+
+        removeStaleSlotsLocked(now: now)
 
         if let resolvedSlotID,
            let conflicting = slots.firstIndex(where: { $0.slotID == resolvedSlotID && $0.accountKey != accountKey }) {
@@ -137,7 +177,7 @@ final class ClaudeAccountSlotStore {
             slots[existing].lastSnapshot = snapshot
             slots[existing].lastSeenAt = now
             slots[existing].isActive = false
-            save()
+            enqueueSaveLocked()
             return slots.sorted(by: sortRule)
         }
 
@@ -147,7 +187,7 @@ final class ClaudeAccountSlotStore {
             slots[unknown].lastSnapshot = snapshot
             slots[unknown].lastSeenAt = now
             slots[unknown].isActive = false
-            save()
+            enqueueSaveLocked()
             return slots.sorted(by: sortRule)
         }
 
@@ -163,7 +203,7 @@ final class ClaudeAccountSlotStore {
                 isActive: false
             )
         )
-        save()
+        enqueueSaveLocked()
         return slots.sorted(by: sortRule)
     }
 
@@ -221,17 +261,42 @@ final class ClaudeAccountSlotStore {
         return lhs.slotID < rhs.slotID
     }
 
-    private func removeStaleSlots(now: Date) {
+    private func removeStaleSlotsLocked(now: Date) {
         let before = slots.count
         slots.removeAll { now.timeIntervalSince($0.lastSeenAt) > staleInterval }
         if slots.count != before {
-            save()
+            enqueueSaveLocked()
         }
     }
 
-    private func load() -> [ClaudeAccountSlot] {
+    /// Must be called with `stateLock` held so the enqueue order always matches
+    /// the mutation order. Encoding and the disk write happen on the IO queue.
+    private func enqueueSaveLocked() {
+        let snapshot = slots
+        ioQueue.async { [weak self] in
+            self?.writeIfNeeded(Self.encodedData(for: snapshot))
+        }
+    }
+
+    /// IO-queue confined. Skips the write when the payload matches the last
+    /// successfully persisted one, so refresh cycles with unchanged slot state
+    /// never touch the disk.
+    private func writeIfNeeded(_ data: Data?) {
+        guard let data, data != lastWrittenData else { return }
+        do {
+            // Slot files persist full snapshots including account metadata, so
+            // they are written with the same 0600 staging write as the profiles.
+            try PrivateProfileFile(url: fileURL, fileManager: fileManager).write(data)
+            lastWrittenData = data
+        } catch {
+            NSLog("[ClaudeAccountSlotStore] Failed to persist slots: \(error.localizedDescription)")
+        }
+    }
+
+    /// IO-queue confined (cold start).
+    private func loadSlotsOnIOQueue() -> [ClaudeAccountSlot] {
         let dir = fileURL.deletingLastPathComponent()
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try? fileManager.createDirectory(at: dir, withIntermediateDirectories: true)
         guard let data = try? Data(contentsOf: fileURL) else { return [] }
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
@@ -241,15 +306,10 @@ final class ClaudeAccountSlotStore {
         return []
     }
 
-    private func save() {
-        let dir = fileURL.deletingLastPathComponent()
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    private static func encodedData(for slots: [ClaudeAccountSlot]) -> Data? {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        guard let data = try? encoder.encode(SlotFile(slots: slots)) else { return }
-        // Slot files persist full snapshots including account metadata, so
-        // they are written with the same 0600 staging write as the profiles.
-        try? PrivateProfileFile(url: fileURL, fileManager: FileManager.default).write(data)
+        return try? encoder.encode(SlotFile(slots: slots))
     }
 }

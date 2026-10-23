@@ -8,7 +8,7 @@ import XCTest
 
 final class OptimizationPresentationTests: XCTestCase {
     func testUIHasNoDirectProviderImplementationDependency() throws {
-        let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        let root = packageRepositoryRootURL()
             .appendingPathComponent("Sources/OhMyUsage/UI")
         let files = try XCTUnwrap(FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil))
         for case let file as URL in files where file.pathExtension == "swift" {

@@ -21,7 +21,7 @@ final class LocalSessionCompletionSignalMonitorTests: XCTestCase {
         try super.tearDownWithError()
     }
 
-    func testCodexSignalUsesLatestCompletedEventTimestamp() throws {
+    func testCodexSignalUsesLatestCompletedEventTimestamp() async throws {
         let databasePath = temporaryDirectory.appendingPathComponent("logs_2.sqlite").path
         try createLogsTable(at: databasePath)
         try insertLog(
@@ -45,10 +45,11 @@ final class LocalSessionCompletionSignalMonitorTests: XCTestCase {
             claudeProjectsRoot: temporaryDirectory.path
         )
 
-        XCTAssertEqual(monitor.latestCodexCompletionAt(), try fixedDate("2026-04-20T10:02:00Z"))
+        let latestCodexSignal = await monitor.latestCodexCompletionAt()
+        XCTAssertEqual(latestCodexSignal, try fixedDate("2026-04-20T10:02:00Z"))
     }
 
-    func testCodexSignalSkipsSQLiteProbeWhenLogSnapshotIsUnchanged() throws {
+    func testCodexSignalSkipsSQLiteProbeWhenLogSnapshotIsUnchanged() async throws {
         let databasePath = temporaryDirectory.appendingPathComponent("logs_2.sqlite").path
         try createLogsTable(at: databasePath)
         try insertLog(
@@ -62,13 +63,16 @@ final class LocalSessionCompletionSignalMonitorTests: XCTestCase {
             claudeProjectsRoot: temporaryDirectory.path
         )
 
-        XCTAssertEqual(monitor.latestCodexCompletionAt(), try fixedDate("2026-04-20T10:02:00Z"))
-        XCTAssertEqual(monitor.latestCodexCompletionAt(), try fixedDate("2026-04-20T10:02:00Z"))
-        XCTAssertEqual(monitor.diagnostics.codexSQLiteProbeCount, 1)
-        XCTAssertEqual(monitor.diagnostics.codexCacheHitCount, 1)
+        let firstCodexSignal = await monitor.latestCodexCompletionAt()
+        XCTAssertEqual(firstCodexSignal, try fixedDate("2026-04-20T10:02:00Z"))
+        let secondCodexSignal = await monitor.latestCodexCompletionAt()
+        XCTAssertEqual(secondCodexSignal, try fixedDate("2026-04-20T10:02:00Z"))
+        let codexDiagnostics = await monitor.diagnostics
+        XCTAssertEqual(codexDiagnostics.codexSQLiteProbeCount, 1)
+        XCTAssertEqual(codexDiagnostics.codexCacheHitCount, 1)
     }
 
-    func testCodexSignalReprobesWhenSQLiteWALSnapshotChanges() throws {
+    func testCodexSignalReprobesWhenSQLiteWALSnapshotChanges() async throws {
         let databasePath = temporaryDirectory.appendingPathComponent("logs_2.sqlite").path
         try createLogsTable(at: databasePath)
         try insertLog(
@@ -82,17 +86,20 @@ final class LocalSessionCompletionSignalMonitorTests: XCTestCase {
             claudeProjectsRoot: temporaryDirectory.path
         )
 
-        XCTAssertEqual(monitor.latestCodexCompletionAt(), try fixedDate("2026-04-20T10:02:00Z"))
+        let firstCodexSignal = await monitor.latestCodexCompletionAt()
+        XCTAssertEqual(firstCodexSignal, try fixedDate("2026-04-20T10:02:00Z"))
 
         let walPath = "\(databasePath)-wal"
         try Data("wal-version-1".utf8).write(to: URL(fileURLWithPath: walPath))
 
-        XCTAssertEqual(monitor.latestCodexCompletionAt(), try fixedDate("2026-04-20T10:02:00Z"))
-        XCTAssertEqual(monitor.diagnostics.codexSQLiteProbeCount, 2)
-        XCTAssertEqual(monitor.diagnostics.codexCacheHitCount, 0)
+        let secondCodexSignal = await monitor.latestCodexCompletionAt()
+        XCTAssertEqual(secondCodexSignal, try fixedDate("2026-04-20T10:02:00Z"))
+        let codexDiagnostics = await monitor.diagnostics
+        XCTAssertEqual(codexDiagnostics.codexSQLiteProbeCount, 2)
+        XCTAssertEqual(codexDiagnostics.codexCacheHitCount, 0)
     }
 
-    func testClaudeSignalFindsLatestAssistantUsageEvent() throws {
+    func testClaudeSignalFindsLatestAssistantUsageEvent() async throws {
         let projectsRoot = temporaryDirectory.appendingPathComponent("projects", isDirectory: true)
         try FileManager.default.createDirectory(at: projectsRoot, withIntermediateDirectories: true)
         try writeJSONL(
@@ -155,11 +162,13 @@ final class LocalSessionCompletionSignalMonitorTests: XCTestCase {
             claudeRecentFileWindow: 30 * 24 * 60 * 60
         )
 
-        XCTAssertEqual(monitor.latestClaudeCompletionAt(), try fixedDate("2026-04-20T10:06:00Z"))
+        let latestClaudeSignal = await monitor.latestClaudeCompletionAt()
+        XCTAssertEqual(latestClaudeSignal, try fixedDate("2026-04-20T10:06:00Z"))
     }
 
-    func testCoordinatorDebouncesRefreshWithinFifteenSeconds() throws {
-        final class StubSignalSource: LocalSessionCompletionSignalSource {
+    @MainActor
+    func testCoordinatorDebouncesRefreshWithinFifteenSeconds() async throws {
+        final class StubSignalSource: LocalSessionCompletionSignalSource, @unchecked Sendable {
             var codexSignalAt: Date?
             var claudeSignalAt: Date?
 
@@ -184,17 +193,20 @@ final class LocalSessionCompletionSignalMonitorTests: XCTestCase {
             localSessionWatchKind: .codex
         )
 
-        XCTAssertEqual(coordinator.refreshCandidates(from: [codex]), ["codex-official"])
+        let firstCandidates = await coordinator.refreshCandidates(from: [codex])
+        XCTAssertEqual(firstCandidates, ["codex-official"])
 
         source.codexSignalAt = try fixedDate("2026-04-20T10:00:05Z")
         now = try fixedDate("2026-04-20T10:00:10Z")
-        XCTAssertTrue(coordinator.refreshCandidates(from: [codex]).isEmpty)
+        let debouncedCandidates = await coordinator.refreshCandidates(from: [codex])
+        XCTAssertTrue(debouncedCandidates.isEmpty)
 
         now = try fixedDate("2026-04-20T10:00:16Z")
-        XCTAssertEqual(coordinator.refreshCandidates(from: [codex]), ["codex-official"])
+        let recoveredCandidates = await coordinator.refreshCandidates(from: [codex])
+        XCTAssertEqual(recoveredCandidates, ["codex-official"])
     }
 
-    func testClaudeSignalEnumerationIsThrottledByInterval() throws {
+    func testClaudeSignalEnumerationIsThrottledByInterval() async throws {
         let projectsRoot = temporaryDirectory.appendingPathComponent("projects", isDirectory: true)
         try FileManager.default.createDirectory(at: projectsRoot, withIntermediateDirectories: true)
         let relativePath = "workspace-a/session-a.jsonl"
@@ -217,16 +229,17 @@ final class LocalSessionCompletionSignalMonitorTests: XCTestCase {
             ]
         )
 
-        var now = try fixedDate("2026-04-20T10:05:00Z")
+        let now = MutableNow(try fixedDate("2026-04-20T10:05:00Z"))
         let monitor = LocalSessionCompletionSignalMonitor(
             codexLogsPath: temporaryDirectory.appendingPathComponent("missing.sqlite").path,
             claudeProjectsRoot: projectsRoot.path,
             claudeRecentFileWindow: 30 * 24 * 60 * 60,
             claudeEnumerationInterval: 120,
-            nowProvider: { now }
+            nowProvider: { now.now }
         )
 
-        XCTAssertEqual(monitor.latestClaudeCompletionAt(), try fixedDate("2026-04-20T10:00:00Z"))
+        let firstClaudeSignal = await monitor.latestClaudeCompletionAt()
+        XCTAssertEqual(firstClaudeSignal, try fixedDate("2026-04-20T10:00:00Z"))
 
         try writeJSONL(
             root: projectsRoot,
@@ -247,13 +260,15 @@ final class LocalSessionCompletionSignalMonitorTests: XCTestCase {
         )
 
         // Still within enumeration interval, should return cached value.
-        XCTAssertEqual(monitor.latestClaudeCompletionAt(), try fixedDate("2026-04-20T10:00:00Z"))
+        let throttledClaudeSignal = await monitor.latestClaudeCompletionAt()
+        XCTAssertEqual(throttledClaudeSignal, try fixedDate("2026-04-20T10:00:00Z"))
 
-        now = try fixedDate("2026-04-20T10:08:10Z")
-        XCTAssertEqual(monitor.latestClaudeCompletionAt(), try fixedDate("2026-04-20T10:06:00Z"))
+        now.now = try fixedDate("2026-04-20T10:08:10Z")
+        let latestClaudeSignal = await monitor.latestClaudeCompletionAt()
+        XCTAssertEqual(latestClaudeSignal, try fixedDate("2026-04-20T10:06:00Z"))
     }
 
-    func testClaudeSignalRespectsMaxTrackedFilesByModificationTime() throws {
+    func testClaudeSignalRespectsMaxTrackedFilesByModificationTime() async throws {
         let projectsRoot = temporaryDirectory.appendingPathComponent("projects", isDirectory: true)
         try FileManager.default.createDirectory(at: projectsRoot, withIntermediateDirectories: true)
 
@@ -306,10 +321,11 @@ final class LocalSessionCompletionSignalMonitorTests: XCTestCase {
             nowProvider: { scanNow }
         )
 
-        XCTAssertEqual(monitor.latestClaudeCompletionAt(), try fixedDate("2026-04-20T10:00:00Z"))
+        let latestClaudeSignal = await monitor.latestClaudeCompletionAt()
+        XCTAssertEqual(latestClaudeSignal, try fixedDate("2026-04-20T10:00:00Z"))
     }
 
-    func testClaudeSignalTracksAndScansOnlyMostRecentFilesWithinCap() throws {
+    func testClaudeSignalTracksAndScansOnlyMostRecentFilesWithinCap() async throws {
         let projectsRoot = temporaryDirectory.appendingPathComponent("projects", isDirectory: true)
         try FileManager.default.createDirectory(at: projectsRoot, withIntermediateDirectories: true)
 
@@ -368,14 +384,16 @@ final class LocalSessionCompletionSignalMonitorTests: XCTestCase {
             nowProvider: { scanNow }
         )
 
-        XCTAssertEqual(monitor.latestClaudeCompletionAt(), try fixedDate("2026-04-20T10:04:00Z"))
-        XCTAssertEqual(monitor.diagnostics.lastClaudeCandidateFileCount, 5)
-        XCTAssertEqual(monitor.diagnostics.lastClaudeTrackedFileCount, 2)
-        XCTAssertEqual(monitor.diagnostics.lastClaudeParsedFileCount, 2)
-        XCTAssertEqual(monitor.diagnostics.lastClaudeCachedFileSkipCount, 0)
+        let latestClaudeSignal = await monitor.latestClaudeCompletionAt()
+        XCTAssertEqual(latestClaudeSignal, try fixedDate("2026-04-20T10:04:00Z"))
+        let scanDiagnostics = await monitor.diagnostics
+        XCTAssertEqual(scanDiagnostics.lastClaudeCandidateFileCount, 5)
+        XCTAssertEqual(scanDiagnostics.lastClaudeTrackedFileCount, 2)
+        XCTAssertEqual(scanDiagnostics.lastClaudeParsedFileCount, 2)
+        XCTAssertEqual(scanDiagnostics.lastClaudeCachedFileSkipCount, 0)
     }
 
-    func testClaudeSignalSkipsOversizedJSONLLineAndContinuesParsing() throws {
+    func testClaudeSignalSkipsOversizedJSONLLineAndContinuesParsing() async throws {
         let projectsRoot = temporaryDirectory.appendingPathComponent("projects", isDirectory: true)
         try FileManager.default.createDirectory(at: projectsRoot, withIntermediateDirectories: true)
 
@@ -405,10 +423,11 @@ final class LocalSessionCompletionSignalMonitorTests: XCTestCase {
             claudeRecentFileWindow: 30 * 24 * 60 * 60
         )
 
-        XCTAssertEqual(monitor.latestClaudeCompletionAt(), try fixedDate("2026-04-20T10:12:00Z"))
+        let latestClaudeSignal = await monitor.latestClaudeCompletionAt()
+        XCTAssertEqual(latestClaudeSignal, try fixedDate("2026-04-20T10:12:00Z"))
     }
 
-    func testClaudeSignalSkipsReparsingUnchangedFilesOnRepeatedScans() throws {
+    func testClaudeSignalSkipsReparsingUnchangedFilesOnRepeatedScans() async throws {
         let projectsRoot = temporaryDirectory.appendingPathComponent("projects", isDirectory: true)
         try FileManager.default.createDirectory(at: projectsRoot, withIntermediateDirectories: true)
         let relativePath = "workspace-fingerprint/session-fingerprint.jsonl"
@@ -434,31 +453,35 @@ final class LocalSessionCompletionSignalMonitorTests: XCTestCase {
             forFile: projectsRoot.appendingPathComponent(relativePath).path
         )
 
-        var now = try fixedDate("2026-04-20T10:05:00Z")
+        let now = MutableNow(try fixedDate("2026-04-20T10:05:00Z"))
         let monitor = LocalSessionCompletionSignalMonitor(
             codexLogsPath: temporaryDirectory.appendingPathComponent("missing.sqlite").path,
             claudeProjectsRoot: projectsRoot.path,
             claudeRecentFileWindow: 30 * 24 * 60 * 60,
             claudeEnumerationInterval: 5,
-            nowProvider: { now }
+            nowProvider: { now.now }
         )
 
-        XCTAssertEqual(monitor.latestClaudeCompletionAt(), try fixedDate("2026-04-20T10:00:00Z"))
-        XCTAssertEqual(monitor.diagnostics.lastClaudeTrackedFileCount, 1)
-        XCTAssertEqual(monitor.diagnostics.lastClaudeParsedFileCount, 1)
-        XCTAssertEqual(monitor.diagnostics.lastClaudeCachedFileSkipCount, 0)
+        let firstClaudeSignal = await monitor.latestClaudeCompletionAt()
+        XCTAssertEqual(firstClaudeSignal, try fixedDate("2026-04-20T10:00:00Z"))
+        let firstScanDiagnostics = await monitor.diagnostics
+        XCTAssertEqual(firstScanDiagnostics.lastClaudeTrackedFileCount, 1)
+        XCTAssertEqual(firstScanDiagnostics.lastClaudeParsedFileCount, 1)
+        XCTAssertEqual(firstScanDiagnostics.lastClaudeCachedFileSkipCount, 0)
 
         // Re-scan after the enumeration interval: per-file fingerprint
         // (modification time + size) is unchanged, so the file must not be re-parsed.
-        now = try fixedDate("2026-04-20T10:05:06Z")
-        XCTAssertEqual(monitor.latestClaudeCompletionAt(), try fixedDate("2026-04-20T10:00:00Z"))
-        XCTAssertEqual(monitor.diagnostics.claudeEnumerationCount, 2)
-        XCTAssertEqual(monitor.diagnostics.lastClaudeTrackedFileCount, 1)
-        XCTAssertEqual(monitor.diagnostics.lastClaudeParsedFileCount, 0)
-        XCTAssertEqual(monitor.diagnostics.lastClaudeCachedFileSkipCount, 1)
+        now.now = try fixedDate("2026-04-20T10:05:06Z")
+        let secondClaudeSignal = await monitor.latestClaudeCompletionAt()
+        XCTAssertEqual(secondClaudeSignal, try fixedDate("2026-04-20T10:00:00Z"))
+        let secondScanDiagnostics = await monitor.diagnostics
+        XCTAssertEqual(secondScanDiagnostics.claudeEnumerationCount, 2)
+        XCTAssertEqual(secondScanDiagnostics.lastClaudeTrackedFileCount, 1)
+        XCTAssertEqual(secondScanDiagnostics.lastClaudeParsedFileCount, 0)
+        XCTAssertEqual(secondScanDiagnostics.lastClaudeCachedFileSkipCount, 1)
     }
 
-    func testClaudeSignalRefreshesWhenFileSizeChangesWithSameModificationTime() throws {
+    func testClaudeSignalRefreshesWhenFileSizeChangesWithSameModificationTime() async throws {
         let projectsRoot = temporaryDirectory.appendingPathComponent("projects", isDirectory: true)
         try FileManager.default.createDirectory(at: projectsRoot, withIntermediateDirectories: true)
         let relativePath = "workspace-size/session-size.jsonl"
@@ -484,16 +507,17 @@ final class LocalSessionCompletionSignalMonitorTests: XCTestCase {
         )
         try setModificationDate(fixedModificationDate, forFile: fileURL.path)
 
-        var now = try fixedDate("2026-04-20T10:05:00Z")
+        let now = MutableNow(try fixedDate("2026-04-20T10:05:00Z"))
         let monitor = LocalSessionCompletionSignalMonitor(
             codexLogsPath: temporaryDirectory.appendingPathComponent("missing.sqlite").path,
             claudeProjectsRoot: projectsRoot.path,
             claudeRecentFileWindow: 30 * 24 * 60 * 60,
             claudeEnumerationInterval: 5,
-            nowProvider: { now }
+            nowProvider: { now.now }
         )
 
-        XCTAssertEqual(monitor.latestClaudeCompletionAt(), try fixedDate("2026-04-20T10:00:00Z"))
+        let firstClaudeSignal = await monitor.latestClaudeCompletionAt()
+        XCTAssertEqual(firstClaudeSignal, try fixedDate("2026-04-20T10:00:00Z"))
 
         try writeJSONL(
             root: projectsRoot,
@@ -514,8 +538,9 @@ final class LocalSessionCompletionSignalMonitorTests: XCTestCase {
         )
         try setModificationDate(fixedModificationDate, forFile: fileURL.path)
 
-        now = try fixedDate("2026-04-20T10:05:06Z")
-        XCTAssertEqual(monitor.latestClaudeCompletionAt(), try fixedDate("2026-04-20T10:04:00Z"))
+        now.now = try fixedDate("2026-04-20T10:05:06Z")
+        let latestClaudeSignal = await monitor.latestClaudeCompletionAt()
+        XCTAssertEqual(latestClaudeSignal, try fixedDate("2026-04-20T10:04:00Z"))
     }
 
     private func createLogsTable(at path: String) throws {
@@ -557,6 +582,22 @@ final class LocalSessionCompletionSignalMonitorTests: XCTestCase {
     private func jsonLine(_ payload: [String: Any]) -> String {
         let data = try! JSONSerialization.data(withJSONObject: payload)
         return String(data: data, encoding: .utf8)!
+    }
+
+    /// Thread-safe mutable clock for tests: the monitor actor evaluates
+    /// `nowProvider` on its own executor while the test keeps advancing it.
+    private final class MutableNow: @unchecked Sendable {
+        private let lock = NSLock()
+        private var value: Date
+
+        init(_ value: Date) {
+            self.value = value
+        }
+
+        var now: Date {
+            get { lock.withLock { value } }
+            set { lock.withLock { value = newValue } }
+        }
     }
 
     private func fixedDate(_ value: String) throws -> Date {

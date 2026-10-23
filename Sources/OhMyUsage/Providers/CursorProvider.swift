@@ -54,15 +54,7 @@ final class CursorProvider: UsageProvider, @unchecked Sendable {
         guard let http = response as? HTTPURLResponse else {
             throw ProviderError.invalidResponse("Cursor non-http response")
         }
-        if http.statusCode == 401 || http.statusCode == 403 {
-            throw ProviderError.unauthorized
-        }
-        if http.statusCode == 429 {
-            throw ProviderError.rateLimited
-        }
-        guard (200...299).contains(http.statusCode) else {
-            throw ProviderError.invalidResponse("Cursor http \(http.statusCode)")
-        }
+        try HTTPResponseValidation.validate(http, urlDescription: "Cursor", body: data)
 
         return try Self.parseSnapshot(
             data: data,

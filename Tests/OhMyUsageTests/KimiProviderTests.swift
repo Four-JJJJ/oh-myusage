@@ -669,6 +669,22 @@ final class KimiProviderTests: XCTestCase {
         XCTAssertEqual(snapshot.rawMeta["kimi.weekly.remaining"], "75.00")
     }
 
+    func testPlanCacheKeyUsesIrreversibleTokenFingerprint() {
+        let descriptor = makeDescriptor()
+        let tokenA = "eyJhbGciOiJIUzI1NiJ9.eyJleHAiOjF9.signature-tail-aaaa"
+        let tokenB = "eyJhbGciOiJIUzI1NiJ9.eyJleHAiOjF9.signature-tail-bbbb"
+        let keyA = KimiOfficialProvider.planCacheKey(descriptor: descriptor, accessToken: tokenA)
+        let keyB = KimiOfficialProvider.planCacheKey(descriptor: descriptor, accessToken: tokenB)
+
+        XCTAssertTrue(keyA.hasPrefix("\(descriptor.id)|plan|"))
+        // The key must not leak reversible credential material (JWT signature tail).
+        XCTAssertFalse(keyA.contains(String(tokenA.suffix(16))))
+        XCTAssertFalse(keyA.contains("signature"))
+        // Stable for the same token, distinct across tokens.
+        XCTAssertEqual(keyA, KimiOfficialProvider.planCacheKey(descriptor: descriptor, accessToken: tokenA))
+        XCTAssertNotEqual(keyA, keyB)
+    }
+
 
     private func makeDescriptor(threshold: Double = 10) -> ProviderDescriptor {
         ProviderDescriptor(

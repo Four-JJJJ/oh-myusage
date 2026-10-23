@@ -47,20 +47,22 @@ final class OpenRouterProvider: UsageProvider, @unchecked Sendable {
             throw ProviderError.invalidResponse("OpenRouter non-http response")
         }
 
-        if http.statusCode == 401 {
-            throw ProviderError.unauthorized
-        }
-        if http.statusCode == 429 {
-            throw ProviderError.rateLimited
-        }
-        if http.statusCode == 403, descriptor.type == .openrouterCredits {
-            throw ProviderError.invalidResponse("management key required")
-        }
-        guard (200...299).contains(http.statusCode) else {
-            let message = Self.extractMessage(from: data)
-            let suffix = message.map { ": \($0)" } ?? ""
-            throw ProviderError.invalidResponse("OpenRouter http \(http.statusCode)\(suffix)")
-        }
+        let isCreditsDescriptor = descriptor.type == .openrouterCredits
+        try HTTPResponseValidation.validate(
+            http,
+            urlDescription: "OpenRouter",
+            body: data,
+            expectingJSON: true,
+            unauthorizedStatusCodes: [401],
+            invalidResponseMessage: { statusCode in
+                if statusCode == 403, isCreditsDescriptor {
+                    return "management key required"
+                }
+                let message = Self.extractMessage(from: data)
+                let suffix = message.map { ": \($0)" } ?? ""
+                return "OpenRouter http \(statusCode)\(suffix)"
+            }
+        )
 
         guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw ProviderError.invalidResponse("OpenRouter decode failed")

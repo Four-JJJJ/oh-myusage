@@ -21,12 +21,12 @@ extension SettingsView {
     }
 
     func formattedSettingsAmount(_ value: Double) -> String {
-        let formatter = NumberFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.numberStyle = .decimal
-        formatter.maximumFractionDigits = 2
-        formatter.minimumFractionDigits = 2
-        return formatter.string(from: NSNumber(value: value)) ?? String(format: "%.2f", value)
+        SharedNumberFormatting.decimal(
+            value,
+            minFractionDigits: 2,
+            maxFractionDigits: 2,
+            localeID: "en_US_POSIX"
+        )
     }
 
     @ViewBuilder
@@ -381,13 +381,12 @@ extension SettingsView {
     }
 
     func formattedSettingsWholeNumber(_ value: Double) -> String {
-        let formatter = NumberFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.numberStyle = .decimal
-        formatter.usesGroupingSeparator = true
-        formatter.maximumFractionDigits = 0
-        formatter.minimumFractionDigits = 0
-        return formatter.string(from: NSNumber(value: value)) ?? String(Int(value.rounded()))
+        SharedNumberFormatting.decimal(
+            value,
+            minFractionDigits: 0,
+            maxFractionDigits: 0,
+            localeID: "en_US_POSIX"
+        )
     }
 
     func relayTokenPlanSubtitle(provider: ProviderDescriptor, snapshot: UsageSnapshot?) -> String? {

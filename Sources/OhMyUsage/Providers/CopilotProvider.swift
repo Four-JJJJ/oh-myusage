@@ -51,19 +51,15 @@ final class CopilotProvider: UsageProvider, @unchecked Sendable {
         guard let http = response as? HTTPURLResponse else {
             throw ProviderError.invalidResponse("Copilot non-http response")
         }
-        if http.statusCode == 401 || http.statusCode == 403 {
-            throw Self.mapAuthorizationError(
-                statusCode: http.statusCode,
-                data: data,
-                sourceLabel: resolved.sourceLabel
-            )
-        }
-        if http.statusCode == 429 {
-            throw ProviderError.rateLimited
-        }
-        guard (200...299).contains(http.statusCode) else {
-            throw ProviderError.invalidResponse("Copilot http \(http.statusCode)")
-        }
+        try HTTPResponseValidation.validate(
+            http,
+            urlDescription: "Copilot",
+            body: data,
+            expectingJSON: true,
+            unauthorizedMessage: { statusCode, body in
+                body.flatMap { Self.authorizationFailureMessage(statusCode: statusCode, data: $0, sourceLabel: resolved.sourceLabel) }
+            }
+        )
         return try Self.parseSnapshot(
             data: data,
             descriptor: descriptor,
@@ -236,11 +232,11 @@ final class CopilotProvider: UsageProvider, @unchecked Sendable {
         return raw
     }
 
-    private static func mapAuthorizationError(
+    private static func authorizationFailureMessage(
         statusCode: Int,
         data: Data,
         sourceLabel: String
-    ) -> ProviderError {
+    ) -> String? {
         let detail = extractErrorMessage(from: data)
         switch statusCode {
         case 401:
@@ -248,15 +244,15 @@ final class CopilotProvider: UsageProvider, @unchecked Sendable {
             if let detail, !detail.isEmpty {
                 message += " Server: \(detail)"
             }
-            return .unauthorizedDetail(message)
+            return message
         case 403:
             var message = "GitHub Copilot accepted the \(sourceLabel) login, but this account cannot access Copilot usage. Check Copilot entitlement, org policy, and token scope."
             if let detail, !detail.isEmpty {
                 message += " Server: \(detail)"
             }
-            return .unauthorizedDetail(message)
+            return message
         default:
-            return .unauthorized
+            return nil
         }
     }
 

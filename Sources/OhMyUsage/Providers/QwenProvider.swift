@@ -555,7 +555,7 @@ final class QwenProvider: UsageProvider, @unchecked Sendable {
             windows.append(
                 UsageQuotaWindow(
                     id: "\(descriptor.id)-credits",
-                    title: "加油包",
+                    title: Locale.preferredLanguages.first?.lowercased().hasPrefix("zh") == false ? "Boost pack" : "加油包",
                     remainingPercent: remainingPercent,
                     usedPercent: max(0, 100 - remainingPercent),
                     resetAt: addonExpiry,

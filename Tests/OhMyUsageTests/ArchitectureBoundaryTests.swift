@@ -8,7 +8,7 @@ final class ArchitectureBoundaryTests: XCTestCase {
             "Sources/OhMyUsage/Models/ProviderSettingsSpec.swift"
         ]
 
-        let rootURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        let rootURL = packageRepositoryRootURL()
         for file in files {
             let fileURL = rootURL.appendingPathComponent(file)
             let source = try String(contentsOf: fileURL, encoding: .utf8)

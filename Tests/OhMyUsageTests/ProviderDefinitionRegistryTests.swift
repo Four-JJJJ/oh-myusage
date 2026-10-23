@@ -86,7 +86,7 @@ final class ProviderDefinitionRegistryTests: XCTestCase {
     }
 
     func testDefinitionRegistryReadsSingleCentralMetadataSnapshot() throws {
-        let rootURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        let rootURL = packageRepositoryRootURL()
         let sourceURL = rootURL.appendingPathComponent("Sources/OhMyUsage/Services/ProviderDefinitionRegistry.swift")
         let source = try String(contentsOf: sourceURL, encoding: .utf8)
 
@@ -132,7 +132,7 @@ final class ProviderDefinitionRegistryTests: XCTestCase {
     }
 
     func testProviderPresentationRegistryDelegatesToDefinitionRegistryReadModel() throws {
-        let rootURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        let rootURL = packageRepositoryRootURL()
         let sourceURL = rootURL.appendingPathComponent("Sources/OhMyUsage/Services/ProviderPresentationRegistry.swift")
         let source = try String(contentsOf: sourceURL, encoding: .utf8)
 
@@ -155,7 +155,7 @@ final class ProviderDefinitionRegistryTests: XCTestCase {
     }
 
     func testProviderSettingsSpecResolveDelegatesToDefinitionRegistryReadModel() throws {
-        let rootURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        let rootURL = packageRepositoryRootURL()
         let sourceURL = rootURL.appendingPathComponent("Sources/OhMyUsage/Models/ProviderSettingsSpec.swift")
         let source = try String(contentsOf: sourceURL, encoding: .utf8)
 

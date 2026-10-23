@@ -33,23 +33,6 @@ let package = Package(
             name: "OhMyUsagePresentation",
             dependencies: ["OhMyUsageDomain"]
         ),
-        .target(
-            name: "OhMyUsageFeatures",
-            dependencies: [
-                "OhMyUsageDomain",
-                "OhMyUsageApplication",
-                "OhMyUsagePresentation"
-            ]
-        ),
-        .target(
-            name: "OhMyUsageBootstrap",
-            dependencies: [
-                "OhMyUsageDomain",
-                "OhMyUsageApplication",
-                "OhMyUsageFeatures",
-                "OhMyUsagePresentation"
-            ]
-        ),
         .executableTarget(
             name: "OhMyUsage",
             dependencies: [
@@ -57,9 +40,7 @@ let package = Package(
                 "OhMyUsageInfrastructure",
                 "OhMyUsageProviders",
                 "OhMyUsageApplication",
-                "OhMyUsagePresentation",
-                "OhMyUsageFeatures",
-                "OhMyUsageBootstrap"
+                "OhMyUsagePresentation"
             ],
             resources: [
                 .process("Resources")
@@ -73,9 +54,7 @@ let package = Package(
                 "OhMyUsageInfrastructure",
                 "OhMyUsageProviders",
                 "OhMyUsageApplication",
-                "OhMyUsagePresentation",
-                "OhMyUsageFeatures",
-                "OhMyUsageBootstrap"
+                "OhMyUsagePresentation"
             ],
             exclude: [
                 "Fixtures"

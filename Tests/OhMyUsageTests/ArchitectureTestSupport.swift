@@ -1,5 +1,18 @@
 import Foundation
 
+/// Repository root derived from this file's compile-time location, so architecture and
+/// boundary tests resolve `Package.swift` / `Sources` fixtures regardless of the working
+/// directory the test runner was launched from.
+///
+/// This file lives at `<repo>/Tests/OhMyUsageTests/ArchitectureTestSupport.swift`, so the
+/// repository root is three `deletingLastPathComponent()` hops up from `#filePath`.
+func packageRepositoryRootURL() -> URL {
+    URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent() // OhMyUsageTests
+        .deletingLastPathComponent() // Tests
+        .deletingLastPathComponent() // repository root
+}
+
 struct PackageManifestTarget: Equatable {
     enum Kind: String {
         case regular
@@ -27,7 +40,7 @@ enum PackageManifestParsingError: Error, CustomStringConvertible {
 }
 
 func packageManifestTargets() throws -> [String: PackageManifestTarget] {
-    let rootURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+    let rootURL = packageRepositoryRootURL()
     let packageURL = rootURL.appendingPathComponent("Package.swift")
     let manifest = try String(contentsOf: packageURL, encoding: .utf8)
     let targets = try packageManifestTargets(in: manifest)

@@ -517,12 +517,12 @@ extension SettingsView {
     }
 
     func formattedRelayUsageAmount(_ value: Double) -> String {
-        let formatter = NumberFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.numberStyle = .decimal
-        formatter.maximumFractionDigits = 2
-        formatter.minimumFractionDigits = 2
-        return formatter.string(from: NSNumber(value: value)) ?? String(format: "%.2f", value)
+        SharedNumberFormatting.decimal(
+            value,
+            minFractionDigits: 2,
+            maxFractionDigits: 2,
+            localeID: "en_US_POSIX"
+        )
     }
 
     @ViewBuilder

@@ -87,6 +87,9 @@ final class ConfigStoreTests: XCTestCase {
             authJSON: #"{"tokens":{"access_token":"codex-test-token"}}"#,
             currentFingerprint: nil
         )
+        // Profile persistence is asynchronous (store IO queue); fence it so the
+        // recovery policy below observes the persisted file on disk.
+        codexProfileStore.flushPendingDiskWrites()
 
         let claudeProfilesURL = appSupportDirectory(in: root).appendingPathComponent("claude_profiles.json")
         let claudeProfileStore = ClaudeAccountProfileStore(fileURL: claudeProfilesURL)
@@ -99,6 +102,7 @@ final class ConfigStoreTests: XCTestCase {
             credentialsJSON: #"{"accessToken":"claude-test-token","email":"test@example.com"}"#,
             currentFingerprint: nil
         )
+        claudeProfileStore.flushPendingDiskWrites()
 
         let loaded = try store.load()
         XCTAssertTrue(loaded.providers.contains(where: { $0.id == "codex-official" && $0.enabled }))
@@ -284,6 +288,9 @@ final class ConfigStoreTests: XCTestCase {
             ),
             now: Date(timeIntervalSince1970: 1_700_000_000)
         )
+        // Slot persistence is asynchronous (store IO queue); fence it so the
+        // recovery policy below observes the persisted file on disk.
+        codexSlotStore.flushPendingDiskWrites()
 
         let loaded = try store.load()
         let preservedURL = directory.appendingPathComponent("config.preserved-fallback-candidate.json")
@@ -423,6 +430,10 @@ final class ConfigStoreTests: XCTestCase {
             ),
             now: Date(timeIntervalSince1970: 1_700_000_100)
         )
+        // Slot persistence is asynchronous (store IO queue); fence it so the
+        // recovery policy below observes the persisted files on disk.
+        codexSlotStore.flushPendingDiskWrites()
+        claudeSlotStore.flushPendingDiskWrites()
 
         let primaryURL = directory.appendingPathComponent("config.json")
         let backupURL = directory.appendingPathComponent("config.backup.json")

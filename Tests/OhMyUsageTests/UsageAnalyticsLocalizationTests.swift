@@ -15,7 +15,7 @@ final class UsageAnalyticsLocalizationTests: XCTestCase {
         let expected: [(UsageAnalyticsCopy.Key, String, String)] = [
             (.refresh, "刷新使用统计", "Refresh usage statistics"),
             (.overview, "总览", "Overview"), (.trend, "使用趋势", "Usage trend"),
-            (.statistics, "统计", "Statistics"), (.provider, "供应商", "Provider"), (.model, "模型", "Model"),
+            (.statistics, "统计", "Analytics"), (.provider, "供应商", "Provider"), (.model, "模型", "Model"),
             (.all, "全部", "All"), (.last24Hours, "近24小时", "Last 24h"),
             (.last7Days, "近7天", "Last 7d"), (.last30Days, "近30天", "Last 30d"),
             (.requests, "总请求", "Requests"), (.tokens, "总Token", "Tokens"),
@@ -45,6 +45,27 @@ final class UsageAnalyticsLocalizationTests: XCTestCase {
         XCTAssertEqual(zh.diagnostic(source), source)
         XCTAssertEqual(en.diagnostic(source), "Sources: local app usage logs / Cursor dashboard (when available)")
         XCTAssertEqual(en.diagnostic("Unknown future diagnostic"), "Unknown future diagnostic")
+    }
+
+    func testEveryKeyCarriesDistinctNonEmptyTranslations() {
+        let chinese = UsageAnalyticsCopy(language: .zhHans)
+        let english = UsageAnalyticsCopy(language: .en)
+        for key in UsageAnalyticsCopy.Key.allCases {
+            let zh = chinese.text(key)
+            let en = english.text(key)
+            XCTAssertFalse(zh.isEmpty, "missing zh copy for \(key)")
+            XCTAssertFalse(en.isEmpty, "missing en copy for \(key)")
+            XCTAssertNotEqual(zh, en, "copy for \(key) is not bilingual")
+        }
+    }
+
+    func testCcSwitchSourceSubtitleTranslatesToEnglish() {
+        let source = "统计来源：官方应用本地用量 / Cursor dashboard（可用时）+ cc-switch 请求日志"
+        XCTAssertEqual(
+            UsageAnalyticsCopy(language: .en).diagnostic(source),
+            "Sources: local app usage / Cursor dashboard (when available) + cc-switch request logs"
+        )
+        XCTAssertEqual(UsageAnalyticsCopy(language: .zhHans).diagnostic(source), source)
     }
 
     @MainActor

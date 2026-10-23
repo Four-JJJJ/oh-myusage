@@ -40,19 +40,21 @@ public enum OfficialProviderAuthRuntime {
         request: URLRequest,
         invalidResponseMessage: String,
         missingAccessTokenMessage: String,
-        httpErrorMessage: (Int) -> String,
+        httpErrorMessage: @escaping (Int) -> String,
         unauthorizedStatusCodes: Set<Int> = [400, 401]
     ) async throws -> OfficialOAuthRefreshResponse {
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else {
             throw ProviderError.invalidResponse(invalidResponseMessage)
         }
-        if unauthorizedStatusCodes.contains(http.statusCode) {
-            throw ProviderError.unauthorized
-        }
-        guard (200...299).contains(http.statusCode) else {
-            throw ProviderError.invalidResponse(httpErrorMessage(http.statusCode))
-        }
+        try HTTPResponseValidation.validate(
+            http,
+            urlDescription: "",
+            body: data,
+            expectingJSON: false,
+            unauthorizedStatusCodes: unauthorizedStatusCodes,
+            invalidResponseMessage: httpErrorMessage
+        )
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let accessToken = OfficialValueParser.string(json["access_token"]) else {
             throw ProviderError.invalidResponse(missingAccessTokenMessage)

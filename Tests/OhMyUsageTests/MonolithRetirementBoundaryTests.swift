@@ -12,7 +12,7 @@ final class MonolithRetirementBoundaryTests: XCTestCase {
             "Sources/OhMyUsage/UI/Presenters/MenuDashboardPresenter.swift"
         ]
 
-        let rootURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        let rootURL = packageRepositoryRootURL()
         for file in files {
             let fileURL = rootURL.appendingPathComponent(file)
             let source = try String(contentsOf: fileURL, encoding: .utf8)
@@ -38,7 +38,7 @@ final class MonolithRetirementBoundaryTests: XCTestCase {
     }
 
     func testProviderMetadataCatalogLivesWithProviderModels() throws {
-        let rootURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        let rootURL = packageRepositoryRootURL()
         let modelCatalogURL = rootURL.appendingPathComponent("Sources/OhMyUsage/Models/ProviderMetadataCatalog.swift")
         let serviceCatalogURL = rootURL.appendingPathComponent("Sources/OhMyUsage/Services/ProviderMetadataCatalog.swift")
         let presentationModelsURL = rootURL.appendingPathComponent("Sources/OhMyUsage/Models/ProviderPresentationModels.swift")
@@ -63,7 +63,7 @@ final class MonolithRetirementBoundaryTests: XCTestCase {
     }
 
     func testProviderMetadataCatalogStaysAsFacadeOverFocusedMetadataCatalogs() throws {
-        let rootURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        let rootURL = packageRepositoryRootURL()
         let modelCatalogURL = rootURL.appendingPathComponent("Sources/OhMyUsage/Models/ProviderMetadataCatalog.swift")
         let relayCatalogURL = rootURL.appendingPathComponent("Sources/OhMyUsage/Models/OfficialRelayMetadataCatalog.swift")
         let typeCatalogURL = rootURL.appendingPathComponent("Sources/OhMyUsage/Models/ProviderTypeMetadataCatalog.swift")
@@ -182,7 +182,7 @@ final class MonolithRetirementBoundaryTests: XCTestCase {
     }
 
     func testProviderModelsDoesNotOwnAppConfigDefinition() throws {
-        let rootURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        let rootURL = packageRepositoryRootURL()
         let providerModelsURL = rootURL.appendingPathComponent("Sources/OhMyUsage/Models/ProviderModels.swift")
         let providerModels = try String(contentsOf: providerModelsURL, encoding: .utf8)
 
@@ -207,7 +207,7 @@ final class MonolithRetirementBoundaryTests: XCTestCase {
     }
 
     func testProviderModelsDoesNotOwnAuthConfigCredentialHelpers() throws {
-        let rootURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        let rootURL = packageRepositoryRootURL()
         let providerModelsURL = rootURL.appendingPathComponent("Sources/OhMyUsage/Models/ProviderModels.swift")
         let providerModels = try String(contentsOf: providerModelsURL, encoding: .utf8)
 
@@ -220,7 +220,7 @@ final class MonolithRetirementBoundaryTests: XCTestCase {
     }
 
     func testProviderConfigurationDomainMigrationKeepsRuntimeAndPolicyRedLinesInExecutable() throws {
-        let rootURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        let rootURL = packageRepositoryRootURL()
         let domainURL = rootURL.appendingPathComponent("Sources/OhMyUsageDomain")
         let executableModelsURL = rootURL.appendingPathComponent("Sources/OhMyUsage/Models")
         let executableServicesURL = rootURL.appendingPathComponent("Sources/OhMyUsage/Services")
@@ -287,7 +287,7 @@ final class MonolithRetirementBoundaryTests: XCTestCase {
     }
 
     func testProviderModelsDoesNotOwnDefaultProviderConstructors() throws {
-        let rootURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        let rootURL = packageRepositoryRootURL()
         let providerModelsURL = rootURL.appendingPathComponent("Sources/OhMyUsage/Models/ProviderModels.swift")
         let providerModels = try String(contentsOf: providerModelsURL, encoding: .utf8)
 
@@ -310,7 +310,7 @@ final class MonolithRetirementBoundaryTests: XCTestCase {
     }
 
     func testProviderDescriptorDefaultsStayAsFacadesOverDefaultCatalogs() throws {
-        let rootURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        let rootURL = packageRepositoryRootURL()
         let facadesURL = rootURL.appendingPathComponent("Sources/OhMyUsage/Models/ProviderDescriptor+CatalogFacades.swift")
         let providerCatalogURL = rootURL.appendingPathComponent("Sources/OhMyUsage/Models/ProviderDefaultCatalog.swift")
         let officialCatalogURL = rootURL.appendingPathComponent("Sources/OhMyUsage/Models/OfficialProviderDefaultCatalog.swift")
@@ -447,7 +447,7 @@ final class MonolithRetirementBoundaryTests: XCTestCase {
     }
 
     func testCursorProviderUsesSharedOfficialAuthRuntime() throws {
-        let rootURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        let rootURL = packageRepositoryRootURL()
         let cursorProviderURL = rootURL.appendingPathComponent("Sources/OhMyUsage/Providers/CursorProvider.swift")
         let cursorProvider = try String(contentsOf: cursorProviderURL, encoding: .utf8)
 
@@ -462,7 +462,7 @@ final class MonolithRetirementBoundaryTests: XCTestCase {
     }
 
     func testProviderModelsDoesNotOwnProviderDefaultConfigurationHelpers() throws {
-        let rootURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        let rootURL = packageRepositoryRootURL()
         let providerModelsURL = rootURL.appendingPathComponent("Sources/OhMyUsage/Models/ProviderModels.swift")
         let providerModels = try String(contentsOf: providerModelsURL, encoding: .utf8)
 
@@ -484,7 +484,7 @@ final class MonolithRetirementBoundaryTests: XCTestCase {
     }
 
     func testProviderModelsDoesNotOwnOfficialRelayMetadataPolicy() throws {
-        let rootURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        let rootURL = packageRepositoryRootURL()
         let providerModelsURL = rootURL.appendingPathComponent("Sources/OhMyUsage/Models/ProviderModels.swift")
         let providerModels = try String(contentsOf: providerModelsURL, encoding: .utf8)
 
@@ -508,7 +508,7 @@ final class MonolithRetirementBoundaryTests: XCTestCase {
     }
 
     func testProviderModelsDoesNotOwnRelayDefaultAndOverrideMigrationHelpers() throws {
-        let rootURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        let rootURL = packageRepositoryRootURL()
         let providerModelsURL = rootURL.appendingPathComponent("Sources/OhMyUsage/Models/ProviderModels.swift")
         let providerModels = try String(contentsOf: providerModelsURL, encoding: .utf8)
 
@@ -539,7 +539,7 @@ final class MonolithRetirementBoundaryTests: XCTestCase {
     }
 
     func testProviderModelsDoesNotOwnLegacyRelayMigrationPolicy() throws {
-        let rootURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        let rootURL = packageRepositoryRootURL()
         let providerModelsURL = rootURL.appendingPathComponent("Sources/OhMyUsage/Models/ProviderModels.swift")
         let providerModels = try String(contentsOf: providerModelsURL, encoding: .utf8)
 
@@ -560,7 +560,7 @@ final class MonolithRetirementBoundaryTests: XCTestCase {
     }
 
     func testProviderModelsDoesNotOwnRelayViewOrDisplayPreferenceDerivations() throws {
-        let rootURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        let rootURL = packageRepositoryRootURL()
         let providerModelsURL = rootURL.appendingPathComponent("Sources/OhMyUsage/Models/ProviderModels.swift")
         let providerModels = try String(contentsOf: providerModelsURL, encoding: .utf8)
 
@@ -591,7 +591,7 @@ final class MonolithRetirementBoundaryTests: XCTestCase {
     }
 
     func testProviderModelsDoesNotOwnNormalizationPolicy() throws {
-        let rootURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        let rootURL = packageRepositoryRootURL()
         let providerModelsURL = rootURL.appendingPathComponent("Sources/OhMyUsage/Models/ProviderModels.swift")
         let providerModels = try String(contentsOf: providerModelsURL, encoding: .utf8)
 
@@ -624,7 +624,7 @@ final class MonolithRetirementBoundaryTests: XCTestCase {
     }
 
     func testAppConfigSiteDefaultsMigrationStaysAsFacadeOverFocusedMigrator() throws {
-        let rootURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        let rootURL = packageRepositoryRootURL()
         let migrationURL = rootURL.appendingPathComponent("Sources/OhMyUsage/Models/AppConfig+SiteDefaultsMigration.swift")
         let migratorURL = rootURL.appendingPathComponent("Sources/OhMyUsage/Models/AppConfigSiteDefaultsMigrator.swift")
         let migration = try String(contentsOf: migrationURL, encoding: .utf8)
@@ -653,7 +653,7 @@ final class MonolithRetirementBoundaryTests: XCTestCase {
     }
 
     func testSettingsDraftModelsDelegateRelaySeedDerivation() throws {
-        let rootURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        let rootURL = packageRepositoryRootURL()
         let settingsDraftModelsURL = rootURL.appendingPathComponent("Sources/OhMyUsage/Models/SettingsDraftModels.swift")
         let settingsDraftModels = try String(contentsOf: settingsDraftModelsURL, encoding: .utf8)
 
@@ -665,7 +665,7 @@ final class MonolithRetirementBoundaryTests: XCTestCase {
     }
 
     func testModelRelayDescriptorDerivationsUseResolverInsteadOfSharedRegistry() throws {
-        let rootURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        let rootURL = packageRepositoryRootURL()
         let files = [
             "Sources/OhMyUsage/Models/RelaySettingsDraftSeed.swift",
             "Sources/OhMyUsage/Models/ProviderDescriptor+OfficialRelayMetadata.swift",
@@ -683,15 +683,13 @@ final class MonolithRetirementBoundaryTests: XCTestCase {
     }
 
     func testAppViewModelDelegatesDependencyCompositionToExecutableFactory() throws {
-        let rootURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        let rootURL = packageRepositoryRootURL()
         let appViewModelURL = rootURL.appendingPathComponent("Sources/OhMyUsage/App/AppViewModel.swift")
         let compositionFactoryURL = rootURL.appendingPathComponent("Sources/OhMyUsage/App/AppCompositionFactory.swift")
         let dependencyGraphURL = rootURL.appendingPathComponent("Sources/OhMyUsage/App/AppDependencyGraph.swift")
-        let compositionRootURL = rootURL.appendingPathComponent("Sources/OhMyUsageBootstrap/OhMyUsageCompositionRoot.swift")
         let appViewModel = try String(contentsOf: appViewModelURL, encoding: .utf8)
         let compositionFactory = try String(contentsOf: compositionFactoryURL, encoding: .utf8)
         let dependencyGraph = try String(contentsOf: dependencyGraphURL, encoding: .utf8)
-        let compositionRoot = try String(contentsOf: compositionRootURL, encoding: .utf8)
 
         XCTAssertTrue(
             FileManager.default.fileExists(atPath: compositionFactoryURL.path),
@@ -733,18 +731,10 @@ final class MonolithRetirementBoundaryTests: XCTestCase {
                 "AppViewModel.swift should not inline dependency assembly \(inlineAssembly)"
             )
         }
-        XCTAssertTrue(
-            compositionRoot.contains("AppCompositionFactory"),
-            "Bootstrap composition docs should point executable App wiring at AppCompositionFactory"
-        )
-        XCTAssertFalse(
-            compositionRoot.contains("makeAppViewModel"),
-            "OhMyUsageCompositionRoot must not claim executable host construction"
-        )
     }
 
     func testAppViewModelDelegatesUsageAnalyticsRefresh() throws {
-        let rootURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        let rootURL = packageRepositoryRootURL()
         let appViewModelURL = rootURL.appendingPathComponent("Sources/OhMyUsage/App/AppViewModel.swift")
         let usageAnalyticsModelURL = rootURL.appendingPathComponent("Sources/OhMyUsage/App/AppUsageAnalyticsModel.swift")
         let appViewModel = try String(contentsOf: appViewModelURL, encoding: .utf8)
@@ -773,7 +763,7 @@ final class MonolithRetirementBoundaryTests: XCTestCase {
     }
 
     func testAppViewModelStatusBarDisplayResponsibilitiesStayInFocusedExtension() throws {
-        let rootURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        let rootURL = packageRepositoryRootURL()
         let appViewModelURL = rootURL.appendingPathComponent("Sources/OhMyUsage/App/AppViewModel.swift")
         let statusBarDisplayURL = rootURL.appendingPathComponent("Sources/OhMyUsage/App/AppViewModel+StatusBarDisplay.swift")
         let appViewModel = try String(contentsOf: appViewModelURL, encoding: .utf8)
@@ -814,7 +804,7 @@ final class MonolithRetirementBoundaryTests: XCTestCase {
     }
 
     func testAppViewModelOfficialProfileResponsibilitiesStayInFocusedExtension() throws {
-        let rootURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        let rootURL = packageRepositoryRootURL()
         let appViewModelURL = rootURL.appendingPathComponent("Sources/OhMyUsage/App/AppViewModel.swift")
         let officialProfilesURL = rootURL.appendingPathComponent("Sources/OhMyUsage/App/AppViewModel+OfficialProfiles.swift")
         let appViewModel = try String(contentsOf: appViewModelURL, encoding: .utf8)
@@ -852,7 +842,7 @@ final class MonolithRetirementBoundaryTests: XCTestCase {
     }
 
     func testUsageAnalyticsValueTypesLiveInApplicationTarget() throws {
-        let rootURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        let rootURL = packageRepositoryRootURL()
         let applicationTypesURL = rootURL.appendingPathComponent("Sources/OhMyUsageApplication/UsageAnalyticsTypes.swift")
         let executableTypesURL = rootURL.appendingPathComponent("Sources/OhMyUsage/Services/UsageAnalyticsTypes.swift")
         let executableTypes = try String(contentsOf: executableTypesURL, encoding: .utf8)
@@ -897,7 +887,7 @@ final class MonolithRetirementBoundaryTests: XCTestCase {
     }
 
     func testAppViewModelDoesNotOwnPermissionAndResetImplementations() throws {
-        let rootURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        let rootURL = packageRepositoryRootURL()
         let appViewModelURL = rootURL.appendingPathComponent("Sources/OhMyUsage/App/AppViewModel.swift")
         let appViewModel = try String(contentsOf: appViewModelURL, encoding: .utf8)
 
@@ -914,7 +904,7 @@ final class MonolithRetirementBoundaryTests: XCTestCase {
     }
 
     func testAppViewModelProviderConfigurationResponsibilitiesStayInFocusedExtension() throws {
-        let rootURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        let rootURL = packageRepositoryRootURL()
         let appViewModelURL = rootURL.appendingPathComponent("Sources/OhMyUsage/App/AppViewModel.swift")
         let providerConfigurationURL = rootURL.appendingPathComponent("Sources/OhMyUsage/App/AppViewModel+ProviderConfiguration.swift")
         let appViewModel = try String(contentsOf: appViewModelURL, encoding: .utf8)

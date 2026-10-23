@@ -426,6 +426,73 @@ final class CodexAccountProfileStoreTests: XCTestCase {
         XCTAssertFalse(profiles.first(where: { $0.accountId == "acc-a" })?.isCurrentSystemAccount ?? true)
     }
 
+    func testUnchangedReSyncDoesNotRewriteProfileFile() throws {
+        let path = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("codex-profile-tests-\(UUID().uuidString).json")
+        let store = CodexAccountProfileStore(fileURL: path)
+        let authJSON = sampleAuthJSON(accountID: "acc-steady", email: "steady@example.com")
+
+        _ = store.captureCurrentAuthIfNeeded(authJSON: authJSON)
+        store.flushPendingDiskWrites()
+        let firstWrite = try fileFingerprint(at: path)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: path.path))
+
+        // Re-syncing the exact same credential must not touch the file.
+        _ = store.captureCurrentAuthIfNeeded(authJSON: authJSON)
+        store.flushPendingDiskWrites()
+        XCTAssertEqual(try fileFingerprint(at: path), firstWrite)
+
+        // A new store instance seeds its dedupe fingerprint from the on-disk
+        // state, so an unchanged no-op commit still skips the disk write.
+        let reloaded = CodexAccountProfileStore(fileURL: path)
+        _ = reloaded.removeProfile(slotID: CodexSlotID(rawValue: "Z"))
+        reloaded.flushPendingDiskWrites()
+        XCTAssertEqual(try fileFingerprint(at: path), firstWrite)
+
+        // Changed content must still reach the disk.
+        _ = store.updateStoredAuthJSON(
+            slotID: .a,
+            authJSON: sampleAuthJSON(accountID: "acc-steady", email: "steady@example.com", accessToken: "rotated-token")
+        )
+        store.flushPendingDiskWrites()
+        XCTAssertNotEqual(try fileFingerprint(at: path), firstWrite)
+    }
+
+    func testSaveThenReloadRoundTripsThroughDiskAfterFlush() throws {
+        let path = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("codex-profile-tests-\(UUID().uuidString).json")
+        let store = CodexAccountProfileStore(fileURL: path)
+        _ = try store.saveProfile(
+            slotID: .a,
+            displayName: "Persisted",
+            note: nil,
+            authJSON: sampleAuthJSON(accountID: "acc-persist", email: "persist@example.com"),
+            currentFingerprint: nil
+        )
+        store.flushPendingDiskWrites()
+
+        let reloaded = CodexAccountProfileStore(fileURL: path)
+        XCTAssertEqual(reloaded.profiles().map(\.slotID), [.a])
+        XCTAssertEqual(reloaded.profile(slotID: .a)?.accountId, "acc-persist")
+        XCTAssertEqual(reloaded.profile(slotID: .a)?.displayName, "Persisted")
+    }
+
+    /// Identifies a physical write: `PrivateProfileFile` always writes through
+    /// a fresh staging file and renames it, so an actual disk write necessarily
+    /// changes the inode (and the mtime).
+    private struct WriteFingerprint: Equatable {
+        var inode: Int
+        var modificationDate: Date
+    }
+
+    private func fileFingerprint(at url: URL) throws -> WriteFingerprint {
+        let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+        return WriteFingerprint(
+            inode: try XCTUnwrap(attributes[.systemFileNumber] as? Int),
+            modificationDate: try XCTUnwrap(attributes[.modificationDate] as? Date)
+        )
+    }
+
     private func makeStore() -> CodexAccountProfileStore {
         let path = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("codex-profile-tests-\(UUID().uuidString).json")

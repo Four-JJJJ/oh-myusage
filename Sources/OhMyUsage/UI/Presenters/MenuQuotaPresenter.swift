@@ -256,7 +256,7 @@ enum MenuQuotaPresenter {
         case .qwen:
             return [
                 MenuQuotaMetric(id: "\(provider.id)-placeholder-weekly", title: placeholderMetricTitle(localization.quotaWeekly, provider: provider, language: language), displayPercent: 0, healthPercent: 0, resetAt: nil, isAvailable: true, valueTextOverride: nil, kind: nil),
-                MenuQuotaMetric(id: "\(provider.id)-placeholder-credits", title: "加油包", displayPercent: 0, healthPercent: 0, resetAt: nil, isAvailable: true, valueTextOverride: nil, kind: nil)
+                MenuQuotaMetric(id: "\(provider.id)-placeholder-credits", title: language == .zhHans ? "加油包" : "Boost pack", displayPercent: 0, healthPercent: 0, resetAt: nil, isAvailable: true, valueTextOverride: nil, kind: nil)
             ]
         case .amp:
             return [

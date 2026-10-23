@@ -9,6 +9,21 @@ oh-myusage 把官方订阅额度、模型使用窗口、第三方中转余额、
 
 [下载最新版本](https://github.com/Four-JJJJ/oh-myusage/releases/latest) · [安装说明](docs/DOWNLOAD.md) · [支持的服务](docs/PROVIDERS.md) · [扩展指南](docs/EXTENDING.md) · [发布清单](docs/RELEASE_CHECKLIST.md) · [English](docs/README.en.md)
 
+## V2.6.3 更新
+
+V2.6.3 是一版全量性能与工程优化：主线程 IO 清零到后台、HTTP 行为统一、死代码出清。
+
+| 方向 | 改进 |
+| --- | --- |
+| 主线程 IO | 本地 session 监控（stat/SQLite/JSONL）移入 actor；官方 profile/slot 四个 store 读写下沉串行 IO 队列，内容未变跳过写盘，退出时统一落盘 |
+| HTTP 统一 | 公共校验层统一 401/403/429/5xx/HTML 分类，迁移 Relay、官方认证/抓取与 Copilot/Cursor/Codex/Claude/Gemini/Grok Bot/Kimi/OpenRouter 共 10 处 |
+| 429 处理 | 官方 API 与中转通道解析 Retry-After（封顶 1 小时）推迟轮询，不再只靠固定退避 |
+| 一致性 | 统计页术语对齐、「加油包」双语；11 处重复数字格式化收敛为共享实现，显示输出不变 |
+| 加固 | 单实例锁 O_NOFOLLOW；Kimi 缓存 key 改 SHA-256 指纹 |
+| 架构 | 删除零引用的 Features/Bootstrap 占位 target 与死模型；8 个测试文件不再依赖运行目录；含测试全仓零警告 |
+
+全量 1,426 项测试 0 失败。详见[本版发布说明](docs/releases/v2.6.3.md)。
+
 ## V2.6.2 更新
 
 V2.6.2 是一版安全与稳定性修缮：堵住两条本地凭证读取链路上的安全缺口，并修复 2.6.1 轮换机制引入的 Cookie 覆盖回归。
@@ -322,13 +337,11 @@ CI 的源码构建使用 `-Xswiftc -warnings-as-errors`；测试仍单独运行�
 ```text
 Sources/
 ├── OhMyUsage              # 当前可执行应用主体，包含 App、UI、Services、Providers、Resources
-├── OhMyUsageDomain        # 领域模型与稳定契约骨架
-├── OhMyUsageInfrastructure # 基础设施骨架
-├── OhMyUsageProviders     # Provider 运行时拆分目标骨架
+├── OhMyUsageDomain        # 领域模型与稳定契约
+├── OhMyUsageInfrastructure # 基础设施（凭证存储）
+├── OhMyUsageProviders     # Provider 运行时（HTTP 校验、Cookie 检测等）
 ├── OhMyUsageApplication   # 应用层调度、退避、诊断等已抽出的逻辑
-├── OhMyUsagePresentation  # 展示层拆分目标骨架
-├── OhMyUsageFeatures      # 功能模块拆分目标骨架
-└── OhMyUsageBootstrap     # 启动组装拆分目标骨架
+└── OhMyUsagePresentation  # 展示层逻辑
 
 Tests/OhMyUsageTests       # XCTest 测试
 docs/                      # 安装、支持服务、扩展、发布与重构说明

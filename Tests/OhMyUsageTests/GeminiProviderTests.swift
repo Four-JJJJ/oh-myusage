@@ -47,7 +47,7 @@ final class GeminiProviderTests: XCTestCase {
         }
         defer { OfficialMockURLProtocol.requestHandler = nil }
 
-        let provider = try makeProvider(home: home, contextCache: GeminiCodeAssistContextCache())
+        let provider = makeProvider(home: home, contextCache: GeminiCodeAssistContextCache())
         let snapshot = try await provider.fetch()
 
         XCTAssertEqual(counter.value("loadCodeAssist"), 1, "full load must issue loadCodeAssist exactly once")
@@ -79,7 +79,7 @@ final class GeminiProviderTests: XCTestCase {
 
         // Snapshot TTL 0 forces a fresh quota load on every fetch, while the
         // Code Assist context cache (1h) stays fresh.
-        let provider = try makeProvider(
+        let provider = makeProvider(
             home: home,
             contextCache: GeminiCodeAssistContextCache(),
             cacheTTL: 0
@@ -112,7 +112,7 @@ final class GeminiProviderTests: XCTestCase {
         }
         defer { OfficialMockURLProtocol.requestHandler = nil }
 
-        let provider = try makeProvider(home: home, contextCache: GeminiCodeAssistContextCache())
+        let provider = makeProvider(home: home, contextCache: GeminiCodeAssistContextCache())
 
         _ = try await provider.fetch()
         _ = try await provider.fetch(forceRefresh: true)
@@ -168,7 +168,7 @@ final class GeminiProviderTests: XCTestCase {
             planMetadataTTL: 60,
             now: { clock.now() }
         )
-        let provider = try makeProvider(home: home, contextCache: contextCache, cacheTTL: 0)
+        let provider = makeProvider(home: home, contextCache: contextCache, cacheTTL: 0)
 
         let first = try await provider.fetch()
         XCTAssertEqual(counter.value("loadCodeAssist"), 1)
@@ -221,13 +221,13 @@ final class GeminiProviderTests: XCTestCase {
         // One process-wide cache instance shared by both providers.
         let sharedContextCache = GeminiCodeAssistContextCache()
         let sharedSnapshotCache = SnapshotTimestampOfficialSnapshotCache()
-        let providerA = try makeProvider(
+        let providerA = makeProvider(
             home: homeA,
             cache: sharedSnapshotCache,
             contextCache: sharedContextCache,
             cacheTTL: 0
         )
-        let providerB = try makeProvider(
+        let providerB = makeProvider(
             home: homeB,
             cache: sharedSnapshotCache,
             contextCache: sharedContextCache,
@@ -279,7 +279,7 @@ final class GeminiProviderTests: XCTestCase {
         defer { OfficialMockURLProtocol.requestHandler = nil }
 
         let keychain = RecordingTokenCredentialStore()
-        let provider = try makeProvider(
+        let provider = makeProvider(
             home: home,
             contextCache: GeminiCodeAssistContextCache(),
             keychain: keychain

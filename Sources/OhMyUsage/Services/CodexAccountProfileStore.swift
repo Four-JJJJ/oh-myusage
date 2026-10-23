@@ -29,7 +29,7 @@ struct CodexParsedAuthPayload {
     var credentialFingerprint: String
 }
 
-final class CodexAccountProfileStore {
+final class CodexAccountProfileStore: @unchecked Sendable {
     private struct ProfileFile: Codable {
         var profiles: [CodexAccountProfile]
         var ignoredFingerprints: [String]?
@@ -51,6 +51,19 @@ final class CodexAccountProfileStore {
     private let fileURL: URL
     private let fileManager: FileManager
     private let protectedFile: PrivateProfileFile
+    /// Official refreshes re-sync profile state on the main actor every cycle,
+    /// so JSON encoding and file IO live on this serial queue; MainActor callers
+    /// only touch the in-memory mirror and enqueue writes.
+    private let ioQueue = DispatchQueue(label: "OhMyUsage.codexProfileStore.io", qos: .utility)
+    /// Guards the in-memory profile mirror (read-modify-write atomicity). Never
+    /// held while the IO queue executes a write.
+    private let stateLock = NSLock()
+    /// In-memory mirror of the persisted `ProfileFile`, always normalized.
+    private var cachedProfiles: [CodexAccountProfile]
+    private var cachedIgnoredFingerprints: Set<String>
+    /// IO-queue confined: the last payload successfully written to disk. Saves
+    /// whose encoded content matches it are skipped entirely.
+    private var lastWrittenData: Data?
 
     init(fileManager: FileManager = .default, fileURL: URL? = nil) {
         self.fileManager = fileManager
@@ -62,14 +75,32 @@ final class CodexAccountProfileStore {
         self.protectedFile = PrivateProfileFile(url: self.fileURL, fileManager: fileManager, ownsParentDirectory: fileURL == nil)
         do { try protectedFile.protectExistingFile() }
         catch { NSLog("[CodexAccountProfileStore] Unable to restrict profile file permissions") }
+        self.cachedProfiles = []
+        self.cachedIgnoredFingerprints = []
+        // One-time cold-start read, serialized on the IO queue so every disk
+        // access for this store is queue-confined. The loaded state also seeds
+        // the dedupe fingerprint so a no-op first save never rewrites the file.
+        ioQueue.sync {
+            let file = self.loadFileOnIOQueue()
+            let normalized = Self.normalizeProfiles(file.profiles)
+            self.cachedProfiles = normalized
+            self.cachedIgnoredFingerprints = Set(file.ignoredFingerprints?.map { $0.lowercased() } ?? [])
+            self.lastWrittenData = Self.encodedData(profiles: normalized, ignoredFingerprints: self.cachedIgnoredFingerprints)
+        }
     }
 
     func profiles() -> [CodexAccountProfile] {
-        load().sorted { $0.slotID < $1.slotID }
+        stateLock.lock()
+        let current = cachedProfiles
+        stateLock.unlock()
+        return current.sorted { $0.slotID < $1.slotID }
     }
 
     func profile(slotID: CodexSlotID) -> CodexAccountProfile? {
-        load().first(where: { $0.slotID == slotID })
+        stateLock.lock()
+        let matched = cachedProfiles.first(where: { $0.slotID == slotID })
+        stateLock.unlock()
+        return matched
     }
 
     func matchingProfile(authJSON: String) -> CodexAccountProfile? {
@@ -78,11 +109,12 @@ final class CodexAccountProfileStore {
               let payload = try? Self.parseAuthJSON(trimmed) else {
             return nil
         }
-        let items = load()
-        guard let index = matchingIndex(for: payload, in: items) else {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        guard let index = Self.matchingIndex(for: payload, in: cachedProfiles) else {
             return nil
         }
-        return items[index]
+        return cachedProfiles[index]
     }
 
     @discardableResult
@@ -93,14 +125,17 @@ final class CodexAccountProfileStore {
         authJSON: String,
         currentFingerprint: String?
     ) throws -> CodexAccountProfile {
-        var items = load()
         let payload = try Self.parseAuthJSON(authJSON)
         var profile = try Self.makeProfile(slotID: slotID, displayName: displayName, note: note, authJSON: authJSON)
         profile.isCurrentSystemAccount = profile.credentialFingerprint == currentFingerprint
-        profile = normalizedProfile(profile, payload: payload)
-        var ignoredFingerprints = loadIgnoredFingerprints()
+        profile = Self.normalizedProfile(profile, payload: payload)
 
-        if let matchedIndex = matchingIndex(for: payload, in: items),
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        var items = cachedProfiles
+        var ignoredFingerprints = cachedIgnoredFingerprints
+
+        if let matchedIndex = Self.matchingIndex(for: payload, in: items),
            items[matchedIndex].slotID != slotID {
             items.remove(at: matchedIndex)
         }
@@ -111,13 +146,15 @@ final class CodexAccountProfileStore {
         } else {
             items.append(profile)
         }
-        try save(items, ignoredFingerprints: ignoredFingerprints)
+        commitLocked(items: items, ignoredFingerprints: ignoredFingerprints)
         return profile
     }
 
     @discardableResult
     func updateCurrentFingerprint(_ fingerprint: String?) -> [CodexAccountProfile] {
-        updateCurrentProfiles(load(), currentIdentityKey: nil, currentFingerprint: fingerprint)
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return updateCurrentProfilesLocked(cachedProfiles, currentIdentityKey: nil, currentFingerprint: fingerprint)
     }
 
     @discardableResult
@@ -126,8 +163,10 @@ final class CodexAccountProfileStore {
         guard !trimmed.isEmpty else { return nil }
         guard let payload = try? Self.parseAuthJSON(trimmed) else { return nil }
 
-        var items = load()
-        guard let index = items.firstIndex(where: { $0.slotID == slotID }) else { return nil }
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        guard let index = cachedProfiles.firstIndex(where: { $0.slotID == slotID }) else { return nil }
+        var items = cachedProfiles
         var profile = items[index]
         profile.authJSON = trimmed
         profile.accountId = payload.accountId
@@ -135,32 +174,50 @@ final class CodexAccountProfileStore {
         profile.accountSubject = payload.accountSubject
         profile.credentialFingerprint = payload.credentialFingerprint
         profile.lastImportedAt = Date()
-        profile = normalizedProfile(profile, payload: payload)
+        profile = Self.normalizedProfile(profile, payload: payload)
         items[index] = profile
-        try? save(items, ignoredFingerprints: loadIgnoredFingerprints())
+        commitLocked(items: items, ignoredFingerprints: cachedIgnoredFingerprints)
         return profile
     }
 
     func nextAvailableSlotID() -> CodexSlotID {
-        let existing = Set(load().map(\.slotID))
+        stateLock.lock()
+        let existing = Set(cachedProfiles.map(\.slotID))
+        stateLock.unlock()
         return CodexSlotID.nextAvailable(excluding: existing)
     }
 
     @discardableResult
     func removeProfile(slotID: CodexSlotID) -> [CodexAccountProfile] {
-        var items = load()
-        var ignoredFingerprints = loadIgnoredFingerprints()
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        var items = cachedProfiles
+        var ignoredFingerprints = cachedIgnoredFingerprints
         if let removed = items.first(where: { $0.slotID == slotID })?.credentialFingerprint?.lowercased(),
            !removed.isEmpty {
             ignoredFingerprints.insert(removed)
         }
         items.removeAll { $0.slotID == slotID }
-        try? save(items, ignoredFingerprints: ignoredFingerprints)
+        commitLocked(items: items, ignoredFingerprints: ignoredFingerprints)
         return items.sorted { $0.slotID < $1.slotID }
     }
 
     func reset() {
-        try? fileManager.removeItem(at: fileURL)
+        stateLock.lock()
+        cachedProfiles = []
+        cachedIgnoredFingerprints = []
+        ioQueue.async { [weak self] in
+            guard let self else { return }
+            try? self.fileManager.removeItem(at: self.fileURL)
+            self.lastWrittenData = nil
+        }
+        stateLock.unlock()
+    }
+
+    /// Order fence for save-then-load semantics across store instances: blocks
+    /// until every enqueued write/removal has completed on the IO queue.
+    func flushPendingDiskWrites() {
+        ioQueue.sync {}
     }
 
     @discardableResult
@@ -168,31 +225,34 @@ final class CodexAccountProfileStore {
         authJSON: String?,
         preferredAutoSlots: [CodexSlotID] = [.a, .b]
     ) -> [CodexAccountProfile] {
-        let existingProfiles = load()
+        stateLock.lock()
+        defer { stateLock.unlock() }
+
+        let existingProfiles = cachedProfiles
         guard let authJSON else {
-            return updateCurrentProfiles(existingProfiles, currentIdentityKey: nil, currentFingerprint: nil)
+            return updateCurrentProfilesLocked(existingProfiles, currentIdentityKey: nil, currentFingerprint: nil)
         }
 
         let trimmed = authJSON.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty,
               let payload = try? Self.parseAuthJSON(trimmed) else {
-            return updateCurrentProfiles(existingProfiles, currentIdentityKey: nil, currentFingerprint: nil)
+            return updateCurrentProfilesLocked(existingProfiles, currentIdentityKey: nil, currentFingerprint: nil)
         }
 
         var items = existingProfiles
         let currentFingerprint = payload.credentialFingerprint.lowercased()
         let currentIdentityKey = CodexIdentity.from(payload: payload).identityKey
-        let ignoredFingerprints = loadIgnoredFingerprints()
+        let ignoredFingerprints = cachedIgnoredFingerprints
 
         if ignoredFingerprints.contains(currentFingerprint) {
-            return updateCurrentProfiles(
+            return updateCurrentProfilesLocked(
                 items,
                 currentIdentityKey: currentIdentityKey,
                 currentFingerprint: currentFingerprint
             )
         }
 
-        if let existing = matchingIndex(for: payload, in: items) {
+        if let existing = Self.matchingIndex(for: payload, in: items) {
             let previous = items[existing]
             var updated = previous
             updated.authJSON = trimmed
@@ -213,7 +273,7 @@ final class CodexAccountProfileStore {
                 updated.lastImportedAt = Date()
             }
             items[existing] = updated
-            return updateCurrentProfiles(
+            return updateCurrentProfilesLocked(
                 items,
                 currentIdentityKey: currentIdentityKey,
                 currentFingerprint: currentFingerprint
@@ -242,7 +302,7 @@ final class CodexAccountProfileStore {
             )
         )
 
-        return updateCurrentProfiles(
+        return updateCurrentProfilesLocked(
             items,
             currentIdentityKey: currentIdentityKey,
             currentFingerprint: currentFingerprint
@@ -327,15 +387,33 @@ final class CodexAccountProfileStore {
         matchingIndex(for: probe(from: snapshot), in: profiles)
     }
 
-    private func load() -> [CodexAccountProfile] {
-        normalizeProfiles(loadFile().profiles)
+    /// Must be called with `stateLock` held. Updates the in-memory mirror and
+    /// enqueues the encode + write on the IO queue; enqueue order matches
+    /// mutation order, and content-identical payloads are dropped there.
+    private func commitLocked(items: [CodexAccountProfile], ignoredFingerprints: Set<String>) {
+        cachedProfiles = items
+        cachedIgnoredFingerprints = ignoredFingerprints
+        ioQueue.async { [weak self] in
+            guard let self else { return }
+            self.writeIfNeeded(Self.encodedData(profiles: items, ignoredFingerprints: ignoredFingerprints))
+        }
     }
 
-    private func loadIgnoredFingerprints() -> Set<String> {
-        Set(loadFile().ignoredFingerprints?.map { $0.lowercased() } ?? [])
+    /// IO-queue confined. Skips the write when the payload matches the last
+    /// successfully persisted one, so refresh cycles that leave the profile
+    /// file unchanged never touch the disk.
+    private func writeIfNeeded(_ data: Data?) {
+        guard let data, data != lastWrittenData else { return }
+        do {
+            try protectedFile.write(data)
+            lastWrittenData = data
+        } catch {
+            NSLog("[CodexAccountProfileStore] Failed to persist profiles: \(error.localizedDescription)")
+        }
     }
 
-    private func loadFile() -> ProfileFile {
+    /// IO-queue confined (cold start).
+    private func loadFileOnIOQueue() -> ProfileFile {
         let directory = fileURL.deletingLastPathComponent()
         try? fileManager.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         guard let data = try? Data(contentsOf: fileURL) else {
@@ -349,26 +427,23 @@ final class CodexAccountProfileStore {
         return ProfileFile(profiles: [], ignoredFingerprints: [])
     }
 
-    private func save(_ profiles: [CodexAccountProfile], ignoredFingerprints: Set<String> = []) throws {
-        let directory = fileURL.deletingLastPathComponent()
-        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+    private static func encodedData(profiles: [CodexAccountProfile], ignoredFingerprints: Set<String>) -> Data? {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        let data = try encoder.encode(
+        return try? encoder.encode(
             ProfileFile(
                 profiles: profiles,
                 ignoredFingerprints: ignoredFingerprints.isEmpty ? nil : ignoredFingerprints.sorted()
             )
         )
-        try protectedFile.write(data)
     }
 
-    private func normalizeProfiles(_ profiles: [CodexAccountProfile]) -> [CodexAccountProfile] {
+    private static func normalizeProfiles(_ profiles: [CodexAccountProfile]) -> [CodexAccountProfile] {
         profiles.map { normalizedProfile($0, payload: nil) }
     }
 
-    private func normalizedProfile(
+    private static func normalizedProfile(
         _ profile: CodexAccountProfile,
         payload: CodexParsedAuthPayload?
     ) -> CodexAccountProfile {
@@ -399,7 +474,7 @@ final class CodexAccountProfileStore {
         return updated
     }
 
-    private func matchingIndex(
+    private static func matchingIndex(
         for payload: CodexParsedAuthPayload,
         in profiles: [CodexAccountProfile]
     ) -> Int? {
@@ -496,13 +571,16 @@ final class CodexAccountProfileStore {
         return nil
     }
 
-    private func updateCurrentProfiles(
+    /// Must be called with `stateLock` held. Recomputes `isCurrentSystemAccount`
+    /// flags against the given identity and persists only when something
+    /// actually changed (same-content saves never reach the disk).
+    private func updateCurrentProfilesLocked(
         _ profiles: [CodexAccountProfile],
         currentIdentityKey: String?,
         currentFingerprint: String?
     ) -> [CodexAccountProfile] {
-        var items = normalizeProfiles(profiles)
-        let ignoredFingerprints = loadIgnoredFingerprints()
+        var items = Self.normalizeProfiles(profiles)
+        let ignoredFingerprints = cachedIgnoredFingerprints
         var changed = false
         let normalizedIdentityKey = CodexIdentity.normalizedIdentityKey(currentIdentityKey)
         for index in items.indices {
@@ -520,8 +598,8 @@ final class CodexAccountProfileStore {
                 changed = true
             }
         }
-        if changed || items != load() {
-            try? save(items, ignoredFingerprints: ignoredFingerprints)
+        if changed || items != cachedProfiles {
+            commitLocked(items: items, ignoredFingerprints: ignoredFingerprints)
         }
         return items.sorted { $0.slotID < $1.slotID }
     }

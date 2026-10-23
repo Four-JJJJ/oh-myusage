@@ -378,6 +378,31 @@ final class UsageDisplayFormatterTests: XCTestCase {
         XCTAssertEqual(LocalTrendValueFormatter.compactNumber(219_000_000, language: .zhHans), "2.2亿")
     }
 
+    func testSharedNumberFormattingMatchesLegacyCallSiteOutput() {
+        // Locale-pinned integer/decimal behavior (en_US_POSIX call sites).
+        XCTAssertEqual(SharedNumberFormatting.groupedInteger(1_234_567, localeID: "en_US_POSIX"), "1,234,567")
+        XCTAssertEqual(
+            SharedNumberFormatting.decimal(1_234.5, minFractionDigits: 2, maxFractionDigits: 2, localeID: "en_US_POSIX"),
+            "1,234.50"
+        )
+        XCTAssertEqual(
+            SharedNumberFormatting.decimal(1_234.5, minFractionDigits: 0, maxFractionDigits: 2, localeID: "en_US_POSIX"),
+            "1,234.5"
+        )
+        XCTAssertEqual(
+            SharedNumberFormatting.decimal(1_234.5, minFractionDigits: 0, maxFractionDigits: 0, grouping: false, localeID: "en_US_POSIX"),
+            "1234"
+        )
+        // Percent rendering follows the current locale; assert locale-stable shapes.
+        XCTAssertEqual(SharedNumberFormatting.percent(0.5, minFractionDigits: 0, maxFractionDigits: 1), "50%")
+        let decimalSeparator = Locale.current.decimalSeparator ?? "."
+        XCTAssertEqual(
+            SharedNumberFormatting.percent(0.1234, minFractionDigits: 1, maxFractionDigits: 1)
+                .replacingOccurrences(of: decimalSeparator, with: "."),
+            "12.3%"
+        )
+    }
+
     func testCompactNumberEnglishBoundaries() {
         XCTAssertEqual(LocalTrendValueFormatter.compactNumber(999, language: .en), "999")
         XCTAssertEqual(LocalTrendValueFormatter.compactNumber(1_000, language: .en), "1K")

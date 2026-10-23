@@ -2,8 +2,6 @@ import Foundation
 
 /// Executable composition boundary for App runtime dependency wiring.
 ///
-/// Layered `OhMyUsageBootstrap` / `OhMyUsageCompositionRoot` stay limited to pure Usage
-/// feature composition and must not import this executable or construct `AppViewModel`.
 /// Production and DEBUG `AppViewModel` initialization both build through this factory.
 @MainActor
 enum AppCompositionFactory {

@@ -3,7 +3,7 @@ import XCTest
 
 final class UIFileDecompositionBoundaryTests: XCTestCase {
     func testSettingsThresholdRowsStayInThresholdControls() throws {
-        let rootURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        let rootURL = packageRepositoryRootURL()
         let sharedHelpersURL = rootURL.appendingPathComponent("Sources/OhMyUsage/UI/Settings/SettingsSharedHelpers.swift")
         let thresholdControlsURL = rootURL.appendingPathComponent("Sources/OhMyUsage/UI/Settings/SettingsThresholdControls.swift")
         let sharedHelpers = try String(contentsOf: sharedHelpersURL, encoding: .utf8)
@@ -48,7 +48,7 @@ final class UIFileDecompositionBoundaryTests: XCTestCase {
     }
 
     func testSettingsQuotaHelpersStayInQuotaDisplayHelpers() throws {
-        let rootURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        let rootURL = packageRepositoryRootURL()
         let sharedHelpersURL = rootURL.appendingPathComponent("Sources/OhMyUsage/UI/Settings/SettingsSharedHelpers.swift")
         let quotaHelpersURL = rootURL.appendingPathComponent("Sources/OhMyUsage/UI/Settings/SettingsQuotaDisplayHelpers.swift")
         let sharedHelpers = try String(contentsOf: sharedHelpersURL, encoding: .utf8)
@@ -81,7 +81,7 @@ final class UIFileDecompositionBoundaryTests: XCTestCase {
     }
 
     func testMenuCardPrimitiveViewsStayOutOfMenuContentView() throws {
-        let rootURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        let rootURL = packageRepositoryRootURL()
         let menuContentURL = rootURL.appendingPathComponent("Sources/OhMyUsage/UI/MenuContentView.swift")
         let menuContent = try String(contentsOf: menuContentURL, encoding: .utf8)
         let menuContentLineCount = menuContent.split(separator: "\n", omittingEmptySubsequences: false).count

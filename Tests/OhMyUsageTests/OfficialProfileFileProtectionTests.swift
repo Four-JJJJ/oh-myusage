@@ -18,6 +18,9 @@ final class OfficialProfileFileProtectionTests: XCTestCase {
                 authJSON: "{\"tokens\":{\"access_token\":\"\(token)\"}}",
                 currentFingerprint: nil
             )
+            // Profile persistence is enqueued onto the store's IO queue; the
+            // flush fence guarantees the 0600 file has hit the disk.
+            store.flushPendingDiskWrites()
             XCTAssertEqual(try mode(url), 0o600)
             XCTAssertEqual(try mode(url.deletingLastPathComponent()), 0o700)
             XCTAssertEqual(store.profiles().count, 1)
@@ -40,6 +43,9 @@ final class OfficialProfileFileProtectionTests: XCTestCase {
                 credentialsJSON: "{\"accessToken\":\"\(token)\"}",
                 currentFingerprint: nil
             )
+            // Profile persistence is enqueued onto the store's IO queue; the
+            // flush fence guarantees the 0600 file has hit the disk.
+            store.flushPendingDiskWrites()
             XCTAssertEqual(try mode(url), 0o600)
             XCTAssertEqual(try mode(url.deletingLastPathComponent()), 0o700)
             XCTAssertEqual(store.profiles().count, 1)
@@ -75,6 +81,7 @@ final class OfficialProfileFileProtectionTests: XCTestCase {
             slotID: .a, displayName: "Fixture", note: nil,
             authJSON: "{\"tokens\":{\"access_token\":\"fixture\"}}", currentFingerprint: nil
         )
+        store.flushPendingDiskWrites()
         XCTAssertEqual(try mode(root), 0o755)
         XCTAssertEqual(try mode(url), 0o600)
     }

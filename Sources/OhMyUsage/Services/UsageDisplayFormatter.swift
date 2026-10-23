@@ -146,13 +146,13 @@ enum TraeValueDisplayFormatter {
         maxFractionDigits: Int,
         grouping: Bool = true
     ) -> String {
-        let formatter = NumberFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.numberStyle = .decimal
-        formatter.usesGroupingSeparator = grouping
-        formatter.minimumFractionDigits = max(0, minFractionDigits)
-        formatter.maximumFractionDigits = max(0, maxFractionDigits)
-        return formatter.string(from: NSNumber(value: value)) ?? String(format: "%.\(max(0, maxFractionDigits))f", value)
+        SharedNumberFormatting.decimal(
+            value,
+            minFractionDigits: minFractionDigits,
+            maxFractionDigits: maxFractionDigits,
+            grouping: grouping,
+            localeID: "en_US_POSIX"
+        )
     }
 
     private static func measuredWidth(_ text: String, font: NSFont) -> CGFloat {
@@ -526,9 +526,6 @@ enum LocalTrendValueFormatter {
     }
 
     private static func groupedInteger(_ value: Int, localeID: String) -> String {
-        let formatter = NumberFormatter()
-        formatter.locale = Locale(identifier: localeID)
-        formatter.numberStyle = .decimal
-        return formatter.string(from: NSNumber(value: value)) ?? "\(value)"
+        SharedNumberFormatting.groupedInteger(value, localeID: localeID)
     }
 }

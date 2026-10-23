@@ -5,9 +5,13 @@ package enum LocalSessionWatchKind: Equatable, Sendable {
     case claude
 }
 
-package protocol LocalSessionCompletionSignalSource {
-    func latestCodexCompletionAt() -> Date?
-    func latestClaudeCompletionAt() -> Date?
+/// Source of "latest completed local session turn" signals. Implementations
+/// may perform heavy synchronous IO, so the requirements are `async` and the
+/// conformance is `Sendable`: callers await off the main actor while the
+/// implementation hops to its own executor.
+package protocol LocalSessionCompletionSignalSource: Sendable {
+    func latestCodexCompletionAt() async -> Date?
+    func latestClaudeCompletionAt() async -> Date?
 }
 
 package struct ProviderRefreshScheduleDescriptor: Equatable, Sendable {
@@ -68,6 +72,11 @@ package struct ProviderRefreshSchedulerConfig: Equatable, Sendable {
     }
 }
 
+/// Debounces local-session signal reads into refresh triggers. The state and
+/// the 15s minimum event refresh gap stay on the main actor; awaiting the
+/// signal source hops to the source's executor so the heavy IO behind signal
+/// reads never blocks the main thread.
+@MainActor
 package final class LocalSessionRefreshCoordinator {
     private let signalSource: LocalSessionCompletionSignalSource
     private let minimumEventRefreshGap: TimeInterval
@@ -85,12 +94,12 @@ package final class LocalSessionRefreshCoordinator {
         self.nowProvider = nowProvider
     }
 
-    package func refreshCandidates(from providers: [ProviderRefreshScheduleDescriptor]) -> [String] {
+    package func refreshCandidates(from providers: [ProviderRefreshScheduleDescriptor]) async -> [String] {
         let now = nowProvider()
         var output: [String] = []
 
         for descriptor in providers where descriptor.isEnabled {
-            guard let signalAt = latestSignal(for: descriptor.localSessionWatchKind) else {
+            guard let signalAt = await latestSignal(for: descriptor.localSessionWatchKind) else {
                 continue
             }
             let lastProcessed = lastProcessedSignalAt[descriptor.id] ?? .distantPast
@@ -110,12 +119,12 @@ package final class LocalSessionRefreshCoordinator {
         return output
     }
 
-    private func latestSignal(for watchKind: LocalSessionWatchKind?) -> Date? {
+    private func latestSignal(for watchKind: LocalSessionWatchKind?) async -> Date? {
         switch watchKind {
         case .codex:
-            return signalSource.latestCodexCompletionAt()
+            return await signalSource.latestCodexCompletionAt()
         case .claude:
-            return signalSource.latestClaudeCompletionAt()
+            return await signalSource.latestClaudeCompletionAt()
         case nil:
             return nil
         }
@@ -429,7 +438,11 @@ package final class ProviderRefreshScheduler {
                 return
             }
 
-            let refreshTargetIDs = localSessionRefreshCoordinator.refreshCandidates(from: watchTargets)
+            // The signal reads inside hop to the monitor's executor; the loop
+            // skeleton (cadence, idle cycles, cancellation) stays on the main
+            // actor and resumes here once the probes are done.
+            let refreshTargetIDs = await localSessionRefreshCoordinator.refreshCandidates(from: watchTargets)
+            guard !Task.isCancelled else { return }
             if refreshTargetIDs.isEmpty {
                 idleCycles += 1
             } else {

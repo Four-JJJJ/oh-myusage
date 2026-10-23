@@ -867,8 +867,8 @@ private final class NetworkOnlineFlag: @unchecked Sendable {
 }
 
 private final class FakeLocalSessionSignalSource: LocalSessionCompletionSignalSource {
-    var codexCompletionAt: Date?
-    var claudeCompletionAt: Date?
+    let codexCompletionAt: Date?
+    let claudeCompletionAt: Date?
 
     init(codexCompletionAt: Date? = nil, claudeCompletionAt: Date? = nil) {
         self.codexCompletionAt = codexCompletionAt

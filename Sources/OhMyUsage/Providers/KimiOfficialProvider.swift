@@ -109,15 +109,7 @@ final class KimiOfficialProvider: UsageProvider, @unchecked Sendable {
         guard let http = response as? HTTPURLResponse else {
             throw ProviderError.invalidResponse("Kimi non-http response")
         }
-        if http.statusCode == 401 || http.statusCode == 403 {
-            throw ProviderError.unauthorized
-        }
-        if http.statusCode == 429 {
-            throw ProviderError.rateLimited
-        }
-        guard (200...299).contains(http.statusCode) else {
-            throw ProviderError.invalidResponse("Kimi http \(http.statusCode)")
-        }
+        try HTTPResponseValidation.validate(http, urlDescription: "Kimi", body: data)
         guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw ProviderError.invalidResponse("Kimi response decode failed")
         }
@@ -143,8 +135,9 @@ final class KimiOfficialProvider: UsageProvider, @unchecked Sendable {
     }
 
     internal static func planCacheKey(descriptor: ProviderDescriptor, accessToken: String) -> String {
-        let tokenTail = accessToken.suffix(16)
-        return "\(descriptor.id)|plan|\(tokenTail)"
+        // SHA-256 fingerprint instead of the raw JWT signature tail: cache keys
+        // must not carry reversible credential material.
+        return "\(descriptor.id)|plan|\(CredentialFingerprint.sha256Hex(accessToken))"
     }
 
     private func loadCredentials() throws -> KimiOfficialCredentials {

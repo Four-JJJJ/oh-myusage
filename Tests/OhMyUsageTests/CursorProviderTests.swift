@@ -70,6 +70,64 @@ final class CursorProviderTests: XCTestCase {
         XCTAssertEqual(refreshRequestCount, 0)
     }
 
+    func testFetchMaps429WithRetryAfterToProviderRateLimitError() async throws {
+        let provider = makeProvider()
+        let startedAt = Date()
+
+        var usageRequestCount = 0
+        CursorMockURLProtocol.requestHandler = { request in
+            if request.url?.path == "/api/usage-summary" {
+                usageRequestCount += 1
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 429,
+                    httpVersion: nil,
+                    headerFields: ["Retry-After": "120"]
+                )!
+                return (response, Data())
+            }
+            XCTFail("429 must not trigger a credential refresh")
+            let response = HTTPURLResponse(url: request.url!, statusCode: 429, httpVersion: nil, headerFields: nil)!
+            return (response, Data())
+        }
+        defer { CursorMockURLProtocol.requestHandler = nil }
+
+        do {
+            _ = try await provider.fetch()
+            XCTFail("Expected ProviderRateLimitError")
+        } catch let error as ProviderRateLimitError {
+            XCTAssertEqual(
+                error.retryNotBefore.timeIntervalSince(startedAt),
+                120,
+                accuracy: 5
+            )
+        } catch {
+            XCTFail("Expected ProviderRateLimitError, got \(error)")
+        }
+        XCTAssertEqual(usageRequestCount, 1)
+    }
+
+    func testFetchMaps5xxToTimeout() async throws {
+        let provider = makeProvider()
+
+        CursorMockURLProtocol.requestHandler = { request in
+            let response = HTTPURLResponse(url: request.url!, statusCode: 503, httpVersion: nil, headerFields: nil)!
+            return (response, Data())
+        }
+        defer { CursorMockURLProtocol.requestHandler = nil }
+
+        do {
+            _ = try await provider.fetch()
+            XCTFail("Expected timeout")
+        } catch let error as ProviderError {
+            guard case .timeout = error else {
+                return XCTFail("Expected timeout, got \(error)")
+            }
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
     func testFetchMissingStateDatabaseDoesNotTouchNetwork() async throws {
         let missingPath = NSTemporaryDirectory() + "cursor-missing-\(UUID().uuidString)/state.vscdb"
         let provider = makeProvider(stateDatabasePath: missingPath)

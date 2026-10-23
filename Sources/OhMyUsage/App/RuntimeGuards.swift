@@ -29,7 +29,10 @@ final class SingleInstanceLock {
             return true
         }
 
-        fd = open(lockPath, O_CREAT | O_RDWR, S_IRUSR | S_IWUSR)
+        // O_NOFOLLOW: never open (or create behind) a symlinked lock path in
+        // shared /tmp; a tampered path fails open(2) with ELOOP, which lands in
+        // the same "lock unavailable" branch as an already-locked file.
+        fd = open(lockPath, O_CREAT | O_RDWR | O_NOFOLLOW, S_IRUSR | S_IWUSR)
         guard fd != -1 else {
             return false
         }

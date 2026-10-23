@@ -3,80 +3,6 @@ import OhMyUsageDomain
 import XCTest
 
 final class ProviderConfigurationDomainBoundaryTests: XCTestCase {
-    func testProviderConfigurationIsPublicDomainCodableEquatableSendableValue() throws {
-        assertCodableEquatableSendable(ProviderConfiguration.self)
-        assertCodableEquatableSendable(ProviderSettings.self)
-
-        let configuration = ProviderConfiguration(
-            id: "codex-official",
-            name: "Official Codex",
-            family: .official,
-            type: .codex,
-            settings: ProviderSettings(
-                enabled: true,
-                pollIntervalSec: 180,
-                threshold: AlertRule(lowRemaining: 20, maxConsecutiveFailures: 2, notifyOnAuthError: true),
-                auth: AuthConfig(kind: .localCodex),
-                showInMenuBar: true,
-                baseURL: "https://chatgpt.com",
-                officialConfig: OfficialProviderConfig(quotaDisplayMode: .used)
-            )
-        )
-
-        let roundTripped = try JSONDecoder().decode(
-            ProviderConfiguration.self,
-            from: JSONEncoder().encode(configuration)
-        )
-
-        XCTAssertEqual(roundTripped, configuration)
-        XCTAssertEqual(roundTripped.settings.officialConfig?.quotaDisplayMode, .used)
-    }
-
-    func testProviderConfigurationDoesNotPersistPresentationOrRuntimeFields() throws {
-        let json = """
-        {
-          "id": "relay-example",
-          "name": "Relay Example",
-          "family": "thirdParty",
-          "type": "relay",
-          "enabled": true,
-          "pollIntervalSec": 120,
-          "threshold": {
-            "lowRemaining": 10,
-            "maxConsecutiveFailures": 3,
-            "notifyOnAuthError": true
-          },
-          "auth": {
-            "kind": "bearer",
-            "keychainService": "OhMyUsage",
-            "keychainAccount": "relay.example/sk-token"
-          },
-          "showInMenuBar": true,
-          "baseURL": "https://relay.example",
-          "displayName": "Runtime display name",
-          "icon": "menu_relay_icon",
-          "settingsSpec": { "sections": [] },
-          "factory": "RelayProviderFactory",
-          "providerRuntime": { "lastRefreshStarted": 1700000000 }
-        }
-        """
-
-        let configuration = try JSONDecoder().decode(
-            ProviderConfiguration.self,
-            from: Data(json.utf8)
-        )
-        let encoded = try XCTUnwrap(
-            try JSONSerialization.jsonObject(with: JSONEncoder().encode(configuration)) as? [String: Any]
-        )
-
-        XCTAssertEqual(configuration.id, "relay-example")
-        XCTAssertNil(encoded["displayName"])
-        XCTAssertNil(encoded["icon"])
-        XCTAssertNil(encoded["settingsSpec"])
-        XCTAssertNil(encoded["factory"])
-        XCTAssertNil(encoded["providerRuntime"])
-    }
-
     func testAuthConfigAndAlertRuleAreDomainCodableValues() throws {
         let auth = try JSONDecoder().decode(
             AuthConfig.self,
@@ -213,6 +139,4 @@ final class ProviderConfigurationDomainBoundaryTests: XCTestCase {
         XCTAssertEqual(openConfig.accountBalance?.auth.kind, .bearer)
         XCTAssertEqual(openConfig.accountBalance?.unit, "token")
     }
-
-    private func assertCodableEquatableSendable<T: Codable & Equatable & Sendable>(_ type: T.Type) {}
 }

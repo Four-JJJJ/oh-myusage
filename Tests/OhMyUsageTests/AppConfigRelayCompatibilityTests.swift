@@ -80,7 +80,7 @@ final class AppConfigRelayCompatibilityTests: XCTestCase {
     }
 
     func testLegacyDefaultProviderConstructorsAreIsolatedFromCurrentDefaults() throws {
-        let rootURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        let rootURL = packageRepositoryRootURL()
         let facadesURL = rootURL.appendingPathComponent("Sources/OhMyUsage/Models/ProviderDescriptor+CatalogFacades.swift")
         let legacyDefaultsURL = rootURL.appendingPathComponent("Sources/OhMyUsage/Models/ProviderDescriptor+LegacyDefaults.swift")
         let facadesSource = try String(contentsOf: facadesURL, encoding: .utf8)

@@ -20,7 +20,13 @@ struct LocalSessionCompletionSignalDiagnostics: Equatable, Sendable {
     }
 }
 
-final class LocalSessionCompletionSignalMonitor: LocalSessionCompletionSignalSource {
+/// Watches local Codex/Claude session activity for freshly completed turns.
+/// Scans perform synchronous file and SQLite IO (stat, per-scan connections,
+/// directory enumeration, JSONL parsing), so this is an actor: probes run
+/// serialized on a background executor and never block the main thread. Each
+/// scan opens and closes its own SQLite connection, and actor serialization
+/// guarantees a connection is never shared across concurrent threads.
+actor LocalSessionCompletionSignalMonitor: LocalSessionCompletionSignalSource {
     private struct ClaudeFileState {
         var modifiedAtRef: TimeInterval
         var fileSize: UInt64

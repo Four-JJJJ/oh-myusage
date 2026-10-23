@@ -1,8 +1,6 @@
 import Foundation
 import OhMyUsageApplication
-import OhMyUsageBootstrap
 import OhMyUsageDomain
-import OhMyUsageFeatures
 import OhMyUsageInfrastructure
 import OhMyUsagePresentation
 import XCTest
@@ -12,35 +10,27 @@ final class ArchitectureTargetBoundaryTests: XCTestCase {
         let rules: [(directory: String, forbiddenImports: [String])] = [
             (
                 "Sources/OhMyUsageDomain",
-                ["OhMyUsage", "OhMyUsageApplication", "OhMyUsageInfrastructure", "OhMyUsageProviders", "OhMyUsagePresentation", "OhMyUsageFeatures", "OhMyUsageBootstrap", "SwiftUI", "AppKit", "Security", "LocalAuthentication"]
+                ["OhMyUsage", "OhMyUsageApplication", "OhMyUsageInfrastructure", "OhMyUsageProviders", "OhMyUsagePresentation", "SwiftUI", "AppKit", "Security", "LocalAuthentication"]
             ),
             (
                 "Sources/OhMyUsageInfrastructure",
-                ["OhMyUsage", "OhMyUsageApplication", "OhMyUsageProviders", "OhMyUsagePresentation", "OhMyUsageFeatures", "OhMyUsageBootstrap", "SwiftUI", "AppKit"]
+                ["OhMyUsage", "OhMyUsageApplication", "OhMyUsageProviders", "OhMyUsagePresentation", "SwiftUI", "AppKit"]
             ),
             (
                 "Sources/OhMyUsageProviders",
-                ["OhMyUsage", "OhMyUsageApplication", "OhMyUsageInfrastructure", "OhMyUsagePresentation", "OhMyUsageFeatures", "OhMyUsageBootstrap", "SwiftUI", "AppKit"]
+                ["OhMyUsage", "OhMyUsageApplication", "OhMyUsageInfrastructure", "OhMyUsagePresentation", "SwiftUI", "AppKit"]
             ),
             (
                 "Sources/OhMyUsageApplication",
-                ["OhMyUsage", "OhMyUsageInfrastructure", "OhMyUsageProviders", "OhMyUsagePresentation", "OhMyUsageFeatures", "OhMyUsageBootstrap", "SwiftUI", "AppKit"]
+                ["OhMyUsage", "OhMyUsageInfrastructure", "OhMyUsageProviders", "OhMyUsagePresentation", "SwiftUI", "AppKit"]
             ),
             (
                 "Sources/OhMyUsagePresentation",
-                ["OhMyUsage", "OhMyUsageApplication", "OhMyUsageInfrastructure", "OhMyUsageProviders", "OhMyUsageFeatures", "OhMyUsageBootstrap", "AppKit"]
-            ),
-            (
-                "Sources/OhMyUsageFeatures",
-                ["OhMyUsage", "OhMyUsageBootstrap"]
-            ),
-            (
-                "Sources/OhMyUsageBootstrap",
-                ["OhMyUsage"]
+                ["OhMyUsage", "OhMyUsageApplication", "OhMyUsageInfrastructure", "OhMyUsageProviders", "AppKit"]
             )
         ]
 
-        let rootURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        let rootURL = packageRepositoryRootURL()
         for rule in rules {
             let directoryURL = rootURL.appendingPathComponent(rule.directory)
             let sourceFiles = try swiftFiles(in: directoryURL)
@@ -64,9 +54,7 @@ final class ArchitectureTargetBoundaryTests: XCTestCase {
             "OhMyUsageInfrastructure": ["OhMyUsageDomain"],
             "OhMyUsageProviders": ["OhMyUsageDomain"],
             "OhMyUsageApplication": ["OhMyUsageDomain"],
-            "OhMyUsagePresentation": ["OhMyUsageDomain"],
-            "OhMyUsageFeatures": ["OhMyUsageDomain", "OhMyUsageApplication", "OhMyUsagePresentation"],
-            "OhMyUsageBootstrap": ["OhMyUsageDomain", "OhMyUsageApplication", "OhMyUsageFeatures", "OhMyUsagePresentation"]
+            "OhMyUsagePresentation": ["OhMyUsageDomain"]
         ]
 
         let nonExecutableTargets = targets.values.filter { $0.kind == .regular }
@@ -105,9 +93,7 @@ final class ArchitectureTargetBoundaryTests: XCTestCase {
             "OhMyUsageInfrastructure",
             "OhMyUsageProviders",
             "OhMyUsageApplication",
-            "OhMyUsagePresentation",
-            "OhMyUsageFeatures",
-            "OhMyUsageBootstrap"
+            "OhMyUsagePresentation"
         ]
         let testAllowedDependencies = executableAllowedDependencies.union(["OhMyUsage"])
 
@@ -126,7 +112,7 @@ final class ArchitectureTargetBoundaryTests: XCTestCase {
     }
 
     func testPackageNonExecutableTargetsDoNotImportUIFrameworks() throws {
-        let rootURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        let rootURL = packageRepositoryRootURL()
         let targets = try packageManifestTargets()
         let forbiddenUIImports: Set<String> = ["SwiftUI", "AppKit"]
 
@@ -147,7 +133,7 @@ final class ArchitectureTargetBoundaryTests: XCTestCase {
     }
 
     func testRuntimeDiagnosticsDarwinMachImportStaysExplicitlyAllowlisted() throws {
-        let rootURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        let rootURL = packageRepositoryRootURL()
         let targets = try packageManifestTargets()
         let expectedExceptions: [String: Set<String>] = [
             "Sources/OhMyUsageApplication/RuntimeDiagnostics.swift": ["Darwin.Mach"]
@@ -172,80 +158,6 @@ final class ArchitectureTargetBoundaryTests: XCTestCase {
             expectedExceptions,
             "RuntimeDiagnostics.swift may keep the current Darwin.Mach diagnostics import; add a focused allowlist entry before introducing another non-executable platform exception"
         )
-    }
-
-    func testBootstrapAndFeatureAssemblyExposePureUsageCompositionWithoutRuntimeIntegration() throws {
-        let rootURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-        let featureAssemblyURL = rootURL.appendingPathComponent("Sources/OhMyUsageFeatures/UsageFeatureAssembly.swift")
-        let compositionRootURL = rootURL.appendingPathComponent("Sources/OhMyUsageBootstrap/OhMyUsageCompositionRoot.swift")
-        let featureAssembly = try String(contentsOf: featureAssemblyURL, encoding: .utf8)
-        let compositionRoot = try String(contentsOf: compositionRootURL, encoding: .utf8)
-
-        let providerID = try XCTUnwrap(UsageProviderIdentity("codex"))
-        let snapshot = UsageQuotaSnapshot(
-            used: 32,
-            limit: 80,
-            capturedAtUnixSeconds: 1_700_000_000
-        )
-        let assembly = UsageFeatureAssembly()
-        let descriptor = assembly.makeUsageFeatureDescriptor(
-            providerID: providerID,
-            title: "Codex",
-            defaultForceRefresh: true
-        )
-        let request = assembly.makeRefreshRequest(for: descriptor)
-        let summary = assembly.makeSummaryViewState(for: descriptor, snapshot: snapshot)
-        let composition = OhMyUsageCompositionRoot(featureAssembly: assembly)
-        let composedRequest = composition.makeUsageRefreshRequest(for: descriptor, forceRefresh: false)
-        let composedSummary = composition.makeUsageSummaryViewState(for: descriptor, snapshot: snapshot)
-
-        XCTAssertEqual(descriptor.providerID, providerID)
-        XCTAssertEqual(descriptor.title, "Codex")
-        XCTAssertTrue(descriptor.defaultForceRefresh)
-        XCTAssertEqual(request.providerID, providerID)
-        XCTAssertTrue(request.forceRefresh)
-        XCTAssertEqual(summary.providerID, providerID)
-        XCTAssertEqual(summary.title, "Codex")
-        XCTAssertEqual(summary.usageRatio, 0.4)
-        XCTAssertEqual(composedRequest.providerID, providerID)
-        XCTAssertFalse(composedRequest.forceRefresh)
-        XCTAssertEqual(composedSummary, summary)
-
-        XCTAssertTrue(featureAssembly.contains("makeRefreshRequest"))
-        XCTAssertTrue(featureAssembly.contains("makeSummaryViewState"))
-        XCTAssertTrue(compositionRoot.contains("makeUsageRefreshRequest"))
-        XCTAssertTrue(compositionRoot.contains("makeUsageSummaryViewState"))
-        XCTAssertTrue(
-            compositionRoot.contains("AppCompositionFactory"),
-            "Bootstrap docs should clarify that executable App wiring lives in AppCompositionFactory"
-        )
-        XCTAssertTrue(
-            compositionRoot.contains("AppDependencyGraph"),
-            "Bootstrap docs should clarify that executable App wiring lives in AppDependencyGraph"
-        )
-        XCTAssertFalse(featureAssembly.contains("refreshUseCaseTypeName"))
-        XCTAssertFalse(featureAssembly.contains("summaryViewStateTypeName"))
-
-        for completeRuntimeResponsibility in [
-            "AppViewModel",
-            "StatusBarController",
-            "SettingsWindowController",
-            "NSApplication",
-            "ProviderDescriptor",
-            "makeApplication",
-            "makeAppViewModel",
-            "makeProvider",
-            "startRuntime"
-        ] {
-            XCTAssertFalse(
-                featureAssembly.contains(completeRuntimeResponsibility),
-                "UsageFeatureAssembly should stay a pure value assembly boundary and must not claim complete runtime integration through \(completeRuntimeResponsibility)"
-            )
-            XCTAssertFalse(
-                compositionRoot.contains(completeRuntimeResponsibility),
-                "OhMyUsageCompositionRoot should stay a bootstrap composition boundary and must not claim complete runtime integration through \(completeRuntimeResponsibility)"
-            )
-        }
     }
 
     func testNonExecutableTargetsExposeExplicitResponsibilities() throws {
@@ -308,18 +220,10 @@ final class ArchitectureTargetBoundaryTests: XCTestCase {
                     "OfficialMonitoringHealthPresenter.swift",
                     "QuotaBlockagePolicy.swift"
                 ]
-            ),
-            (
-                "Sources/OhMyUsageFeatures",
-                ["UsageFeatureAssembly.swift", "UsageFeatureDescriptor.swift"]
-            ),
-            (
-                "Sources/OhMyUsageBootstrap",
-                ["OhMyUsageCompositionRoot.swift"]
             )
         ]
 
-        let rootURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        let rootURL = packageRepositoryRootURL()
         for requirement in requiredResponsibilityFiles {
             let directoryURL = rootURL.appendingPathComponent(requirement.directory)
             let sourceFiles = try swiftFiles(in: directoryURL)
@@ -373,8 +277,6 @@ final class ArchitectureTargetBoundaryTests: XCTestCase {
             title: "Codex",
             snapshot: snapshot
         )
-        let featureAssembly = UsageFeatureAssembly()
-        let compositionRoot = OhMyUsageCompositionRoot(featureAssembly: featureAssembly)
 
         XCTAssertEqual(request.providerID, providerID)
         XCTAssertEqual(providerType.rawValue, "codex")
@@ -382,10 +284,6 @@ final class ArchitectureTargetBoundaryTests: XCTestCase {
         XCTAssertEqual(usageSnapshot.quotaWindows.first?.resetSource, .official)
         XCTAssertEqual(usageSnapshot.quotaWindows.first?.confidence, .confirmed)
         XCTAssertEqual(summary.usageRatio, 0.25)
-        XCTAssertEqual(
-            compositionRoot.makeUsageSummaryViewState(providerID: providerID, title: "Codex", snapshot: snapshot),
-            summary
-        )
 
         let normalized = CodexQuotaDisplayNormalizer.normalize(
             snapshot: usageSnapshot,
@@ -418,7 +316,7 @@ final class ArchitectureTargetBoundaryTests: XCTestCase {
     }
 
     func testProviderConfigurationValueObjectsAreOwnedByDomainTarget() throws {
-        let rootURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        let rootURL = packageRepositoryRootURL()
         let domainURL = rootURL.appendingPathComponent("Sources/OhMyUsageDomain")
         let executableModelsURL = rootURL.appendingPathComponent("Sources/OhMyUsage/Models")
 
@@ -576,7 +474,7 @@ final class ArchitectureTargetBoundaryTests: XCTestCase {
     }
 
     func testDomainTargetDoesNotOwnProviderRuntimeOrConfigurationPolicy() throws {
-        let rootURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        let rootURL = packageRepositoryRootURL()
         let domainURL = rootURL.appendingPathComponent("Sources/OhMyUsageDomain")
         let domainFiles = try swiftFiles(in: domainURL)
 
@@ -612,7 +510,7 @@ final class ArchitectureTargetBoundaryTests: XCTestCase {
     }
 
     func testNonExecutableTargetsDoNotReferenceExecutableCompositionTypes() throws {
-        let rootURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        let rootURL = packageRepositoryRootURL()
         let targets = try packageManifestTargets()
         let forbiddenTypeReferences = ["AppCompositionFactory", "AppDependencyGraph"]
 
@@ -640,7 +538,7 @@ final class ArchitectureTargetBoundaryTests: XCTestCase {
     }
 
     func testProviderStateStoreWritesAreOwnedByRefreshModel() throws {
-        let rootURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        let rootURL = packageRepositoryRootURL()
         let refreshModelURL = rootURL.appendingPathComponent("Sources/OhMyUsage/App/AppProviderRefreshModel.swift")
         let appViewModelURL = rootURL.appendingPathComponent("Sources/OhMyUsage/App/AppViewModel.swift")
         let sessionStoreURL = rootURL.appendingPathComponent("Sources/OhMyUsage/App/AppSessionStore.swift")

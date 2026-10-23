@@ -124,4 +124,95 @@ final class OfficialProviderAuthRuntimeTests: XCTestCase {
 
         XCTAssertEqual(events, ["request:1", "refresh:1", "request:2"])
     }
+
+    func testRequestOAuthRefreshMaps429WithRetryAfterToProviderRateLimitError() async throws {
+        let startedAt = Date()
+        let session = makeMockSession(statusCode: 429, headers: ["Retry-After": "90"])
+
+        do {
+            _ = try await OfficialProviderAuthRuntime.requestOAuthRefresh(
+                session: session,
+                request: URLRequest(url: URL(string: "https://auth.example.com/token")!),
+                invalidResponseMessage: "refresh invalid response",
+                missingAccessTokenMessage: "missing refresh access_token",
+                httpErrorMessage: { "refresh http \($0)" }
+            )
+            XCTFail("Expected ProviderRateLimitError")
+        } catch let error as ProviderRateLimitError {
+            XCTAssertEqual(
+                error.retryNotBefore.timeIntervalSince(startedAt),
+                90,
+                accuracy: 5
+            )
+        } catch {
+            XCTFail("Expected ProviderRateLimitError, got \(error)")
+        }
+    }
+
+    func testRequestOAuthRefreshKeepsUnauthorizedStatusCodesAndCustomMessage() async throws {
+        let session = makeMockSession(statusCode: 400, headers: nil)
+
+        do {
+            _ = try await OfficialProviderAuthRuntime.requestOAuthRefresh(
+                session: session,
+                request: URLRequest(url: URL(string: "https://auth.example.com/token")!),
+                invalidResponseMessage: "refresh invalid response",
+                missingAccessTokenMessage: "missing refresh access_token",
+                httpErrorMessage: { "refresh http \($0)" }
+            )
+            XCTFail("Expected unauthorized")
+        } catch let error as ProviderError {
+            guard case .unauthorized = error else {
+                return XCTFail("Expected unauthorized, got \(error)")
+            }
+        }
+
+        let invalidSession = makeMockSession(statusCode: 404, headers: nil)
+        do {
+            _ = try await OfficialProviderAuthRuntime.requestOAuthRefresh(
+                session: invalidSession,
+                request: URLRequest(url: URL(string: "https://auth.example.com/token")!),
+                invalidResponseMessage: "refresh invalid response",
+                missingAccessTokenMessage: "missing refresh access_token",
+                httpErrorMessage: { "refresh http \($0)" }
+            )
+            XCTFail("Expected invalidResponse")
+        } catch let error as ProviderError {
+            guard case .invalidResponse(let detail) = error else {
+                return XCTFail("Expected invalidResponse, got \(error)")
+            }
+            XCTAssertEqual(detail, "refresh http 404")
+        }
+    }
+
+    private func makeMockSession(statusCode: Int, headers: [String: String]?) -> URLSession {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [AuthRuntimeMockURLProtocol.self]
+        AuthRuntimeMockURLProtocol.response = HTTPURLResponse(
+            url: URL(string: "https://auth.example.com/token")!,
+            statusCode: statusCode,
+            httpVersion: nil,
+            headerFields: headers
+        )!
+        return URLSession(configuration: configuration)
+    }
+}
+
+private final class AuthRuntimeMockURLProtocol: URLProtocol {
+    nonisolated(unsafe) static var response: HTTPURLResponse?
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        guard let response = Self.response else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
+            return
+        }
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Data())
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
 }

@@ -43,7 +43,7 @@ struct ClaudeAutoCaptureCompactionResult {
     var didCompact: Bool
 }
 
-final class ClaudeAccountProfileStore {
+final class ClaudeAccountProfileStore: @unchecked Sendable {
     private struct ProfileFile: Codable {
         var profiles: [ClaudeAccountProfile]
         var ignoredFingerprints: [String]?
@@ -52,6 +52,19 @@ final class ClaudeAccountProfileStore {
     private let fileURL: URL
     private let fileManager: FileManager
     private let protectedFile: PrivateProfileFile
+    /// Official refreshes re-sync profile state on the main actor every cycle,
+    /// so JSON encoding and file IO live on this serial queue; MainActor callers
+    /// only touch the in-memory mirror and enqueue writes.
+    private let ioQueue = DispatchQueue(label: "OhMyUsage.claudeProfileStore.io", qos: .utility)
+    /// Guards the in-memory profile mirror (read-modify-write atomicity). Never
+    /// held while the IO queue executes a write.
+    private let stateLock = NSLock()
+    /// In-memory mirror of the persisted `ProfileFile`, always normalized.
+    private var cachedProfiles: [ClaudeAccountProfile]
+    private var cachedIgnoredFingerprints: Set<String>
+    /// IO-queue confined: the last payload successfully written to disk. Saves
+    /// whose encoded content matches it are skipped entirely.
+    private var lastWrittenData: Data?
 
     init(fileManager: FileManager = .default, fileURL: URL? = nil) {
         self.fileManager = fileManager
@@ -63,14 +76,32 @@ final class ClaudeAccountProfileStore {
         self.protectedFile = PrivateProfileFile(url: self.fileURL, fileManager: fileManager, ownsParentDirectory: fileURL == nil)
         do { try protectedFile.protectExistingFile() }
         catch { NSLog("[ClaudeAccountProfileStore] Unable to restrict profile file permissions") }
+        self.cachedProfiles = []
+        self.cachedIgnoredFingerprints = []
+        // One-time cold-start read, serialized on the IO queue so every disk
+        // access for this store is queue-confined. The loaded state also seeds
+        // the dedupe fingerprint so a no-op first save never rewrites the file.
+        ioQueue.sync {
+            let file = self.loadFileOnIOQueue()
+            let normalized = file.profiles.map { Self.normalizedProfile($0) }
+            self.cachedProfiles = normalized
+            self.cachedIgnoredFingerprints = Set(file.ignoredFingerprints?.map { $0.lowercased() } ?? [])
+            self.lastWrittenData = Self.encodedData(profiles: normalized, ignoredFingerprints: self.cachedIgnoredFingerprints)
+        }
     }
 
     func profiles() -> [ClaudeAccountProfile] {
-        load().sorted { $0.slotID < $1.slotID }
+        stateLock.lock()
+        let current = cachedProfiles
+        stateLock.unlock()
+        return current.sorted { $0.slotID < $1.slotID }
     }
 
     func profile(slotID: CodexSlotID) -> ClaudeAccountProfile? {
-        load().first(where: { $0.slotID == slotID })
+        stateLock.lock()
+        let matched = cachedProfiles.first(where: { $0.slotID == slotID })
+        stateLock.unlock()
+        return matched
     }
 
     func matchingProfile(credentialsJSON: String) -> ClaudeAccountProfile? {
@@ -79,15 +110,18 @@ final class ClaudeAccountProfileStore {
               let parsedPayload = try? Self.parseCredentialsJSON(trimmed) else {
             return nil
         }
-        let items = load()
-        guard let index = Self.matchingIndex(for: parsedPayload, in: items) else {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        guard let index = Self.matchingIndex(for: parsedPayload, in: cachedProfiles) else {
             return nil
         }
-        return items[index]
+        return cachedProfiles[index]
     }
 
     func nextAvailableSlotID() -> CodexSlotID {
-        let existing = Set(load().map(\.slotID))
+        stateLock.lock()
+        let existing = Set(cachedProfiles.map(\.slotID))
+        stateLock.unlock()
         return CodexSlotID.nextAvailable(excluding: existing)
     }
 
@@ -112,10 +146,6 @@ final class ClaudeAccountProfileStore {
             configDir: resolvedConfigDir
         )
 
-        var items = load()
-        var ignoredFingerprints = loadIgnoredFingerprints()
-        ignoredFingerprints.remove(payload.credentialFingerprint.lowercased())
-
         var profile = ClaudeAccountProfile(
             slotID: slotID,
             displayName: Self.fallbackDisplayName(displayName, slotID: slotID),
@@ -129,7 +159,13 @@ final class ClaudeAccountProfileStore {
             lastImportedAt: Date(),
             isCurrentSystemAccount: payload.credentialFingerprint.lowercased() == currentFingerprint?.lowercased()
         )
-        profile = normalizedProfile(profile)
+        profile = Self.normalizedProfile(profile)
+
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        var items = cachedProfiles
+        var ignoredFingerprints = cachedIgnoredFingerprints
+        ignoredFingerprints.remove(payload.credentialFingerprint.lowercased())
 
         if let matched = Self.matchingIndex(for: payload, in: items),
            items[matched].slotID != slotID {
@@ -143,7 +179,7 @@ final class ClaudeAccountProfileStore {
             items.append(profile)
         }
 
-        try save(items, ignoredFingerprints: ignoredFingerprints)
+        commitLocked(items: items, ignoredFingerprints: ignoredFingerprints)
         return profile
     }
 
@@ -157,12 +193,14 @@ final class ClaudeAccountProfileStore {
         credentialsJSON: String?
     ) throws -> ClaudeAccountProfile? {
         let resolvedConfigDir = Self.normalizedConfigDirectory(configDir)
-        var items = load()
-        guard let existingIndex = items.firstIndex(where: { $0.slotID == slotID }) else {
+
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        guard let existingIndex = cachedProfiles.firstIndex(where: { $0.slotID == slotID }) else {
             return nil
         }
 
-        let existingProfile = items[existingIndex]
+        let existingProfile = cachedProfiles[existingIndex]
         guard Self.credentialInputsUnchanged(
             profile: existingProfile,
             source: source,
@@ -175,13 +213,14 @@ final class ClaudeAccountProfileStore {
         var updatedProfile = existingProfile
         updatedProfile.displayName = Self.fallbackDisplayName(displayName, slotID: slotID)
         updatedProfile.note = Self.normalizedNote(note)
-        updatedProfile = normalizedProfile(updatedProfile)
+        updatedProfile = Self.normalizedProfile(updatedProfile)
         guard updatedProfile != existingProfile else {
             return updatedProfile
         }
 
+        var items = cachedProfiles
         items[existingIndex] = updatedProfile
-        try save(items, ignoredFingerprints: loadIgnoredFingerprints())
+        commitLocked(items: items, ignoredFingerprints: cachedIgnoredFingerprints)
         return updatedProfile
     }
 
@@ -191,8 +230,10 @@ final class ClaudeAccountProfileStore {
         guard !trimmed.isEmpty else { return nil }
         guard let parsedPayload = try? Self.parseCredentialsJSON(trimmed) else { return nil }
 
-        var items = load()
-        guard let index = items.firstIndex(where: { $0.slotID == slotID }) else { return nil }
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        guard let index = cachedProfiles.firstIndex(where: { $0.slotID == slotID }) else { return nil }
+        var items = cachedProfiles
         var profile = items[index]
         let payload = Self.applyingAccountEmailFallback(parsedPayload, configDir: profile.configDir)
         profile.credentialsJSON = trimmed
@@ -200,32 +241,36 @@ final class ClaudeAccountProfileStore {
         profile.accountEmail = payload.accountEmail
         profile.credentialFingerprint = payload.credentialFingerprint
         profile.lastImportedAt = Date()
-        profile = normalizedProfile(profile)
+        profile = Self.normalizedProfile(profile)
         items[index] = profile
-        try? save(items, ignoredFingerprints: loadIgnoredFingerprints())
+        commitLocked(items: items, ignoredFingerprints: cachedIgnoredFingerprints)
         return profile
     }
 
     @discardableResult
     func removeProfile(slotID: CodexSlotID) -> [ClaudeAccountProfile] {
-        var items = load()
-        var ignoredFingerprints = loadIgnoredFingerprints()
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        var items = cachedProfiles
+        var ignoredFingerprints = cachedIgnoredFingerprints
         if let removed = items.first(where: { $0.slotID == slotID })?.credentialFingerprint?.lowercased(),
            !removed.isEmpty {
             ignoredFingerprints.insert(removed)
         }
         items.removeAll { $0.slotID == slotID }
-        try? save(items, ignoredFingerprints: ignoredFingerprints)
+        commitLocked(items: items, ignoredFingerprints: ignoredFingerprints)
         return items.sorted { $0.slotID < $1.slotID }
     }
 
     @discardableResult
     func updateCurrentFingerprint(_ fingerprint: String?) -> [ClaudeAccountProfile] {
-        var items = load()
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        var items = cachedProfiles
         let normalizedCurrentFingerprint = Self.normalizedFingerprint(fingerprint)
         let changed = applyCurrentFingerprint(normalizedCurrentFingerprint, to: &items)
         if changed {
-            try? save(items, ignoredFingerprints: loadIgnoredFingerprints())
+            commitLocked(items: items, ignoredFingerprints: cachedIgnoredFingerprints)
         }
         return items.sorted { $0.slotID < $1.slotID }
     }
@@ -235,8 +280,11 @@ final class ClaudeAccountProfileStore {
         defaultConfigDir: String?,
         currentFingerprint: String?
     ) -> ClaudeAutoCaptureCompactionResult {
-        var items = load()
-        let ignoredFingerprints = loadIgnoredFingerprints()
+        stateLock.lock()
+        defer { stateLock.unlock() }
+
+        var items = cachedProfiles
+        let ignoredFingerprints = cachedIgnoredFingerprints
         let normalizedDefaultConfigDir = Self.normalizedConfigDirectory(defaultConfigDir)
         let normalizedCurrentFingerprint = Self.normalizedFingerprint(currentFingerprint)
 
@@ -277,7 +325,7 @@ final class ClaudeAccountProfileStore {
         let currentChanged = applyCurrentFingerprint(normalizedCurrentFingerprint, to: &items)
         let didCompact = !removeIndices.isEmpty || currentChanged
         if didCompact {
-            try? save(items, ignoredFingerprints: ignoredFingerprints)
+            commitLocked(items: items, ignoredFingerprints: ignoredFingerprints)
         }
 
         return ClaudeAutoCaptureCompactionResult(
@@ -305,13 +353,16 @@ final class ClaudeAccountProfileStore {
         }
         let payload = Self.applyingAccountEmailFallback(parsedPayload, configDir: normalizedConfigDir)
 
-        var items = load()
+        stateLock.lock()
+        defer { stateLock.unlock() }
+
+        var items = cachedProfiles
         let currentFingerprint = Self.normalizedFingerprint(payload.credentialFingerprint)
-        let ignoredFingerprints = loadIgnoredFingerprints()
+        let ignoredFingerprints = cachedIgnoredFingerprints
         if let currentFingerprint, ignoredFingerprints.contains(currentFingerprint) {
             let changed = applyCurrentFingerprint(currentFingerprint, to: &items)
             if changed {
-                try? save(items, ignoredFingerprints: ignoredFingerprints)
+                commitLocked(items: items, ignoredFingerprints: ignoredFingerprints)
             }
             return items.sorted { $0.slotID < $1.slotID }
         }
@@ -363,7 +414,7 @@ final class ClaudeAccountProfileStore {
                 profile.lastImportedAt = Date()
             }
 
-            profile = normalizedProfile(profile)
+            profile = Self.normalizedProfile(profile)
             if items[existing] != profile {
                 items[existing] = profile
                 profileChanged = true
@@ -371,7 +422,7 @@ final class ClaudeAccountProfileStore {
 
             let currentChanged = applyCurrentFingerprint(currentFingerprint, to: &items)
             if profileChanged || currentChanged {
-                try? save(items, ignoredFingerprints: ignoredFingerprints)
+                commitLocked(items: items, ignoredFingerprints: ignoredFingerprints)
             }
             return items.sorted { $0.slotID < $1.slotID }
         }
@@ -396,12 +447,26 @@ final class ClaudeAccountProfileStore {
             )
         )
         _ = applyCurrentFingerprint(currentFingerprint, to: &items)
-        try? save(items, ignoredFingerprints: ignoredFingerprints)
+        commitLocked(items: items, ignoredFingerprints: ignoredFingerprints)
         return items.sorted { $0.slotID < $1.slotID }
     }
 
     func reset() {
-        try? fileManager.removeItem(at: fileURL)
+        stateLock.lock()
+        cachedProfiles = []
+        cachedIgnoredFingerprints = []
+        ioQueue.async { [weak self] in
+            guard let self else { return }
+            try? self.fileManager.removeItem(at: self.fileURL)
+            self.lastWrittenData = nil
+        }
+        stateLock.unlock()
+    }
+
+    /// Order fence for save-then-load semantics across store instances: blocks
+    /// until every enqueued write/removal has completed on the IO queue.
+    func flushPendingDiskWrites() {
+        ioQueue.sync {}
     }
 
     func resolvedCredentialsJSON(for profile: ClaudeAccountProfile) throws -> String {
@@ -918,7 +983,7 @@ final class ClaudeAccountProfileStore {
         return changed
     }
 
-    private func normalizedProfile(_ profile: ClaudeAccountProfile) -> ClaudeAccountProfile {
+    private static func normalizedProfile(_ profile: ClaudeAccountProfile) -> ClaudeAccountProfile {
         var updated = profile
         updated.configDir = Self.normalizedConfigDirectory(updated.configDir)
         updated.displayName = Self.fallbackDisplayName(updated.displayName, slotID: updated.slotID)
@@ -944,15 +1009,33 @@ final class ClaudeAccountProfileStore {
         return updated
     }
 
-    private func load() -> [ClaudeAccountProfile] {
-        loadFile().profiles.map { normalizedProfile($0) }
+    /// Must be called with `stateLock` held. Updates the in-memory mirror and
+    /// enqueues the encode + write on the IO queue; enqueue order matches
+    /// mutation order, and content-identical payloads are dropped there.
+    private func commitLocked(items: [ClaudeAccountProfile], ignoredFingerprints: Set<String>) {
+        cachedProfiles = items
+        cachedIgnoredFingerprints = ignoredFingerprints
+        ioQueue.async { [weak self] in
+            guard let self else { return }
+            self.writeIfNeeded(Self.encodedData(profiles: items, ignoredFingerprints: ignoredFingerprints))
+        }
     }
 
-    private func loadIgnoredFingerprints() -> Set<String> {
-        Set(loadFile().ignoredFingerprints?.map { $0.lowercased() } ?? [])
+    /// IO-queue confined. Skips the write when the payload matches the last
+    /// successfully persisted one, so refresh cycles that leave the profile
+    /// file unchanged never touch the disk.
+    private func writeIfNeeded(_ data: Data?) {
+        guard let data, data != lastWrittenData else { return }
+        do {
+            try protectedFile.write(data)
+            lastWrittenData = data
+        } catch {
+            NSLog("[ClaudeAccountProfileStore] Failed to persist profiles: \(error.localizedDescription)")
+        }
     }
 
-    private func loadFile() -> ProfileFile {
+    /// IO-queue confined (cold start).
+    private func loadFileOnIOQueue() -> ProfileFile {
         let directory = fileURL.deletingLastPathComponent()
         try? fileManager.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         guard let data = try? Data(contentsOf: fileURL) else {
@@ -966,18 +1049,15 @@ final class ClaudeAccountProfileStore {
         return ProfileFile(profiles: [], ignoredFingerprints: [])
     }
 
-    private func save(_ profiles: [ClaudeAccountProfile], ignoredFingerprints: Set<String> = []) throws {
-        let directory = fileURL.deletingLastPathComponent()
-        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+    private static func encodedData(profiles: [ClaudeAccountProfile], ignoredFingerprints: Set<String>) -> Data? {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        let data = try encoder.encode(
+        return try? encoder.encode(
             ProfileFile(
                 profiles: profiles,
                 ignoredFingerprints: ignoredFingerprints.isEmpty ? nil : ignoredFingerprints.sorted()
             )
         )
-        try protectedFile.write(data)
     }
 }

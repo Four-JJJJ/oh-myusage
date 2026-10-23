@@ -228,7 +228,7 @@ final class QwenProviderTests: XCTestCase {
 
     // MARK: - 余额卡设置页展示
 
-    func testPureBalanceProviderSetCoversAllAPICards() {
+    @MainActor func testPureBalanceProviderSetCoversAllAPICards() {
         XCTAssertTrue(SettingsView.isPureBalanceProvider(.qwenBalance))
         XCTAssertTrue(SettingsView.isPureBalanceProvider(.zaiBalance))
         XCTAssertTrue(SettingsView.isPureBalanceProvider(.kimiBalance))
@@ -236,7 +236,7 @@ final class QwenProviderTests: XCTestCase {
         XCTAssertFalse(SettingsView.isPureBalanceProvider(.zai))
     }
 
-    func testPureBalanceValueTextShowsAmountNotPercent() {
+    @MainActor func testPureBalanceValueTextShowsAmountNotPercent() {
         let descriptor = ProviderDescriptor.defaultOfficialQwenBalance()
         let snapshot = UsageSnapshot(
             source: descriptor.id,
@@ -252,7 +252,7 @@ final class QwenProviderTests: XCTestCase {
         XCTAssertEqual(SettingsView.pureBalanceValueText(provider: descriptor, snapshot: nil), "-")
     }
 
-    func testPureBalanceHealthPercentMatchesMenuCardThresholds() {
+    @MainActor func testPureBalanceHealthPercentMatchesMenuCardThresholds() {
         func snapshot(_ remaining: Double) -> UsageSnapshot {
             UsageSnapshot(
                 source: "qwen-balance-official",
@@ -522,7 +522,7 @@ extension QwenProviderTests {
     func testSecondFetchWithUnchangedCookieSkipsSessionContextRequest() async throws {
         let keychain = makeTestKeychain()
         let descriptor = Self.makeFetchDescriptor()
-        try Self.saveVaultCookie("sid=vault-cookie; uid=1", descriptor: descriptor, keychain: keychain)
+        _ = try Self.saveVaultCookie("sid=vault-cookie; uid=1", descriptor: descriptor, keychain: keychain)
 
         let counter = RequestCounter()
         Self.installSessionCountingHandler(counter: counter)
@@ -579,10 +579,10 @@ extension QwenProviderTests {
         let keychain = makeTestKeychain()
         var descriptorA = Self.makeFetchDescriptor()
         descriptorA.id = "qwen-fetch-account-a"
-        try Self.saveVaultCookie("sid=alpha; uid=1", descriptor: descriptorA, keychain: keychain)
+        _ = try Self.saveVaultCookie("sid=alpha; uid=1", descriptor: descriptorA, keychain: keychain)
         var descriptorB = Self.makeFetchDescriptor()
         descriptorB.id = "qwen-fetch-account-b"
-        try Self.saveVaultCookie("sid=beta; uid=2", descriptor: descriptorB, keychain: keychain)
+        _ = try Self.saveVaultCookie("sid=beta; uid=2", descriptor: descriptorB, keychain: keychain)
 
         let counter = RequestCounter()
         Self.installSessionCountingHandler(counter: counter)
@@ -615,7 +615,7 @@ extension QwenProviderTests {
     func testCachedSessionContextRefreshedOnceAfterAuthFailure() async throws {
         let keychain = makeTestKeychain()
         let descriptor = Self.makeFetchDescriptor()
-        try Self.saveVaultCookie("sid=vault-cookie; uid=1", descriptor: descriptor, keychain: keychain)
+        _ = try Self.saveVaultCookie("sid=vault-cookie; uid=1", descriptor: descriptor, keychain: keychain)
 
         let counter = RequestCounter()
         let mode = GatewayMode()

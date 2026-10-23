@@ -1251,10 +1251,6 @@ extension SettingsView {
     }
 
     private func formattedSettingsInteger(_ value: Int) -> String {
-        let formatter = NumberFormatter()
-        formatter.numberStyle = .decimal
-        formatter.maximumFractionDigits = 0
-        formatter.minimumFractionDigits = 0
-        return formatter.string(from: NSNumber(value: value)) ?? String(value)
+        SharedNumberFormatting.groupedInteger(value)
     }
 }

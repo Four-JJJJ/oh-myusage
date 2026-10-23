@@ -490,6 +490,14 @@ final class AppViewModel {
         if let cache = persistedSnapshotCache {
             await Task.detached(priority: .utility) { cache.flush() }.value
         }
+        // Profile/slot stores persist asynchronously on utility queues; drain
+        // them so a quit right after a refresh cannot lose the last write.
+        await Task.detached(priority: .utility) {
+            self.codexSlotStore.flushPendingDiskWrites()
+            self.codexProfileStore.flushPendingDiskWrites()
+            self.claudeSlotStore.flushPendingDiskWrites()
+            self.claudeProfileStore.flushPendingDiskWrites()
+        }.value
     }
 
     /// Restores cached snapshots into provider state on cold start (doc §8.2).

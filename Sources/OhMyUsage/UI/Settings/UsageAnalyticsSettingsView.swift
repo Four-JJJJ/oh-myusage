@@ -681,25 +681,15 @@ private struct UsageStatsTableView: View {
 }
 
 private func tokenText(_ value: Int) -> String {
-    let formatter = NumberFormatter()
-    formatter.numberStyle = .decimal
-    return formatter.string(from: NSNumber(value: value)) ?? "\(value)"
+    SharedNumberFormatting.groupedInteger(value)
 }
 
 private func percentText(_ value: Double) -> String {
-    let formatter = NumberFormatter()
-    formatter.numberStyle = .percent
-    formatter.minimumFractionDigits = 0
-    formatter.maximumFractionDigits = 1
-    return formatter.string(from: NSNumber(value: value)) ?? "0%"
+    SharedNumberFormatting.percent(value, minFractionDigits: 0, maxFractionDigits: 1)
 }
 
 private func percentTextFixed(_ value: Double) -> String {
-    let formatter = NumberFormatter()
-    formatter.numberStyle = .percent
-    formatter.minimumFractionDigits = 1
-    formatter.maximumFractionDigits = 1
-    return formatter.string(from: NSNumber(value: value)) ?? "0.0%"
+    SharedNumberFormatting.percent(value, minFractionDigits: 1, maxFractionDigits: 1)
 }
 
 private func shortDate(_ date: Date) -> String {
@@ -771,7 +761,7 @@ struct UsageAnalyticsCopy {
         case .refresh: pair = ("刷新使用统计", "Refresh usage statistics")
         case .overview: pair = ("总览", "Overview")
         case .trend: pair = ("使用趋势", "Usage trend")
-        case .statistics: pair = ("统计", "Statistics")
+        case .statistics: pair = ("统计", "Analytics")
         case .provider: pair = ("供应商", "Provider")
         case .model: pair = ("模型", "Model")
         case .all: pair = ("全部", "All")

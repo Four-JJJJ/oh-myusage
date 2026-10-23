@@ -586,6 +586,93 @@ final class ClaudeAccountProfileStoreTests: XCTestCase {
         XCTAssertFalse(ClaudeAccountProfileStore.supportsQuotaMonitoring(profile: profile))
     }
 
+    func testUnchangedReSyncDoesNotRewriteProfileFile() throws {
+        let path = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("claude-profile-tests-\(UUID().uuidString).json")
+        let store = ClaudeAccountProfileStore(fileURL: path)
+        let credentialsJSON = sampleCredentialsJSON(
+            accountID: "acc-steady",
+            email: "steady@example.com",
+            accessToken: "access-steady"
+        )
+
+        _ = store.captureCurrentCredentialsIfNeeded(
+            credentialsJSON: credentialsJSON,
+            defaultConfigDir: nil
+        )
+        store.flushPendingDiskWrites()
+        let firstWrite = try fileFingerprint(at: path)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: path.path))
+
+        // Re-syncing the exact same credential must not touch the file.
+        _ = store.captureCurrentCredentialsIfNeeded(
+            credentialsJSON: credentialsJSON,
+            defaultConfigDir: nil
+        )
+        store.flushPendingDiskWrites()
+        XCTAssertEqual(try fileFingerprint(at: path), firstWrite)
+
+        // A new store instance seeds its dedupe fingerprint from the on-disk
+        // state, so an unchanged no-op commit still skips the disk write.
+        let reloaded = ClaudeAccountProfileStore(fileURL: path)
+        _ = reloaded.removeProfile(slotID: CodexSlotID(rawValue: "Z"))
+        reloaded.flushPendingDiskWrites()
+        XCTAssertEqual(try fileFingerprint(at: path), firstWrite)
+
+        // Changed content must still reach the disk.
+        _ = store.updateStoredCredentials(
+            slotID: .a,
+            credentialsJSON: sampleCredentialsJSON(
+                accountID: "acc-steady",
+                email: "steady@example.com",
+                accessToken: "access-rotated"
+            )
+        )
+        store.flushPendingDiskWrites()
+        XCTAssertNotEqual(try fileFingerprint(at: path), firstWrite)
+    }
+
+    func testSaveThenReloadRoundTripsThroughDiskAfterFlush() throws {
+        let path = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("claude-profile-tests-\(UUID().uuidString).json")
+        let store = ClaudeAccountProfileStore(fileURL: path)
+        _ = try store.saveProfile(
+            slotID: .a,
+            displayName: "Persisted",
+            note: nil,
+            source: .manualCredentials,
+            configDir: nil,
+            credentialsJSON: sampleCredentialsJSON(
+                accountID: "acc-persist",
+                email: "persist@example.com",
+                accessToken: "access-persist"
+            ),
+            currentFingerprint: nil
+        )
+        store.flushPendingDiskWrites()
+
+        let reloaded = ClaudeAccountProfileStore(fileURL: path)
+        XCTAssertEqual(reloaded.profiles().map(\.slotID), [.a])
+        XCTAssertEqual(reloaded.profile(slotID: .a)?.accountId, "acc-persist")
+        XCTAssertEqual(reloaded.profile(slotID: .a)?.displayName, "Persisted")
+    }
+
+    /// Identifies a physical write: `PrivateProfileFile` always writes through
+    /// a fresh staging file and renames it, so an actual disk write necessarily
+    /// changes the inode (and the mtime).
+    private struct WriteFingerprint: Equatable {
+        var inode: Int
+        var modificationDate: Date
+    }
+
+    private func fileFingerprint(at url: URL) throws -> WriteFingerprint {
+        let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+        return WriteFingerprint(
+            inode: try XCTUnwrap(attributes[.systemFileNumber] as? Int),
+            modificationDate: try XCTUnwrap(attributes[.modificationDate] as? Date)
+        )
+    }
+
     private func makeStore() -> ClaudeAccountProfileStore {
         let path = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("claude-profile-tests-\(UUID().uuidString).json")

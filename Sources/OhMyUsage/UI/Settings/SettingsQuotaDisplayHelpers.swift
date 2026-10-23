@@ -348,7 +348,7 @@ extension SettingsView {
                     ),
                     UsageQuotaWindow(
                         id: "\(provider.id)-placeholder-credits",
-                        title: "加油包",
+                        title: viewModel.localizedText("加油包", "Boost pack"),
                         remainingPercent: 0,
                         usedPercent: 100,
                         resetAt: nil,
@@ -692,11 +692,11 @@ extension SettingsView {
         guard let snapshot else { return "-" }
         let value = provider.displaysUsedQuota ? snapshot.used : snapshot.remaining
         guard let value else { return "-" }
-        let formatter = NumberFormatter()
-        formatter.numberStyle = .decimal
-        formatter.maximumFractionDigits = 2
-        formatter.minimumFractionDigits = 2
-        return formatter.string(from: NSNumber(value: value)) ?? String(format: "%.2f", value)
+        return SharedNumberFormatting.decimal(
+            value,
+            minFractionDigits: 2,
+            maxFractionDigits: 2
+        )
     }
 
     func traeAmountValue(
