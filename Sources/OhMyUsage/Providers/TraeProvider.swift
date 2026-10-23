@@ -171,17 +171,15 @@ final class TraeProvider: UsageProvider, @unchecked Sendable {
         guard let http = response as? HTTPURLResponse else {
             throw ProviderError.invalidResponse("Trae non-http response")
         }
-        if http.statusCode == 401 || http.statusCode == 403 {
-            throw ProviderError.unauthorized
-        }
-        if http.statusCode == 429 {
-            throw ProviderError.rateLimited
-        }
-        guard (200...299).contains(http.statusCode) else {
-            let message = Self.extractMessage(from: data)
-            let suffix = message.map { ": \($0)" } ?? ""
-            throw ProviderError.invalidResponse("Trae http \(http.statusCode)\(suffix)")
-        }
+        try HTTPResponseValidation.validate(
+            http,
+            urlDescription: "Trae",
+            body: data,
+            invalidResponseMessage: { statusCode in
+                let suffix = Self.extractMessage(from: data).map { ": \($0)" } ?? ""
+                return "Trae http \(statusCode)\(suffix)"
+            }
+        )
 
         return try Self.parseSnapshot(data: data, descriptor: descriptor)
     }

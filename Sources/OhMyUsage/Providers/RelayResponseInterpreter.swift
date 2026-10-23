@@ -758,13 +758,13 @@ enum RelayResponseInterpreter {
     }
 
     private static func formattedWholeNumber(_ value: Double) -> String {
-        let formatter = NumberFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.numberStyle = .decimal
-        formatter.usesGroupingSeparator = true
-        formatter.maximumFractionDigits = 0
-        formatter.minimumFractionDigits = 0
-        return formatter.string(from: NSNumber(value: value)) ?? String(Int(value.rounded()))
+        SharedNumberFormatting.decimal(
+            value,
+            minFractionDigits: 0,
+            maxFractionDigits: 0,
+            grouping: true,
+            localeID: "en_US_POSIX"
+        )
     }
 
     private static func normalizedXiaomimimoPlanType(from value: Any) -> String? {

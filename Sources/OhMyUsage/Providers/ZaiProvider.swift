@@ -265,16 +265,13 @@ final class ZaiProvider: UsageProvider, @unchecked Sendable {
         guard let http = response as? HTTPURLResponse else {
             throw ProviderError.invalidResponse("Z.ai non-http response")
         }
-        if http.statusCode == 401 || http.statusCode == 403 {
-            throw ProviderError.unauthorized
-        }
-        if http.statusCode == 429 {
-            throw ProviderError.rateLimited
-        }
-        guard (200...299).contains(http.statusCode) else {
-            // 带上上游错误正文，404/403 这类账号形态差异才能现场定位。
-            throw ProviderError.invalidResponse(Self.statusFailureDetail(status: http.statusCode, data: data))
-        }
+        // 带上上游错误正文，404/403 这类账号形态差异才能现场定位。
+        try HTTPResponseValidation.validate(
+            http,
+            urlDescription: "Z.ai",
+            body: data,
+            invalidResponseMessage: { status in Self.statusFailureDetail(status: status, data: data) }
+        )
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw ProviderError.invalidResponse("Z.ai response decode failed")
         }

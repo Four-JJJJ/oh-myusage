@@ -89,13 +89,6 @@ final class OllamaCloudProvider: UsageProvider, @unchecked Sendable {
             throw ProviderError.invalidResponse("Ollama non-http response")
         }
 
-        if http.statusCode == 401 || http.statusCode == 403 {
-            throw ProviderError.unauthorized
-        }
-        if http.statusCode == 429 {
-            throw ProviderError.rateLimited
-        }
-
         if let finalPath = http.url?.path.lowercased(), finalPath.contains("/signin") {
             throw ProviderError.unauthorized
         }
@@ -106,9 +99,8 @@ final class OllamaCloudProvider: UsageProvider, @unchecked Sendable {
             throw ProviderError.unauthorized
         }
 
-        guard (200...299).contains(http.statusCode) else {
-            throw ProviderError.invalidResponse("Ollama http \(http.statusCode)")
-        }
+        // The settings page is HTML, so only status classification is shared.
+        try HTTPResponseValidation.validate(http, urlDescription: "Ollama", body: data, expectingJSON: false)
 
         guard let html = String(data: data, encoding: .utf8), !html.isEmpty else {
             throw ProviderError.invalidResponse("empty Ollama settings response")

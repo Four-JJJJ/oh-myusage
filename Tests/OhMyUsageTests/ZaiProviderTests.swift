@@ -74,7 +74,7 @@ final class ZaiProviderTests: XCTestCase {
         XCTAssertNil(snapshot.extras["planType"])
         XCTAssertEqual(
             snapshot.diagnosticCode,
-            "endpoint-misconfigured",
+            "unreachable",
             "partial subscription failure must be surfaced via the existing diagnosticCode vocabulary"
         )
     }
@@ -151,6 +151,44 @@ final class ZaiProviderTests: XCTestCase {
         )
     }
 
+    func testRateLimitedQuotaWithRetryAfterStopsImmediatelyWithoutMirror() async throws {
+        let startedAt = Date()
+        let counter = ProviderRequestCounter()
+        OfficialMockURLProtocol.requestHandler = { request in
+            let url = try XCTUnwrap(request.url)
+            counter.increment("total")
+            XCTAssertTrue(url.absoluteString.hasPrefix("https://api.z.ai"))
+            let response = HTTPURLResponse(
+                url: url,
+                statusCode: 429,
+                httpVersion: nil,
+                headerFields: ["Retry-After": "60"]
+            )!
+            return (response, Data())
+        }
+        defer { OfficialMockURLProtocol.requestHandler = nil }
+
+        let provider = makeCodingPlanProvider(quotaCacheTTL: 0)
+        do {
+            _ = try await provider.fetch()
+            XCTFail("expected a ProviderRateLimitError")
+        } catch let error as ProviderRateLimitError {
+            XCTAssertEqual(
+                error.retryNotBefore.timeIntervalSince(startedAt),
+                60,
+                accuracy: 5
+            )
+        } catch {
+            XCTFail("expected a ProviderRateLimitError, got \(error)")
+        }
+
+        XCTAssertEqual(
+            counter.value("total"),
+            1,
+            "a rate limit carrying Retry-After must stop before the mirror host"
+        )
+    }
+
     func testGenericFailureRetriesMirrorAtMostOnce() async throws {
         let counter = ProviderRequestCounter()
         OfficialMockURLProtocol.requestHandler = { request in
@@ -163,9 +201,9 @@ final class ZaiProviderTests: XCTestCase {
         let provider = makeCodingPlanProvider(quotaCacheTTL: 0)
         do {
             _ = try await provider.fetch()
-            XCTFail("expected an invalid response error")
+            XCTFail("expected a timeout error")
         } catch let error as ProviderError {
-            guard case .invalidResponse = error else {
+            guard case .timeout = error else {
                 return XCTFail("unexpected provider error: \(error)")
             }
         }

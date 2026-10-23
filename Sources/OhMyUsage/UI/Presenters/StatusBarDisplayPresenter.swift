@@ -263,12 +263,12 @@ enum StatusBarDisplayPresenter {
 
     private static func formattedAmount(_ value: Double) -> String {
         let normalizedValue = value == 0 ? 0 : value
-        let formatter = NumberFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.numberStyle = .decimal
-        formatter.usesGroupingSeparator = true
-        formatter.minimumFractionDigits = 2
-        formatter.maximumFractionDigits = 2
-        return formatter.string(from: NSNumber(value: normalizedValue)) ?? String(format: "%.2f", normalizedValue)
+        return SharedNumberFormatting.decimal(
+            normalizedValue,
+            minFractionDigits: 2,
+            maxFractionDigits: 2,
+            grouping: true,
+            localeID: "en_US_POSIX"
+        )
     }
 }

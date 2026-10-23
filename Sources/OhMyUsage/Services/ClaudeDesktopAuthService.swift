@@ -1,4 +1,5 @@
 import Foundation
+import OhMyUsageProviders
 
 enum ClaudeDesktopAuthError: LocalizedError {
     case invalidCredentials
@@ -157,5 +158,86 @@ final class ClaudeDesktopAuthService {
         guard oauthVault.saveOAuthJSON(provider: .claude, rawJSON: trimmed) else {
             throw ClaudeDesktopAuthError.vaultWriteFailed
         }
+    }
+
+    // MARK: - Shared OAuth refresh pipeline (P2-4)
+
+    /// Lightweight Claude configuration for the shared desktop refresh
+    /// pipeline: `platform.claude.com` token endpoint (JSON refresh request)
+    /// → `claudeAiOauth` field merge (with root-level fallback for flat
+    /// credentials JSON) → `expiresAt` restamp → canonical parse
+    /// verification.
+    static let oauthRefreshConfiguration = OAuthRefreshPipeline.Configuration(
+        label: "Claude",
+        vaultProvider: .claude,
+        makeRefreshRequest: { refreshToken in
+            var request = URLRequest(url: URL(string: "https://platform.claude.com/v1/oauth/token")!)
+            request.httpMethod = "POST"
+            request.timeoutInterval = 15
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = try JSONSerialization.data(withJSONObject: [
+                "grant_type": "refresh_token",
+                "refresh_token": refreshToken,
+                "client_id": "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
+                "scope": "user:profile user:inference user:sessions:claude_code user:mcp_servers"
+            ])
+            return request
+        },
+        invalidRefreshedJSONMessage: "invalid refreshed credentials",
+        writingOptions: [.prettyPrinted],
+        mergeRefreshedFields: { refresh, now, json in
+            var oauth = (json["claudeAiOauth"] as? [String: Any]) ?? json
+            oauth["accessToken"] = refresh.accessToken
+            oauth["refreshToken"] = OfficialValueParser.string(refresh.json["refresh_token"])
+                ?? OfficialValueParser.string(oauth["refreshToken"] ?? oauth["refresh_token"])
+            if let expiresIn = OfficialValueParser.double(refresh.json["expires_in"]) {
+                oauth["expiresAt"] = now.timeIntervalSince1970 * 1000 + expiresIn * 1000
+            }
+            if let subscriptionType = OfficialValueParser.string(oauth["subscriptionType"] ?? oauth["subscription_type"]) {
+                oauth["subscriptionType"] = subscriptionType
+            }
+            if json["claudeAiOauth"] != nil {
+                json["claudeAiOauth"] = oauth
+            } else {
+                json = oauth
+            }
+        },
+        verifyRefreshedJSON: { rawJSON in
+            _ = try ClaudeAccountProfileStore.parseCredentialsJSON(rawJSON)
+        }
+    )
+
+    /// Refreshes the OAuth credential behind `rawCredentialsJSON` through the
+    /// shared desktop refresh pipeline (token refresh → `claudeAiOauth` field
+    /// merge → `.credentials.json` merge write-back for every existing
+    /// credentials file → vault write-back).
+    ///
+    /// Semantics match the previous per-service flow: returns nil when the
+    /// credential carries no refresh token; throws when the refresh request
+    /// itself fails. Write-back failures are logged (via `log`) but never
+    /// fail an otherwise successful refresh — the returned JSON always holds
+    /// the freshly accepted tokens.
+    func refreshCredentialsJSON(
+        session: URLSession = .shared,
+        rawCredentialsJSON: String,
+        fileIO: OAuthRefreshPipeline.FileIO = .default,
+        now: @escaping @Sendable () -> Date = Date.init,
+        log: @escaping @Sendable (String) -> Void = OAuthRefreshPipeline.standardLog
+    ) async throws -> String? {
+        let payload = try ClaudeAccountProfileStore.parseCredentialsJSON(rawCredentialsJSON)
+        let pipeline = OAuthRefreshPipeline(
+            configuration: Self.oauthRefreshConfiguration,
+            log: log
+        )
+        let result = try await pipeline.refreshCredential(
+            session: session,
+            rawJSON: rawCredentialsJSON,
+            refreshToken: payload.refreshToken,
+            filePaths: resolvedCredentialPaths().filter { fileManager.fileExists(atPath: $0) },
+            vault: oauthVault,
+            fileIO: fileIO,
+            now: now
+        )
+        return result?.refreshedRawJSON
     }
 }

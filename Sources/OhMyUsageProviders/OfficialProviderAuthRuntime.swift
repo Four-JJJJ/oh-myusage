@@ -1,4 +1,5 @@
 import Foundation
+import OSLog
 
 public struct OfficialOAuthRefreshResponse {
     public let accessToken: String
@@ -102,16 +103,34 @@ public enum OfficialProviderAuthRuntime {
         path: String,
         mutate: (inout [String: Any]) -> Void
     ) {
-        guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
-              var json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
-            return
-        }
+        do {
+            let data = try Data(contentsOf: URL(fileURLWithPath: path))
+            guard var json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+                writeBackLog("credential file at \(path) did not contain a JSON object; refreshed fields were not persisted to it")
+                return
+            }
 
-        mutate(&json)
+            mutate(&json)
 
-        guard let encoded = try? JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted]) else {
-            return
+            let encoded: Data
+            do {
+                encoded = try JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted])
+            } catch {
+                writeBackLog("failed to re-encode the credential file at \(path): \(error.localizedDescription)")
+                return
+            }
+            do {
+                try encoded.write(to: URL(fileURLWithPath: path), options: .atomic)
+            } catch {
+                writeBackLog("failed to write the refreshed credential file at \(path): \(error.localizedDescription)")
+            }
+        } catch {
+            writeBackLog("failed to read the credential file at \(path): \(error.localizedDescription)")
         }
-        try? encoded.write(to: URL(fileURLWithPath: path), options: .atomic)
+    }
+
+    private static func writeBackLog(_ message: String) {
+        Logger(subsystem: "OhMyUsage", category: "CredentialWriteBack")
+            .notice("\(message, privacy: .public)")
     }
 }

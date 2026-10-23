@@ -57,6 +57,35 @@ final class AmpProviderTests: XCTestCase {
         XCTAssertEqual(requestCount, 1)
     }
 
+    func testFetchMaps429WithRetryAfterToProviderRateLimitError() async throws {
+        let startedAt = Date()
+        var requestCount = 0
+        let provider = makeProvider(requestHandler: { request in
+            requestCount += 1
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 429,
+                httpVersion: nil,
+                headerFields: ["Retry-After": "90"]
+            )!
+            return (response, Data(#"{"ok":false}"#.utf8))
+        })
+
+        do {
+            _ = try await provider.fetch()
+            XCTFail("Expected ProviderRateLimitError")
+        } catch let error as ProviderRateLimitError {
+            XCTAssertEqual(
+                error.retryNotBefore.timeIntervalSince(startedAt),
+                90,
+                accuracy: 5
+            )
+        } catch {
+            XCTFail("Expected ProviderRateLimitError, got \(error)")
+        }
+        XCTAssertEqual(requestCount, 1)
+    }
+
     func testFetchMissingCredentialDoesNotTouchNetwork() async throws {
         let provider = AmpProvider(
             descriptor: ProviderDescriptor.defaultOfficialAmp(),

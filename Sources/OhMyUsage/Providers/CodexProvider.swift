@@ -406,6 +406,7 @@ final class CodexProvider: UsageProvider, @unchecked Sendable {
                 json["last_refresh"] = ISO8601DateFormatter().string(from: credentials.lastRefresh ?? Date())
             }
         ) else {
+            OAuthRefreshPipeline.standardLog("Codex: failed to normalize the refreshed OAuth JSON for the app vault; the local credential file remains the fallback")
             return
         }
         oauthVault.saveOAuthJSON(provider: .codex, rawJSON: normalized)

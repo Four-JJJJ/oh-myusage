@@ -148,10 +148,11 @@ enum MenuCardStatePresenter {
 
     private static func formattedBalanceNumber(_ value: Double?) -> String {
         guard let value else { return "-" }
-        let formatter = NumberFormatter()
-        formatter.numberStyle = .decimal
-        formatter.maximumFractionDigits = 2
-        formatter.minimumFractionDigits = 2
-        return formatter.string(from: NSNumber(value: value)) ?? String(format: "%.2f", value)
+        return SharedNumberFormatting.decimal(
+            value,
+            minFractionDigits: 2,
+            maxFractionDigits: 2,
+            grouping: true
+        )
     }
 }

@@ -12,6 +12,7 @@ For extension and integration paths after the refactor, see [EXTENDING.md](./EXT
 | Claude | API, CLI, or web session depending on mode | Web overlays can enrich usage windows |
 | Gemini | official API/web quota data | Supports model-specific windows; local history from `~/.gemini/tmp/*/chats` |
 | GitHub Copilot | local GitHub auth | Reads Copilot usage and quota state |
+| Microsoft Copilot | Microsoft Graph API | D7/D30 usage summaries; token from `MS_GRAPH_TOKEN` / `MICROSOFT_GRAPH_TOKEN` env, keychain, or Azure CLI; separate from the GitHub Copilot card |
 | Cursor | official/local session data | Monthly and on-demand usage, plan tier (Pro / Pro+ / Ultra); local history prefers dashboard events, then `state.vscdb` |
 | Grok Bot | Cursor session (Grok Bot app or Cursor IDE) | Independent weekly Bot grant plus optional on-demand; Cursor paid plans or a SuperGrok / X Premium+ link on the same Cursor account |
 | Windsurf | official API | Daily and weekly windows |
@@ -20,8 +21,13 @@ For extension and integration paths after the refactor, see [EXTENDING.md](./EXT
 | Kimi (API) | Moonshot open platform API key | Pay-as-you-go balance (CNY); auto-detects `MOONSHOT_API_KEY` |
 | Amp | official API | Free and credit views |
 | Z.ai | official API | Session, weekly, and web usage |
+| Z.ai (API) | Zhipu open platform (`open.bigmodel.cn`) API key | Pay-as-you-go balance (CNY); the same key is shared with the Coding Plan card, with one-click "Import from Claude Code" |
 | JetBrains AI | local data | Local XML usage parsing |
 | Kiro | CLI/local output | Credit-based usage |
+| Trae SOLO | trae.ai API with a Cloud-IDE-JWT bearer token | Dollar balance and autocomplete usage; browser recovery re-reads credentials after a rejected token |
+| OpenRouter Credits | openrouter.ai `/credits` API key | Credit balance; a 403 response means a management key is required |
+| OpenRouter API | openrouter.ai `/key` API key | API usage against the key limit (usage / remaining / limit window) |
+| Ollama Cloud | ollama.com web session | Browser cookie (`__Secure-session`) with auto-import; plan tier and usage parsed from the settings page |
 | OpenCode Go | opencode.ai web usage + local sqlite fallback | Remote truth first with local fallback when remote fails |
 | Qwen | platform.qianwenai.com web session | Token Plan personal edition: 7-day rolling quota window, credit packs, plan tier and reset time; browser cookie auto-import |
 | Qwen (API) | platform.qianwenai.com web session | Pay-as-you-go balance (CNY); shares the same cookie with the Qwen card |

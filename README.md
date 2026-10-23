@@ -9,6 +9,21 @@ oh-myusage 把官方订阅额度、模型使用窗口、第三方中转余额、
 
 [下载最新版本](https://github.com/Four-JJJJ/oh-myusage/releases/latest) · [安装说明](docs/DOWNLOAD.md) · [支持的服务](docs/PROVIDERS.md) · [扩展指南](docs/EXTENDING.md) · [发布清单](docs/RELEASE_CHECKLIST.md) · [English](docs/README.en.md)
 
+## V2.6.4 更新
+
+V2.6.4 完成行为统一与健壮性收尾：HTTP 校验全量归一、凭证回写可观测、配置枚举降级。
+
+| 方向 | 改进 |
+| --- | --- |
+| HTTP 统一收尾 | 最后 12 个 provider（千问/Ollama/Trae/Amp/Grok/Z.ai/Kimi/Moonshot/Windsurf/Copilot/OpenCode Go/Cursor）迁入公共校验层；429 Retry-After 全通道生效 |
+| 凭证可观测 | 刷新后写回本地凭证文件与 vault 的失败不再静默，全部记入统一日志 |
+| 刷新管道 | Codex/Claude 桌面授权刷新统一为 `OAuthRefreshPipeline`（回写失败只记录不失败化） |
+| 配置健壮 | `schemaVersion` 锚点 + 11 个枚举字段未知值回退默认并记诊断，不再整份判无效；身份/凭据枚举仍严格 |
+| 格式化 | 最后 4 处 `NumberFormatter` 收编（逐字节输出比对后迁移） |
+| 组织与文档 | 用量历史仓库拆 4 文件（纯移动）；PROVIDERS.md 补 5 个条目 |
+
+全量 1,460 项测试 0 失败，全仓零警告。详见[本版发布说明](docs/releases/v2.6.4.md)。
+
 ## V2.6.3 更新
 
 V2.6.3 是一版全量性能与工程优化：主线程 IO 清零到后台、HTTP 行为统一、死代码出清。

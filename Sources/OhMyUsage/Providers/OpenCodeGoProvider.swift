@@ -285,18 +285,15 @@ final class OpenCodeGoProvider: UsageProvider, @unchecked Sendable {
             throw ProviderError.invalidResponse("OpenCode Go non-http response")
         }
 
-        switch http.statusCode {
-        case 302, 303, 401, 403:
-            throw ProviderError.unauthorized
-        case 429:
-            throw ProviderError.rateLimited
-        default:
-            break
-        }
-
-        guard (200...299).contains(http.statusCode) else {
-            throw ProviderError.invalidResponse("OpenCode Go http \(http.statusCode)")
-        }
+        // 302/303 land on the login page, so they mean the same thing as
+        // 401/403 here: the cookie is no longer accepted.
+        try HTTPResponseValidation.validate(
+            http,
+            urlDescription: "OpenCode Go",
+            body: data,
+            expectingJSON: false,
+            unauthorizedStatusCodes: [302, 303, 401, 403]
+        )
 
         guard let body = String(data: data, encoding: .utf8), !body.isEmpty else {
             throw ProviderError.invalidResponse("empty OpenCode Go usage response")

@@ -28,21 +28,28 @@ enum ResourceMode: String, CaseIterable, Identifiable, Codable {
         }
     }
 
+    /// Maps a persisted raw value (including the 2.5.x aliases) to a mode.
+    /// Returns nil when the value matches no known case, which lets callers
+    /// distinguish "recognized, decode it" from "unknown, fall back + diagnose".
+    static func value(forPersistedRawValue rawValue: String) -> ResourceMode? {
+        switch rawValue {
+        case background3Minutes.rawValue, "responsive":
+            return .background3Minutes
+        case background5Minutes.rawValue, "balanced":
+            return .background5Minutes
+        case background10Minutes.rawValue:
+            return .background10Minutes
+        case background15Minutes.rawValue, "lowPower":
+            return .background15Minutes
+        default:
+            return nil
+        }
+    }
+
     init(from decoder: Decoder) throws {
         let container = try decoder.singleValueContainer()
         let rawValue = try container.decode(String.self)
-        switch rawValue {
-        case Self.background3Minutes.rawValue, "responsive":
-            self = .background3Minutes
-        case Self.background5Minutes.rawValue, "balanced":
-            self = .background5Minutes
-        case Self.background10Minutes.rawValue:
-            self = .background10Minutes
-        case Self.background15Minutes.rawValue, "lowPower":
-            self = .background15Minutes
-        default:
-            self = .background5Minutes
-        }
+        self = Self.value(forPersistedRawValue: rawValue) ?? .background5Minutes
     }
 
     func encode(to encoder: Encoder) throws {

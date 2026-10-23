@@ -75,21 +75,17 @@ final class KimiProvider: UsageProvider, @unchecked Sendable {
         guard let http = response as? HTTPURLResponse else {
             throw ProviderError.invalidResponse("non-http response")
         }
-        if http.statusCode == 401 || http.statusCode == 403 {
-            if let message = Self.extractErrorMessage(from: data), !message.isEmpty {
-                throw ProviderError.unauthorizedDetail(message)
+        try HTTPResponseValidation.validate(
+            http,
+            urlDescription: "",
+            body: data,
+            unauthorizedMessage: { _, body in
+                body.flatMap { Self.extractErrorMessage(from: $0) }
+            },
+            invalidResponseMessage: { statusCode in
+                Self.extractErrorMessage(from: data).map { "http \(statusCode): \($0)" } ?? "http \(statusCode)"
             }
-            throw ProviderError.unauthorized
-        }
-        if http.statusCode == 429 {
-            throw ProviderError.rateLimited
-        }
-        guard (200...299).contains(http.statusCode) else {
-            if let message = Self.extractErrorMessage(from: data), !message.isEmpty {
-                throw ProviderError.invalidResponse("http \(http.statusCode): \(message)")
-            }
-            throw ProviderError.invalidResponse("http \(http.statusCode)")
-        }
+        )
 
         return try Self.parseSnapshot(data: data, descriptor: descriptor, authSource: resolved.source)
     }
@@ -565,7 +561,7 @@ final class KimiProvider: UsageProvider, @unchecked Sendable {
 
         guard let (data, response) = try? await session.data(for: request),
               let http = response as? HTTPURLResponse,
-              (200...299).contains(http.statusCode),
+              HTTPResponseValidation.isSuccess(http),
               let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let rawAccess = (root["accessToken"] as? String) ?? (root["access_token"] as? String) else {
             return nil

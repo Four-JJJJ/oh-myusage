@@ -303,6 +303,7 @@ final class ClaudeProvider: UsageProvider, @unchecked Sendable {
                 json["claudeAiOauth"] = oauth
             }
         ) else {
+            OAuthRefreshPipeline.standardLog("Claude: failed to normalize the refreshed OAuth JSON for the app vault; the local credential file remains the fallback")
             return
         }
         oauthVault.saveOAuthJSON(provider: .claude, rawJSON: normalized)

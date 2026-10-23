@@ -139,14 +139,15 @@ struct CursorSessionAuth {
         guard let http = response as? HTTPURLResponse else {
             throw ProviderError.invalidResponse("Cursor refresh invalid response")
         }
-        if http.statusCode == 400 || http.statusCode == 401 {
-            throw ProviderError.unauthorized
-        }
-        if http.statusCode == 429 {
-            throw ProviderError.rateLimited
-        }
-        guard (200...299).contains(http.statusCode),
-              let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+        try HTTPResponseValidation.validate(
+            http,
+            urlDescription: "",
+            body: data,
+            expectingJSON: false,
+            unauthorizedStatusCodes: [400, 401],
+            invalidResponseMessage: { _ in "Cursor refresh failed" }
+        )
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let accessToken = OfficialValueParser.string(json["access_token"]) else {
             throw ProviderError.invalidResponse("Cursor refresh failed")
         }
