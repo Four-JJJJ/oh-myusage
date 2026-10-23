@@ -252,8 +252,22 @@ jobs:
           # 模板提示发布前删除“已知问题”空节。
           body = re.sub(r"\*\*已知问题\*\*：\n\n- <如有则列出；没有则删除本节>\n?", "", body)
 
-          if "<" in body and re.search(r"<[a-zA-Z][^>]*>", body):
-              leftover = re.findall(r"<[a-zA-Z][^>]*>", body)
+          # Only the template's own placeholders block publishing. A blanket
+          # "<word>" scan once rejected legitimate angle-bracket text in
+          # curated notes (v2.6.5 shipped a keychain path like <slot>).
+          template_placeholders = [
+              "v<X.Y.Z>",
+              "<X.Y.Z>",
+              "<version>",
+              "<full-or-short-commit-hash>",
+              "<branch>",
+              "<release-asset-url>",
+              "<digest>",
+              "<变更要点，逐条列出>",
+              "<如有则列出；没有则删除本节>",
+          ]
+          leftover = [token for token in template_placeholders if token in body]
+          if leftover:
               raise SystemExit(f"Unsubstituted placeholders remain in release notes: {leftover}")
 
           Path("dist/release_notes.md").write_text(body, encoding="utf-8")

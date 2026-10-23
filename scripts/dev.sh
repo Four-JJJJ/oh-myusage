@@ -28,5 +28,18 @@ OPTIONS=(--scratch-path "$SCRATCH_PATH")
 if [[ -n "${SWIFT_BUILD_SYSTEM:-}" ]]; then
   OPTIONS+=(--build-system "$SWIFT_BUILD_SYSTEM")
 fi
+
+# iCloud/Finder conflict copies ("xxx 2.swift") land in synced checkouts and
+# break SwiftPM with invalid-redeclaration errors. Quarantine them instead of
+# failing the build; they are never intentional source files.
+QUARANTINE_DIR="/tmp/omu-stray-duplicates"
+while IFS= read -r -d '' stray; do
+  mkdir -p "$QUARANTINE_DIR"
+  stamp="$(date +%Y%m%d%H%M%S)"
+  if mv "$stray" "$QUARANTINE_DIR/$(basename "$stray" .swift)-$stamp.swift" 2>/dev/null; then
+    echo "[dev.sh] quarantined a Finder/iCloud conflict copy: $stray -> $QUARANTINE_DIR" >&2
+  fi
+done < <(find "$ROOT_DIR/Sources" "$ROOT_DIR/Tests" -name "* 2.swift" -print0 2>/dev/null)
+
 cd "$ROOT_DIR"
 exec swift "$COMMAND" "${OPTIONS[@]}" "$@"
