@@ -9,6 +9,19 @@ oh-myusage 把官方订阅额度、模型使用窗口、第三方中转余额、
 
 [下载最新版本](https://github.com/Four-JJJJ/oh-myusage/releases/latest) · [安装说明](docs/DOWNLOAD.md) · [支持的服务](docs/PROVIDERS.md) · [扩展指南](docs/EXTENDING.md) · [发布清单](docs/RELEASE_CHECKLIST.md) · [English](docs/README.en.md)
 
+## V2.6.6 更新
+
+V2.6.6 修复 Cursor 官方额度从 10 月底起全部取不到的问题，并纠正刷新失败的错误分类。
+
+| 方向 | 改进 |
+| --- | --- |
+| Cursor 额度 | 支持 Cursor IDE 新的 safeStorage 加密凭证（`cursor-safe-storage:v1:`）：读取时用钥匙串 `Cursor Safe Storage` 解出真实 token，额度恢复实时 |
+| 错误分类 | Cursor 刷新返回 `shouldLogout` 或空 token 时归类为「认证故障 + 请在 Cursor IDE 重新登录」，不再误报「配置异常 / Invalid response」 |
+| 凭证安全 | 加密存储的数据库不再被写入明文 token（否则 Cursor 自身会读不出凭证）；明文存储的旧版本行为不变 |
+| 解密失败 | 钥匙串读不到时直接给出可操作提示，不再把密文当 token 发出去 |
+
+首次升级需要授权一次钥匙串访问（Cursor 该项只信任 Cursor.app），授权后覆盖安装不再重复询问。全量 1,494 项测试 0 失败。详见[本版发布说明](docs/releases/v2.6.6.md)。
+
 ## V2.6.5 更新
 
 V2.6.5 完成凭证安全的最后一块拼图，并收尾中枢类拆分与可访问性。

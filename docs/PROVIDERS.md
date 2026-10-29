@@ -13,7 +13,7 @@ For extension and integration paths after the refactor, see [EXTENDING.md](./EXT
 | Gemini | official API/web quota data | Supports model-specific windows; local history from `~/.gemini/tmp/*/chats` |
 | GitHub Copilot | local GitHub auth | Reads Copilot usage and quota state |
 | Microsoft Copilot | Microsoft Graph API | D7/D30 usage summaries; token from `MS_GRAPH_TOKEN` / `MICROSOFT_GRAPH_TOKEN` env, keychain, or Azure CLI; separate from the GitHub Copilot card |
-| Cursor | official/local session data | Monthly and on-demand usage, plan tier (Pro / Pro+ / Ultra); local history prefers dashboard events, then `state.vscdb` |
+| Cursor | official/local session data | Monthly and on-demand usage, plan tier (Pro / Pro+ / Ultra); reads both plaintext and safeStorage-encrypted (`cursor-safe-storage:v1:`) Cursor IDE tokens, the latter through the `Cursor Safe Storage` keychain item; local history prefers dashboard events, then `state.vscdb` |
 | Grok Bot | Cursor session (Grok Bot app or Cursor IDE) | Independent weekly Bot grant plus optional on-demand; Cursor paid plans or a SuperGrok / X Premium+ link on the same Cursor account |
 | Windsurf | official API | Daily and weekly windows |
 | Grok | local Grok CLI auth (`~/.grok/auth.json`) | Weekly shared pool, plan name, and pay-as-you-go cap; local history from `~/.grok/sessions` |

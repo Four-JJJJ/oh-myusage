@@ -4,6 +4,17 @@ A macOS menu bar app for monitoring AI plan limits, credits, relay balances, and
 
 [Download Latest Release](https://github.com/Four-JJJJ/oh-myusage/releases/latest) · [Install Guide](DOWNLOAD.md) · [Supported Services](PROVIDERS.md) · [中文说明](../README.md)
 
+## V2.6.6
+
+- Fix Cursor official quota failing entirely since late October: Cursor IDE now stores `cursorAuth/*` tokens encrypted with Electron safeStorage (`cursor-safe-storage:v1:`), so the app sent ciphertext as the session token, got 401, had its refresh rejected with `{"access_token":"","shouldLogout":true}`, and reported it as "Config Error / Invalid response: Cursor refresh failed"
+- Add `CursorSafeStorage`: strips the prefix, base64-decodes, and decrypts through the existing safeStorage crypto with the `Cursor Safe Storage` keychain passphrase; plaintext tokens from older Cursor builds pass through untouched and never touch the keychain
+- Classify Cursor's `shouldLogout` or empty-token refresh response as an auth error with a "sign in again in Cursor" hint instead of a configuration error
+- Never write a plaintext token back into an encrypted `state.vscdb`; plaintext stores keep their previous write-back behavior
+- An undecryptable credential now fails with an actionable message before any request is sent
+- 11 new tests (6 decryptor, 5 provider); all 1,494 tests pass
+
+Upgrading needs one keychain approval (Cursor's item only trusts Cursor.app); later overwrite installs do not ask again. See the [release notes](releases/v2.6.6.md).
+
 ## V2.6.1
 
 - Session-cookie sites now renew themselves the same way: in Browser First or auto-import mode the app re-reads the browser every 30 minutes and swaps in a newer login before the saved cookie expires, then leaves the browser alone until the window opens again
