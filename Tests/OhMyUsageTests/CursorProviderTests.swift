@@ -150,7 +150,178 @@ final class CursorProviderTests: XCTestCase {
         }
     }
 
-    private func makeProvider(stateDatabasePath: String? = nil) -> CursorProvider {
+    func testEncryptedStateDatabaseTokenIsDecryptedBeforeUsageRequest() async throws {
+        let jwt = Self.sessionJWT(expiration: 4_102_444_800)
+        let encrypted = CursorSafeStorage.encryptedValuePrefix + "djEwY2lwaGVydGV4dA=="
+        var capturedCookie: String?
+        let provider = makeProvider(
+            rows: [
+                ["cursorAuth/accessToken", encrypted],
+                ["cursorAuth/refreshToken", encrypted],
+                ["cursorAuth/cachedEmail", "user@example.com"]
+            ],
+            safeStorage: CursorSafeStorage(
+                readPassword: { "keychain-passphrase" },
+                decrypt: { _, _ in jwt }
+            )
+        )
+        CursorMockURLProtocol.requestHandler = { request in
+            capturedCookie = request.value(forHTTPHeaderField: "Cookie")
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            return (response, Data(Self.usageSummaryJSON.utf8))
+        }
+        defer { CursorMockURLProtocol.requestHandler = nil }
+
+        let snapshot = try await provider.fetch()
+
+        XCTAssertEqual(snapshot.quotaWindows.count, 2)
+        let cookie = try XCTUnwrap(capturedCookie)
+        XCTAssertTrue(cookie.contains(jwt), "decrypted token must be sent, got \(cookie)")
+        XCTAssertFalse(cookie.contains("cursor-safe-storage"), "ciphertext must never be sent")
+    }
+
+    func testEncryptedStateDatabaseTokenThatCannotBeDecryptedFailsWithoutNetwork() async throws {
+        let provider = makeProvider(
+            rows: [["cursorAuth/accessToken", CursorSafeStorage.encryptedValuePrefix + "djEwY2lwaGVydGV4dA=="]],
+            safeStorage: CursorSafeStorage(
+                readPassword: { "keychain-passphrase" },
+                decrypt: { _, _ in nil }
+            )
+        )
+        CursorMockURLProtocol.requestHandler = { _ in
+            XCTFail("network must not be reached with an undecryptable credential")
+            let response = HTTPURLResponse(url: URL(string: "https://cursor.com/api/usage-summary")!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            return (response, Data())
+        }
+        defer { CursorMockURLProtocol.requestHandler = nil }
+
+        do {
+            _ = try await provider.fetch()
+            XCTFail("Expected unauthorizedDetail")
+        } catch let error as ProviderError {
+            guard case .unauthorizedDetail(let message) = error else {
+                return XCTFail("Expected unauthorizedDetail, got \(error)")
+            }
+            XCTAssertEqual(message, CursorSessionAuth.encryptedTokenFailureMessage)
+        }
+    }
+
+    func testRefreshShouldLogoutResponseMapsToReloginRequired() async throws {
+        let provider = makeProvider()
+
+        CursorMockURLProtocol.requestHandler = { request in
+            if request.url?.path == "/api/usage-summary" {
+                let response = HTTPURLResponse(url: request.url!, statusCode: 401, httpVersion: nil, headerFields: nil)!
+                return (response, Data(#"{"error":"not_authenticated"}"#.utf8))
+            }
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            return (response, Data(#"{"access_token":"","id_token":"","shouldLogout":true}"#.utf8))
+        }
+        defer { CursorMockURLProtocol.requestHandler = nil }
+
+        do {
+            _ = try await provider.fetch()
+            XCTFail("Expected unauthorizedDetail")
+        } catch let error as ProviderError {
+            guard case .unauthorizedDetail(let message) = error else {
+                return XCTFail("Expected unauthorizedDetail, got \(error)")
+            }
+            XCTAssertEqual(message, CursorSessionAuth.reloginRequiredMessage)
+        }
+    }
+
+    func testEncryptedCredentialsAreNotWrittenBackAfterRefresh() async throws {
+        let sqlite = RecordingCursorSQLite(rows: [
+            ["cursorAuth/accessToken", CursorSafeStorage.encryptedValuePrefix + "djEwZXhwaXJlZA=="],
+            ["cursorAuth/refreshToken", CursorSafeStorage.encryptedValuePrefix + "djEwcmVmcmVzaA=="]
+        ])
+        let expiredJWT = Self.sessionJWT(expiration: 1)
+        let refreshedJWT = Self.sessionJWT(expiration: 4_102_444_800)
+        let provider = makeProvider(
+            sqlite: sqlite,
+            safeStorage: CursorSafeStorage(
+                readPassword: { "keychain-passphrase" },
+                decrypt: { payload, _ in
+                    payload == "djEwcmVmcmVzaA==" ? "keychain-passphrase" : expiredJWT
+                }
+            )
+        )
+        CursorMockURLProtocol.requestHandler = { request in
+            if request.url?.path == "/api/usage-summary" {
+                let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+                return (response, Data(Self.usageSummaryJSON.utf8))
+            }
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            let body = #"{"access_token":"\#(refreshedJWT)"}"#
+            return (response, Data(body.utf8))
+        }
+        defer { CursorMockURLProtocol.requestHandler = nil }
+
+        _ = try await provider.fetch()
+
+        XCTAssertTrue(
+            sqlite.executedSQLs.isEmpty,
+            "writing a plaintext token into an encrypted store breaks Cursor itself"
+        )
+    }
+
+    func testPlaintextCredentialsAreStillWrittenBackAfterRefresh() async throws {
+        let sqlite = RecordingCursorSQLite(rows: [
+            ["cursorAuth/accessToken", Self.sessionJWT(expiration: 1)],
+            ["cursorAuth/refreshToken", "keychain-passphrase"]
+        ])
+        let refreshedJWT = Self.sessionJWT(expiration: 4_102_444_800)
+        let provider = makeProvider(sqlite: sqlite)
+        CursorMockURLProtocol.requestHandler = { request in
+            if request.url?.path == "/api/usage-summary" {
+                let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+                return (response, Data(Self.usageSummaryJSON.utf8))
+            }
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            let body = #"{"access_token":"\#(refreshedJWT)"}"#
+            return (response, Data(body.utf8))
+        }
+        defer { CursorMockURLProtocol.requestHandler = nil }
+
+        _ = try await provider.fetch()
+
+        XCTAssertEqual(sqlite.executedSQLs.count, 1)
+        XCTAssertTrue(try XCTUnwrap(sqlite.executedSQLs.first).contains(refreshedJWT))
+    }
+
+    private static let usageSummaryJSON = """
+    {
+      "membershipType": "pro",
+      "billingCycleEnd": "2026-11-12T07:04:37.000Z",
+      "individualUsage": {
+        "plan": {
+          "enabled": true,
+          "autoPercentUsed": 14.822222222222223,
+          "apiPercentUsed": 0
+        }
+      }
+    }
+    """
+
+    private static func sessionJWT(expiration: Int, subject: String = "user|123") -> String {
+        let header = base64URL(#"{"alg":"HS256","typ":"JWT"}"#)
+        let payload = base64URL(#"{"sub":"\#(subject)","exp":\#(expiration)}"#)
+        return "\(header).\(payload).signature"
+    }
+
+    private static func base64URL(_ value: String) -> String {
+        Data(value.utf8).base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+    }
+
+    private func makeProvider(
+        stateDatabasePath: String? = nil,
+        rows: [[String]]? = nil,
+        sqlite: (any SQLiteQuerying)? = nil,
+        safeStorage: CursorSafeStorage = .default
+    ) -> CursorProvider {
         let resolvedPath: String
         if let stateDatabasePath {
             resolvedPath = stateDatabasePath
@@ -161,15 +332,18 @@ final class CursorProviderTests: XCTestCase {
             FileManager.default.createFile(atPath: resolvedPath, contents: Data())
         }
 
+        let resolvedRows = rows ?? [
+            ["cursorAuth/accessToken", "fake.header.signature"],
+            ["cursorAuth/refreshToken", "fake-refresh-token"],
+            ["cursorAuth/cachedEmail", "user@example.com"]
+        ]
+
         return CursorProvider(
             descriptor: ProviderDescriptor.defaultOfficialCursor(),
             session: makeMockSession(),
-            sqlite: StubCursorSQLite(rows: [
-                ["cursorAuth/accessToken", "fake.header.signature"],
-                ["cursorAuth/refreshToken", "fake-refresh-token"],
-                ["cursorAuth/cachedEmail", "user@example.com"]
-            ]),
-            stateDatabasePath: resolvedPath
+            sqlite: sqlite ?? StubCursorSQLite(rows: resolvedRows),
+            stateDatabasePath: resolvedPath,
+            safeStorage: safeStorage
         )
     }
 
@@ -238,6 +412,54 @@ private struct StubCursorSQLite: SQLiteQuerying {
             stdout: "",
             stderr: "",
             rows: rows
+        )
+    }
+}
+
+/// SQLite 桩：记录 `execute` 写入，用来断言加密存储时不会把明文 token 写回。
+private final class RecordingCursorSQLite: SQLiteQuerying, @unchecked Sendable {
+    private let lock = NSLock()
+    private let storedRows: [[String]]
+    private var recordedSQLs: [String] = []
+
+    init(rows: [[String]]) {
+        self.storedRows = rows
+    }
+
+    var executedSQLs: [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return recordedSQLs
+    }
+
+    func rows(databasePath: String, query: String, separator: String) -> [[String]] {
+        storedRows
+    }
+
+    func query(databasePath: String, query: String, separator: String) -> SQLiteShell.QueryResult {
+        makeResult(databasePath: databasePath)
+    }
+
+    func snapshotQuery(databasePath: String, query: String, separator: String) -> SQLiteShell.QueryResult {
+        makeResult(databasePath: databasePath)
+    }
+
+    func execute(databasePath: String, sql: String) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        recordedSQLs.append(sql)
+        return true
+    }
+
+    private func makeResult(databasePath: String) -> SQLiteShell.QueryResult {
+        SQLiteShell.QueryResult(
+            databasePath: databasePath,
+            executedPath: databasePath,
+            mode: .readOnlySnapshot,
+            status: 0,
+            stdout: "",
+            stderr: "",
+            rows: storedRows
         )
     }
 }

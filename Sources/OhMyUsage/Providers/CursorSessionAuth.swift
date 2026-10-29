@@ -22,11 +22,17 @@ struct CursorSessionCredentials: Sendable {
     var membershipType: String?
     var source: Source
     var databasePath: String?
+    /// Cursor IDE 用 safeStorage 加密存储 token 时为 true：此时不能把刷新后的
+    /// 明文 token 写回数据库，否则 Cursor 自己会读不出凭证。
+    var tokensEncryptedAtRest: Bool = false
 }
 
 struct CursorSessionAuth {
     static let oauthClientID = "KbZUR41cY7W6zRSdpSUJ7I7mLYBKOCmB"
     static let refreshURL = URL(string: "https://api2.cursor.sh/oauth/token")!
+    static let reloginRequiredMessage = "Cursor 登录已失效，请在 Cursor IDE 中重新登录后重试"
+    static let encryptedTokenFailureMessage =
+        "Cursor 登录凭证已加密存储（cursor-safe-storage），无法解密。请允许 oh-myusage 访问钥匙串项「Cursor Safe Storage」，或在 Cursor IDE 中重新登录后重试"
 
     private static let authQuery = """
     SELECT key, value
@@ -43,17 +49,20 @@ struct CursorSessionAuth {
     let sqlite: any SQLiteQuerying
     let stateDatabasePath: String
     let grokBotStore: GrokBotDesktopCredentialStore?
+    let safeStorage: CursorSafeStorage
 
     init(
         session: URLSession,
         sqlite: any SQLiteQuerying,
         stateDatabasePath: String,
-        grokBotStore: GrokBotDesktopCredentialStore? = nil
+        grokBotStore: GrokBotDesktopCredentialStore? = nil,
+        safeStorage: CursorSafeStorage = .default
     ) {
         self.session = session
         self.sqlite = sqlite
         self.stateDatabasePath = stateDatabasePath
         self.grokBotStore = grokBotStore
+        self.safeStorage = safeStorage
     }
 
     static func defaultIDEStateDatabasePath(homeDirectory: String = NSHomeDirectory()) -> String {
@@ -88,17 +97,22 @@ struct CursorSessionAuth {
             values[key] = value
         }
 
-        guard let accessToken = values["cursorAuth/accessToken"], !accessToken.isEmpty else {
+        guard let rawAccessToken = values["cursorAuth/accessToken"], !rawAccessToken.isEmpty else {
             throw ProviderError.missingCredential("cursorAuth/accessToken")
+        }
+        let encryptedAtRest = CursorSafeStorage.isEncrypted(rawAccessToken)
+        guard let accessToken = safeStorage.resolveToken(rawAccessToken) else {
+            throw ProviderError.unauthorizedDetail(Self.encryptedTokenFailureMessage)
         }
 
         return CursorSessionCredentials(
             accessToken: accessToken,
-            refreshToken: Self.normalizedOptionalValue(values["cursorAuth/refreshToken"]),
+            refreshToken: values["cursorAuth/refreshToken"].flatMap { safeStorage.resolveToken($0) },
             email: Self.normalizedOptionalValue(values["cursorAuth/cachedEmail"]),
             membershipType: Self.normalizedOptionalValue(values["cursorAuth/stripeMembershipType"]),
             source: .cursorIDE,
-            databasePath: dbPath
+            databasePath: dbPath,
+            tokensEncryptedAtRest: encryptedAtRest
         )
     }
 
@@ -147,14 +161,20 @@ struct CursorSessionAuth {
             unauthorizedStatusCodes: [400, 401],
             invalidResponseMessage: { _ in "Cursor refresh failed" }
         )
-        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+        guard let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
               let accessToken = OfficialValueParser.string(json["access_token"]) else {
-            throw ProviderError.invalidResponse("Cursor refresh failed")
+            // Cursor 在凭证不可刷新时返回 200 + {"access_token":"","shouldLogout":true}。
+            // 这是“需要重新登录”的信号，不是配置错误，也不该显示成 Invalid response。
+            throw ProviderError.unauthorizedDetail(Self.reloginRequiredMessage)
         }
 
         var updated = credentials
         updated.accessToken = accessToken
-        if credentials.source == .cursorIDE, let databasePath = credentials.databasePath {
+        // 加密存储的数据库里只能写回密文，写明文会让 Cursor 自己读不出凭证，
+        // 因此这种情况交给 Cursor IDE 自己维护，刷新结果只用于本次请求。
+        if credentials.source == .cursorIDE,
+           let databasePath = credentials.databasePath,
+           !credentials.tokensEncryptedAtRest {
             _ = sqlite.execute(
                 databasePath: databasePath,
                 sql: "UPDATE ItemTable SET value = '\(accessToken.replacingOccurrences(of: "'", with: "''"))' WHERE key = 'cursorAuth/accessToken';"

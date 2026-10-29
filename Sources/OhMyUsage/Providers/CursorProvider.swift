@@ -11,14 +11,16 @@ final class CursorProvider: UsageProvider, @unchecked Sendable {
         descriptor: ProviderDescriptor,
         session: URLSession = .shared,
         sqlite: any SQLiteQuerying = DefaultSQLiteShell(),
-        stateDatabasePath: String? = nil
+        stateDatabasePath: String? = nil,
+        safeStorage: CursorSafeStorage = .default
     ) {
         self.descriptor = descriptor
         self.session = session
         self.auth = CursorSessionAuth(
             session: session,
             sqlite: sqlite,
-            stateDatabasePath: stateDatabasePath ?? CursorSessionAuth.defaultIDEStateDatabasePath()
+            stateDatabasePath: stateDatabasePath ?? CursorSessionAuth.defaultIDEStateDatabasePath(),
+            safeStorage: safeStorage
         )
     }
 
