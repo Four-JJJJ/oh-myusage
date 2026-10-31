@@ -13,10 +13,10 @@ For extension and integration paths after the refactor, see [EXTENDING.md](./EXT
 | Gemini | official API/web quota data | Supports model-specific windows; local history from `~/.gemini/tmp/*/chats` |
 | GitHub Copilot | local GitHub auth | Reads Copilot usage and quota state |
 | Microsoft Copilot | Microsoft Graph API | D7/D30 usage summaries; token from `MS_GRAPH_TOKEN` / `MICROSOFT_GRAPH_TOKEN` env, keychain, or Azure CLI; separate from the GitHub Copilot card |
-| Cursor | official/local session data | Monthly and on-demand usage, plan tier (Pro / Pro+ / Ultra); reads both plaintext and safeStorage-encrypted (`cursor-safe-storage:v1:`) Cursor IDE tokens, the latter through the `Cursor Safe Storage` keychain item; local history prefers dashboard events, then `state.vscdb` |
-| Grok Bot | Cursor session (Grok Bot app or Cursor IDE) | Independent weekly Bot grant plus optional on-demand; Cursor paid plans or a SuperGrok / X Premium+ link on the same Cursor account |
+| Cursor | official/local session data | Legacy plans: monthly Cursor Models and Other Models, plus on-demand. The X Subscription: one shared weekly pool (same number as Grok and Grok Bot); reads both plaintext and safeStorage-encrypted (`cursor-safe-storage:v1:`) Cursor IDE tokens, the latter through the `Cursor Safe Storage` keychain item; local history prefers dashboard events, then `state.vscdb` |
+| Grok Bot | Cursor session (Grok Bot app or Cursor IDE) | The X Subscription draws from the shared weekly pool. Older accounts keep an independent weekly Bot grant plus optional on-demand |
 | Windsurf | official API | Daily and weekly windows |
-| Grok | local Grok CLI auth (`~/.grok/auth.json`) | Weekly shared pool, plan name, and pay-as-you-go cap; local history from `~/.grok/sessions` |
+| Grok | local Grok CLI auth (`~/.grok/auth.json`) | Weekly included pool (the X Subscription shares it with Cursor and Grok Bot), plan name, prepaid balance, and pay-as-you-go cap; local history from `~/.grok/sessions` |
 | Kimi | official API | Session and overall usage; plan names such as Andante / Moderato after a downgrade; local history from Kimi CLI / Kimi Code sessions |
 | Kimi (API) | Moonshot open platform API key | Pay-as-you-go balance (CNY); auto-detects `MOONSHOT_API_KEY` |
 | Amp | official API | Free and credit views |

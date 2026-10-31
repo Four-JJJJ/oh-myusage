@@ -87,6 +87,38 @@ final class GrokBotProviderTests: XCTestCase {
         XCTAssertEqual(snapshot.extras["planType"], "Cursor Ultra")
     }
 
+    func testParseSnapshotUnifiedWeeklyPoolUsesSubscriptionPlan() throws {
+        let snapshot = try GrokBotProvider.parseSnapshot(
+            sand: [
+                "hasNonZeroIncludedLimit": true,
+                "usagePercent": 10.205850487540628,
+                "nextResetTimestampUtc": "2026-10-22T10:27:36Z",
+                "grokPlanLabel": "Grok Bot Plan",
+                "cursorPlanName": "Premium",
+                "isUnified": true,
+                "billingBrand": "SAND_BILLING_BRAND_GROK"
+            ],
+            period: [
+                "billingCycleEnd": "1792664856178",
+                "spendLimitUsage": [
+                    "individualUsed": 447,
+                    "individualLimit": 0,
+                    "totalSpend": 447
+                ]
+            ],
+            descriptor: .defaultOfficialGrokBot(),
+            credentials: makeCredentials(source: .cursorIDE, membershipType: "pro"),
+            planNameOverride: nil
+        )
+
+        XCTAssertEqual(snapshot.quotaWindows.count, 1)
+        XCTAssertEqual(snapshot.quotaWindows.first?.kind, .weekly)
+        XCTAssertEqual(snapshot.quotaWindows.first?.usedPercent ?? -1, 10.205850487540628, accuracy: 0.001)
+        XCTAssertEqual(snapshot.extras["planType"], "Premium")
+        XCTAssertEqual(snapshot.extras["quotaScope"], "x-subscription")
+        XCTAssertEqual(snapshot.note, "Plan Premium | Weekly 90%")
+    }
+
     func testParseSnapshotRejectsAccountsWithoutBotAllowance() {
         XCTAssertThrowsError(
             try GrokBotProvider.parseSnapshot(
@@ -246,6 +278,16 @@ final class GrokBotProviderTests: XCTestCase {
 
     func testDisplayPlanNameMapsCursorMembership() {
         XCTAssertEqual(CursorSessionAuth.displayPlanName(grokPlanLabel: "SuperGrok", membershipType: "pro"), "SuperGrok")
+        XCTAssertEqual(
+            CursorSessionAuth.displayPlanName(
+                grokPlanLabel: "Grok Bot Plan",
+                membershipType: "pro",
+                cursorPlanName: "Premium",
+                isUnified: true
+            ),
+            "Premium"
+        )
+        XCTAssertEqual(CursorSessionAuth.displayPlanName(grokPlanLabel: "Grok Bot Plan", membershipType: "pro"), "Cursor Pro")
         XCTAssertEqual(CursorSessionAuth.displayPlanName(grokPlanLabel: nil, membershipType: "pro"), "Cursor Pro")
         XCTAssertEqual(CursorSessionAuth.displayPlanName(grokPlanLabel: nil, membershipType: "pro_plus"), "Cursor Pro+")
         XCTAssertEqual(CursorSessionAuth.displayPlanName(grokPlanLabel: nil, membershipType: nil), "unknown")

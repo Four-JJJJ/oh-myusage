@@ -113,6 +113,33 @@ final class UsageDisplayFormatterTests: XCTestCase {
 
         XCTAssertEqual(
             PlanTypeDisplayFormatter.resolvedPlanType(
+                providerType: .grok,
+                extrasPlanType: "Premium",
+                rawPlanType: nil
+            ),
+            "Premium"
+        )
+
+        XCTAssertEqual(
+            PlanTypeDisplayFormatter.resolvedPlanType(
+                providerType: .grok,
+                extrasPlanType: "Super",
+                rawPlanType: nil
+            ),
+            "Super"
+        )
+
+        XCTAssertEqual(
+            PlanTypeDisplayFormatter.resolvedPlanType(
+                providerType: .cursor,
+                extrasPlanType: "premium",
+                rawPlanType: nil
+            ),
+            "Premium"
+        )
+
+        XCTAssertEqual(
+            PlanTypeDisplayFormatter.resolvedPlanType(
                 providerType: .grokBot,
                 extrasPlanType: "SuperGrok Plus",
                 rawPlanType: nil

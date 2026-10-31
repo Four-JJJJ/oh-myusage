@@ -4,6 +4,15 @@ A macOS menu bar app for monitoring AI plan limits, credits, relay balances, and
 
 [Download Latest Release](https://github.com/Four-JJJJ/oh-myusage/releases/latest) · [Install Guide](DOWNLOAD.md) · [Supported Services](PROVIDERS.md) · [中文说明](../README.md)
 
+## V2.6.7
+
+- The X Subscription included usage is one weekly pool shared by Grok, Cursor, and Grok Bot. All three cards show that same weekly remaining
+- Cursor accounts on the unified plan read the weekly pool instead of the stale monthly Cursor Models / Other Models split. Third-party models are no longer shown as Other Models at 100%. Legacy monthly Cursor plans are unchanged
+- Grok keeps `creditUsagePercent` as the weekly pool. Per-product figures are a breakdown of that pool, not extra quota bars, and a prepaid balance is shown when present
+- Grok Bot uses the same weekly pool and shows the X Subscription tier (Plus / Premium / Super / Ultra) instead of the generic “Grok Bot Plan” label
+
+All 1,500 tests pass. See the [release notes](releases/v2.6.7.md).
+
 ## V2.6.6
 
 - Fix Cursor official quota failing entirely since late October: Cursor IDE now stores `cursorAuth/*` tokens encrypted with Electron safeStorage (`cursor-safe-storage:v1:`), so the app sent ciphertext as the session token, got 401, had its refresh rejected with `{"access_token":"","shouldLogout":true}`, and reported it as "Config Error / Invalid response: Cursor refresh failed"

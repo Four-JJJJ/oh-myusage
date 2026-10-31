@@ -187,12 +187,27 @@ struct CursorSessionAuth {
         JWTInspector.expirationDate(accessToken).map { $0 <= now } ?? false
     }
 
-    static func displayPlanName(grokPlanLabel: String?, membershipType: String?) -> String {
-        if let grokPlanLabel = OfficialValueParser.planLabel(grokPlanLabel) {
+    static func displayPlanName(
+        grokPlanLabel: String?,
+        membershipType: String?,
+        cursorPlanName: String? = nil,
+        isUnified: Bool = false
+    ) -> String {
+        if isUnified, let cursorPlanName = OfficialValueParser.planLabel(cursorPlanName) {
+            return cursorPlanName
+        }
+        if let grokPlanLabel = OfficialValueParser.planLabel(grokPlanLabel),
+           !isGenericBotPlan(grokPlanLabel) {
             return grokPlanLabel
+        }
+        if let cursorPlanName = OfficialValueParser.planLabel(cursorPlanName) {
+            return cursorPlanName
         }
         guard let membership = OfficialValueParser.planLabel(membershipType) else {
             return "unknown"
+        }
+        if isUnified {
+            return unifiedPlanName(membership)
         }
         switch membership.lowercased() {
         case "pro":
@@ -212,6 +227,33 @@ struct CursorSessionAuth {
                 return membership
             }
             return "Cursor \(membership)"
+        }
+    }
+
+    /// "Grok Bot Plan" is the product label on a unified seat, not the subscription tier.
+    private static func isGenericBotPlan(_ label: String) -> Bool {
+        let compact = label.lowercased().filter { !$0.isWhitespace }
+        return compact == "grokbotplan" || compact == "grokbot" || compact == "bot"
+    }
+
+    private static func unifiedPlanName(_ membership: String) -> String {
+        switch membership.lowercased() {
+        case "free", "hobby":
+            return "Free"
+        case "plus":
+            return "Plus"
+        case "premium":
+            return "Premium"
+        case "super":
+            return "Super"
+        case "ultra":
+            return "Ultra"
+        case "team", "teams":
+            return "Teams"
+        case "enterprise":
+            return "Enterprise"
+        default:
+            return membership
         }
     }
 

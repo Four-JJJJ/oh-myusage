@@ -115,6 +115,70 @@ final class GrokProviderTests: XCTestCase {
         XCTAssertEqual(snapshot.status, .warning)
     }
 
+    func testUnifiedPoolKeepsSharedWeeklyPercentAndPrepaidBalance() throws {
+        let descriptor = ProviderDescriptor.defaultOfficialGrok()
+
+        let snapshot = try GrokProvider.parseSnapshot(
+            root: [
+                "config": [
+                    "creditUsagePercent": 46,
+                    "currentPeriod": [
+                        "type": "USAGE_PERIOD_TYPE_WEEKLY",
+                        "start": "2026-10-15T10:27:36Z",
+                        "end": "2026-10-22T10:27:36Z"
+                    ],
+                    "productUsage": [
+                        ["product": "GrokBuild", "usagePercent": 41],
+                        ["product": "GrokChat", "usagePercent": 5]
+                    ],
+                    "prepaidBalance": ["val": 1234],
+                    "isUnifiedBillingUser": true
+                ]
+            ],
+            descriptor: descriptor
+        )
+
+        XCTAssertEqual(snapshot.quotaWindows.count, 1)
+        XCTAssertEqual(snapshot.quotaWindows.first?.title, "Weekly")
+        XCTAssertEqual(snapshot.used ?? -1, 46, accuracy: 0.001)
+        XCTAssertEqual(snapshot.remaining ?? -1, 54, accuracy: 0.001)
+        XCTAssertEqual(snapshot.extras["quotaScope"], "x-subscription")
+        XCTAssertEqual(snapshot.extras["prepaidBalance"], "$12.34")
+        XCTAssertEqual(snapshot.note, "Weekly 54% | Prepaid $12.34")
+    }
+
+    func testUnifiedBillingAcceptsBillingPeriodEndWithoutCurrentPeriod() throws {
+        let snapshot = try GrokProvider.parseSnapshot(
+            root: [
+                "config": [
+                    "creditUsagePercent": 8,
+                    "billingPeriodEnd": "2026-10-22T10:27:36Z",
+                    "isUnifiedBillingUser": true
+                ]
+            ],
+            descriptor: .defaultOfficialGrok()
+        )
+
+        let window = try XCTUnwrap(snapshot.quotaWindows.first)
+        XCTAssertEqual(window.kind, .weekly)
+        XCTAssertEqual(window.title, "Weekly")
+        XCTAssertEqual(window.usedPercent, 8, accuracy: 0.001)
+    }
+
+    func testParseSnapshotMissingPeriodThrows() {
+        XCTAssertThrowsError(
+            try GrokProvider.parseSnapshot(
+                root: ["config": ["creditUsagePercent": 10]],
+                descriptor: .defaultOfficialGrok()
+            )
+        ) { error in
+            guard case .invalidResponse = error as? ProviderError else {
+                XCTFail("Expected invalidResponse, got \(error)")
+                return
+            }
+        }
+    }
+
     func testParseSnapshotMissingConfigThrows() {
         let descriptor = ProviderDescriptor.defaultOfficialGrok()
 

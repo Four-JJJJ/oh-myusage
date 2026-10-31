@@ -289,6 +289,10 @@ enum PlanTypeDisplayFormatter {
             return "Max"
         case "ULTRA":
             return "Ultra"
+        case "PREMIUM":
+            return "Premium"
+        case "SUPER":
+            return "Super"
         case "TEAM", "TEAMS":
             return "Teams"
         case "BUSINESS", "BIZ":
@@ -324,6 +328,12 @@ enum PlanTypeDisplayFormatter {
             return "Pro+"
         case "ULTRA":
             return "Ultra"
+        case "PLUS":
+            return "Plus"
+        case "PREMIUM":
+            return "Premium"
+        case "SUPER":
+            return "Super"
         case "TEAM", "TEAMS":
             return "Teams"
         case "BUSINESS":

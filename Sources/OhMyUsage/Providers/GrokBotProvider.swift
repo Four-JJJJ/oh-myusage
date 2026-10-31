@@ -4,14 +4,14 @@ import OhMyUsageProviders
 
 /// Grok Bot weekly usage provider.
 ///
-/// Grok Bot is metered on the Cursor account. Cursor paid plans include a weekly
-/// Bot grant; SuperGrok / X Premium+ can grant usage onto the same Cursor
-/// account. Credentials prefer the Grok Bot desktop app, then the Cursor IDE.
+/// On The X Subscription, Bot draws from the same weekly pool as Grok and Cursor.
+/// Older Cursor paid plans and a linked SuperGrok seat still expose a separate Bot grant.
+/// Credentials prefer the Grok Bot desktop app, then the Cursor IDE.
 final class GrokBotProvider: UsageProvider, @unchecked Sendable {
     private static let connectRPCBaseURL = "https://api2.cursor.sh/aiserver.v1.DashboardService"
     private static let restSandURL = URL(string: "https://cursor.com/api/dashboard/get-sand-usage-status")!
     private static let restUsageSummaryURL = URL(string: "https://cursor.com/api/usage-summary")!
-    private static let noAllowanceMessage = "当前账号没有 Grok Bot 额度。请使用 Cursor 付费计划，或在 Grok Bot 中关联 SuperGrok。"
+    private static let noAllowanceMessage = "当前账号没有 Grok Bot 额度。X 订阅需要 Premium 及以上；未统一的账号仍可使用包含 Bot 额度的 Cursor 付费计划，或关联 SuperGrok。"
 
     let descriptor: ProviderDescriptor
     private let session: URLSession
@@ -179,19 +179,23 @@ final class GrokBotProvider: UsageProvider, @unchecked Sendable {
         credentials: CursorSessionCredentials,
         planNameOverride: String?
     ) throws -> UsageSnapshot {
+        let isUnified = XSubscriptionQuota.isUnified(sand)
         if let hasLimit = sand["hasNonZeroIncludedLimit"] as? Bool, hasLimit == false {
             throw ProviderError.unavailable(noAllowanceMessage)
         }
 
-        guard let usedPercentRaw = OfficialValueParser.double(sand["usagePercent"]) else {
+        let usedPercentRaw = OfficialValueParser.double(sand["usagePercent"])
+        if usedPercentRaw == nil && !isUnified {
             throw ProviderError.invalidResponse("missing Grok Bot usagePercent")
         }
-        let usedPercent = min(100, max(0, usedPercentRaw))
+        let usedPercent = min(100, max(0, usedPercentRaw ?? 0))
         let remainingPercent = max(0, 100 - usedPercent)
         let resetAt = parseTimestamp(sand["nextResetTimestampUtc"])
         let planName = CursorSessionAuth.displayPlanName(
             grokPlanLabel: OfficialValueParser.planLabel(sand["grokPlanLabel"]),
-            membershipType: planNameOverride ?? credentials.membershipType
+            membershipType: planNameOverride ?? credentials.membershipType,
+            cursorPlanName: OfficialValueParser.planLabel(sand["cursorPlanName"]),
+            isUnified: isUnified
         )
 
         var windows: [UsageQuotaWindow] = [
@@ -210,7 +214,7 @@ final class GrokBotProvider: UsageProvider, @unchecked Sendable {
         let onDemandLimit = OfficialValueParser.double(spend?["individualLimit"]) ?? 0
         if onDemandLimit > 0 {
             let onDemandUsedPercent = min(100, max(0, onDemandUsed / onDemandLimit * 100))
-            let onDemandReset = parseTimestamp(period?["billingCycleEnd"]) ?? resetAt
+            let onDemandReset = XSubscriptionQuota.parseTimestamp(period?["billingCycleEnd"]) ?? resetAt
             windows.append(
                 UsageQuotaWindow(
                     id: "\(descriptor.id)-ondemand",
@@ -225,6 +229,9 @@ final class GrokBotProvider: UsageProvider, @unchecked Sendable {
 
         let remaining = windows.map(\.remainingPercent).min() ?? remainingPercent
         var extras: [String: String] = [:]
+        if isUnified {
+            extras["quotaScope"] = XSubscriptionQuota.scope
+        }
         if OfficialValueParser.planLabel(planName) != nil {
             extras["planType"] = planName
         }
@@ -262,28 +269,7 @@ final class GrokBotProvider: UsageProvider, @unchecked Sendable {
     }
 
     internal static func parseTimestamp(_ raw: Any?) -> Date? {
-        if let string = OfficialValueParser.string(raw) {
-            if let date = OfficialValueParser.isoDate(string) {
-                return date
-            }
-            if let number = Double(string) {
-                return parseEpoch(number)
-            }
-        }
-        if let number = OfficialValueParser.double(raw) {
-            return parseEpoch(number)
-        }
-        return nil
-    }
-
-    private static func parseEpoch(_ number: Double) -> Date? {
-        if number > 1_000_000_000_000 {
-            return Date(timeIntervalSince1970: number / 1000)
-        }
-        if number > 1_000_000_000 {
-            return Date(timeIntervalSince1970: number)
-        }
-        return nil
+        XSubscriptionQuota.parseTimestamp(raw)
     }
 
     private static func formatUnits(_ value: Double) -> String {

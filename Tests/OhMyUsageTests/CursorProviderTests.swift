@@ -265,6 +265,85 @@ final class CursorProviderTests: XCTestCase {
         )
     }
 
+    func testFetchUsesUnifiedWeeklyPoolInsteadOfStaleMonthlySummary() async throws {
+        let provider = makeProvider()
+        CursorMockURLProtocol.requestHandler = { request in
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            switch request.url?.path {
+            case "/api/usage-summary":
+                let body = """
+                {
+                  "membershipType": "enterprise",
+                  "billingCycleStart": "2026-10-01T00:00:00.000Z",
+                  "billingCycleEnd": "2026-11-01T00:00:00.000Z",
+                  "individualUsage": {
+                    "plan": {
+                      "enabled": true,
+                      "autoPercentUsed": 62.86,
+                      "apiPercentUsed": 0,
+                      "totalPercentUsed": 100
+                    },
+                    "onDemand": { "enabled": true, "used": 447, "limit": null }
+                  }
+                }
+                """
+                return (response, Data(body.utf8))
+            case "/api/dashboard/get-sand-usage-status":
+                XCTAssertEqual(request.httpMethod, "POST")
+                let body = """
+                {
+                  "usagePercent": 10.205850487540628,
+                  "nextResetTimestampUtc": "2026-10-22T10:27:36Z",
+                  "hasNonZeroIncludedLimit": true,
+                  "grokPlanLabel": "Grok Bot Plan",
+                  "cursorPlanName": "Premium",
+                  "isUnified": true,
+                  "billingBrand": "SAND_BILLING_BRAND_GROK"
+                }
+                """
+                return (response, Data(body.utf8))
+            default:
+                XCTFail("Unexpected path \(request.url?.path ?? "nil")")
+                throw URLError(.badURL)
+            }
+        }
+        defer { CursorMockURLProtocol.requestHandler = nil }
+
+        let snapshot = try await provider.fetch()
+
+        XCTAssertEqual(snapshot.quotaWindows.count, 1)
+        let weekly = try XCTUnwrap(snapshot.quotaWindows.first)
+        XCTAssertEqual(weekly.title, "Weekly")
+        XCTAssertEqual(weekly.kind, .weekly)
+        XCTAssertEqual(weekly.usedPercent, 10.205850487540628, accuracy: 0.001)
+        XCTAssertEqual(weekly.remainingPercent, 89.79414951245937, accuracy: 0.001)
+        let expectedReset = try XCTUnwrap(XSubscriptionQuota.parseTimestamp("2026-10-22T10:27:36Z"))
+        let resetAt = try XCTUnwrap(weekly.resetAt)
+        XCTAssertEqual(resetAt.timeIntervalSince1970, expectedReset.timeIntervalSince1970, accuracy: 1)
+        XCTAssertEqual(snapshot.extras["planType"], "Premium")
+        XCTAssertEqual(snapshot.extras["quotaScope"], "x-subscription")
+        XCTAssertEqual(snapshot.note, "Plan Premium | Weekly 90%")
+        XCTAssertFalse(snapshot.quotaWindows.contains { $0.title == "Cursor Models" || $0.title == "Other Models" })
+    }
+
+    func testFetchKeepsLegacyPoolsWhenSandStatusIsUnavailable() async throws {
+        let provider = makeProvider()
+        CursorMockURLProtocol.requestHandler = { request in
+            if request.url?.path == "/api/dashboard/get-sand-usage-status" {
+                let response = HTTPURLResponse(url: request.url!, statusCode: 503, httpVersion: nil, headerFields: nil)!
+                return (response, Data())
+            }
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            return (response, Data(Self.usageSummaryJSON.utf8))
+        }
+        defer { CursorMockURLProtocol.requestHandler = nil }
+
+        let snapshot = try await provider.fetch()
+
+        XCTAssertEqual(snapshot.quotaWindows.map(\.title), ["Cursor Models", "Other Models"])
+        XCTAssertNil(snapshot.extras["quotaScope"])
+    }
+
     func testPlaintextCredentialsAreStillWrittenBackAfterRefresh() async throws {
         let sqlite = RecordingCursorSQLite(rows: [
             ["cursorAuth/accessToken", Self.sessionJWT(expiration: 1)],

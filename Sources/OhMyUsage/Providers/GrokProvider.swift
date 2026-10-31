@@ -269,13 +269,18 @@ final class GrokProvider: UsageProvider, @unchecked Sendable {
         guard let config = root["config"] as? [String: Any] else {
             throw ProviderError.invalidResponse("missing Grok billing config")
         }
-        guard let period = config["currentPeriod"] as? [String: Any],
-              let periodType = OfficialValueParser.string(period["type"]),
-              let periodEnd = parseDate(OfficialValueParser.string(period["end"])) else {
+        let isUnified = XSubscriptionQuota.isUnified(config) || XSubscriptionQuota.isUnified(root)
+        let period = config["currentPeriod"] as? [String: Any]
+        let periodType = OfficialValueParser.string(period?["type"])
+            ?? (isUnified ? Self.weeklyPeriodType : nil)
+        let periodEnd = parseDate(OfficialValueParser.string(period?["end"]))
+            ?? parseDate(OfficialValueParser.string(config["billingPeriodEnd"]))
+        guard let periodType, let periodEnd else {
             throw ProviderError.invalidResponse("missing Grok billing period")
         }
 
         // proto-JSON omits zero-valued fields, so an absent percent means a genuine 0%.
+        // productUsage is a breakdown of this same pool, not a second allowance.
         let usedPercent = min(100, max(0, OfficialValueParser.double(config["creditUsagePercent"]) ?? 0))
         let remainingPercent = max(0, 100 - usedPercent)
 
@@ -308,14 +313,24 @@ final class GrokProvider: UsageProvider, @unchecked Sendable {
         }
 
         var extras: [String: String] = [:]
+        if isUnified {
+            extras["quotaScope"] = XSubscriptionQuota.scope
+        }
         if onDemandCap > 0 {
             extras["payAsYouGoCap"] = formatUnits(onDemandCap)
             extras["payAsYouGoUsed"] = formatUnits(onDemandUsed)
         }
+        let prepaidCents = XSubscriptionQuota.centAmount(config["prepaidBalance"]) ?? 0
+        if prepaidCents > 0 {
+            extras["prepaidBalance"] = XSubscriptionQuota.usdText(cents: prepaidCents)
+        }
 
-        let note = windows
+        var note = windows
             .map { "\($0.title) \(Int($0.remainingPercent.rounded()))%" }
             .joined(separator: " | ")
+        if let prepaid = extras["prepaidBalance"] {
+            note += " | Prepaid \(prepaid)"
+        }
 
         return UsageSnapshot(
             source: descriptor.id,

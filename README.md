@@ -9,6 +9,19 @@ oh-myusage 把官方订阅额度、模型使用窗口、第三方中转余额、
 
 [下载最新版本](https://github.com/Four-JJJJ/oh-myusage/releases/latest) · [安装说明](docs/DOWNLOAD.md) · [支持的服务](docs/PROVIDERS.md) · [扩展指南](docs/EXTENDING.md) · [发布清单](docs/RELEASE_CHECKLIST.md) · [English](docs/README.en.md)
 
+## V2.6.7 更新
+
+V2.6.7 兼容 X 统一订阅。Grok、Cursor、Grok Bot 的包含额度是同一条每周额度池，三张卡片显示同一个每周剩余。
+
+| 方向 | 改进 |
+| --- | --- |
+| Cursor | 统一订阅改为读取每周共享额度，不再把过期的月度 Cursor Models / Other Models 当成当前额度；第三方模型不再显示成 Other Models 100% |
+| Grok | 周额度仍是包含用量。按产品拆开的数字只是同一条池子的构成，不另开额度条；有预付余额时显示 Prepaid |
+| Grok Bot | 同一条周额度。套餐名显示 Plus / Premium / Super / Ultra，不再显示成 Grok Bot Plan |
+| 旧计划 | 还没统一的 Cursor 月度计划保持原来的双池 |
+
+全量 1,500 项测试 0 失败。详见[本版发布说明](docs/releases/v2.6.7.md)。
+
 ## V2.6.6 更新
 
 V2.6.6 修复 Cursor 官方额度从 10 月底起全部取不到的问题，并纠正刷新失败的错误分类。
