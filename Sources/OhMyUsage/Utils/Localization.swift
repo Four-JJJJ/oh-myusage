@@ -253,6 +253,31 @@ enum L10nKey {
     case officialAccountsEmptyState
     case providerDetailPlaceholder
     case dragToReorder
+    // Settings relay configuration forms.
+    case relayCustomHeaderValue
+    case relayCustomHeaderLookupHint
+    case relayNewAPIAccessTokenPlaceholder
+    case relaySub2APIKeyPlaceholder
+    case relayNewAPIAccessTokenHint
+    case relaySub2APIKeyHint
+    case relayAuthorizationAndImport
+    case relayUsagePreference
+    case relaySiteAddress
+    case relaySiteAddressPlaceholder
+    case relayCredentialMode
+    case relayCredentialModeHint
+    case relayCredential
+    case relayTestConnection
+    case importFromBrowser
+    case relaySiteType
+    case relayUserIDPlaceholder
+    case relaySaveSite
+    case relayNotVerifiedHint
+    case relayTesting
+    case relayConnectionStatus
+    case relayCredentialInfo
+    case relayCookieLookupHint
+    case relayBearerLookupHint
 }
 
 enum Localizer {
@@ -509,6 +534,30 @@ enum Localizer {
             case .officialAccountsEmptyState: return "快来添加你的第一个账号吧～"
             case .providerDetailPlaceholder: return "从左侧选择一个来源后，这里会显示完整配置。"
             case .dragToReorder: return "拖拽排序"
+            case .relayCustomHeaderValue: return "%@ 值"
+            case .relayCustomHeaderLookupHint: return "可在浏览器开发者工具的 Network 中打开对应请求，在 Request Headers 里复制 %@ 的值。"
+            case .relayNewAPIAccessTokenPlaceholder: return "粘帖Access Token"
+            case .relaySub2APIKeyPlaceholder: return "粘贴 API Key，例如 sk-..."
+            case .relayNewAPIAccessTokenHint: return "这里填写Access Token通过个人设置-安全设置-系统访问令牌, 生成令牌"
+            case .relaySub2APIKeyHint: return "填写 Sub2API 分组 API Key；站点地址填根地址，不要带 /v1。"
+            case .relayAuthorizationAndImport: return "授权与导入"
+            case .relayUsagePreference: return "用量偏好"
+            case .relaySiteAddress: return "站点地址"
+            case .relaySiteAddressPlaceholder: return "填写站点访问地址"
+            case .relayCredentialMode: return "凭证模式"
+            case .relayCredentialModeHint: return "浏览器优先会在手动凭证失效时自动读取浏览器登录态；仅浏览器模式只使用浏览器登录态，不使用手动保存的 Cookie 或 Token。"
+            case .relayCredential: return "凭证"
+            case .relayTestConnection: return "测试链接"
+            case .importFromBrowser: return "从浏览器导入"
+            case .relaySiteType: return "站点类型"
+            case .relayUserIDPlaceholder: return "个人设置中的User ID"
+            case .relaySaveSite: return "保存站点"
+            case .relayNotVerifiedHint: return "未验证，可先保存再到站点页测试"
+            case .relayTesting: return "测试中…"
+            case .relayConnectionStatus: return "连接状态"
+            case .relayCredentialInfo: return "凭证信息"
+            case .relayCookieLookupHint: return "可在浏览器开发者工具的 Network 中打开对应请求，在 Request Headers 里复制完整 Cookie。"
+            case .relayBearerLookupHint: return "可在浏览器开发者工具的 Network 中打开对应请求，在 Request Headers 里复制 Authorization 的 Bearer 值。"
             }
         case .en:
             switch key {
@@ -761,6 +810,30 @@ enum Localizer {
             case .officialAccountsEmptyState: return "Add your first account to get started"
             case .providerDetailPlaceholder: return "Choose a source on the left to inspect and edit its full configuration."
             case .dragToReorder: return "Drag to reorder"
+            case .relayCustomHeaderValue: return "%@ value"
+            case .relayCustomHeaderLookupHint: return "Open the matching request in browser DevTools Network and copy the %@ value from Request Headers."
+            case .relayNewAPIAccessTokenPlaceholder: return "Paste Access Token"
+            case .relaySub2APIKeyPlaceholder: return "Paste API Key, for example sk-..."
+            case .relayNewAPIAccessTokenHint: return "Generate an Access Token under Personal Settings - Security - System Access Token and paste it here."
+            case .relaySub2APIKeyHint: return "Enter the Sub2API group API key; use the site root as the address, without /v1."
+            case .relayAuthorizationAndImport: return "Authorization & Import"
+            case .relayUsagePreference: return "Usage Preference"
+            case .relaySiteAddress: return "Site Address"
+            case .relaySiteAddressPlaceholder: return "Enter site URL"
+            case .relayCredentialMode: return "Credential Mode"
+            case .relayCredentialModeHint: return "Browser preferred automatically falls back to browser login when manual credentials fail; Browser only never uses manually saved cookies or tokens."
+            case .relayCredential: return "Credential"
+            case .relayTestConnection: return "Test Connection"
+            case .importFromBrowser: return "Import from Browser"
+            case .relaySiteType: return "Site Type"
+            case .relayUserIDPlaceholder: return "User ID from personal settings"
+            case .relaySaveSite: return "Save Site"
+            case .relayNotVerifiedHint: return "Not verified — you can save now and test on the site page"
+            case .relayTesting: return "Testing…"
+            case .relayConnectionStatus: return "Connection status"
+            case .relayCredentialInfo: return "Credential"
+            case .relayCookieLookupHint: return "Open the matching request in browser DevTools Network and copy the full Cookie value from Request Headers."
+            case .relayBearerLookupHint: return "Open the matching request in browser DevTools Network and copy the Authorization bearer value from Request Headers."
             }
         }
     }

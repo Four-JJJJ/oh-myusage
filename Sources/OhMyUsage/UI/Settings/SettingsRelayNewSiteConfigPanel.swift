@@ -19,10 +19,10 @@ extension SettingsView {
             authScheme: newSiteManifest.balanceRequest.authScheme
         )
 
-        settingsConfigurationSection(title: viewModel.localizedText("配置", "Configuration")) {
+        settingsConfigurationSection(title: viewModel.text(.configurationSection)) {
             settingsConfigurationRows {
                 if newRelaySiteDraft.selectedPresetID == nil {
-                    relayCompactConfigRow(title: viewModel.localizedText("站点类型", "Site Type")) {
+                    relayCompactConfigRow(title: viewModel.text(.relaySiteType)) {
                         relayPillControl(
                             selection: newRelaySiteDraft.templateID,
                             options: [
@@ -36,7 +36,7 @@ extension SettingsView {
                     }
                 }
 
-                relayCompactConfigRow(title: viewModel.localizedText("用量偏好", "Usage Preference")) {
+                relayCompactConfigRow(title: viewModel.text(.relayUsagePreference)) {
                     relayPillControl(
                         selection: OfficialQuotaDisplayMode.remaining.id,
                         options: [
@@ -49,9 +49,9 @@ extension SettingsView {
                 }
 
                 if showBaseURLField {
-                    relayCompactConfigRow(title: viewModel.localizedText("站点地址", "Site Address")) {
+                    relayCompactConfigRow(title: viewModel.text(.relaySiteAddress)) {
                         settingsConfigTextField(
-                            viewModel.localizedText("填写站点访问地址", "Enter site URL"),
+                            viewModel.text(.relaySiteAddressPlaceholder),
                             text: Binding(
                                 get: { newRelaySiteDraft.baseURL },
                                 set: {
@@ -66,7 +66,7 @@ extension SettingsView {
                 }
 
                 VStack(alignment: .leading, spacing: 5) {
-                    relayCompactConfigRow(title: viewModel.localizedText("凭证模式", "Credential Mode")) {
+                    relayCompactConfigRow(title: viewModel.text(.relayCredentialMode)) {
                         relayPillControl(
                             selection: RelayCredentialMode.browserPreferred.id,
                             options: relayCredentialModeConfigOptions,
@@ -77,16 +77,13 @@ extension SettingsView {
                     }
 
                     thirdPartyHintText(
-                        viewModel.localizedText(
-                            "浏览器优先会在手动凭证失效时自动读取浏览器登录态；仅浏览器模式只使用浏览器登录态，不使用手动保存的 Cookie 或 Token。",
-                            "Browser preferred automatically falls back to browser login when manual credentials fail; Browser only never uses manually saved cookies or tokens."
-                        )
+                        viewModel.text(.relayCredentialModeHint)
                     )
                 }
 
                 if showCredentialField {
                     VStack(alignment: .leading, spacing: 5) {
-                        relayCompactConfigRow(title: viewModel.localizedText("凭证", "Credential")) {
+                        relayCompactConfigRow(title: viewModel.text(.relayCredential)) {
                             settingsConfigSecureField(
                                 credentialTemplate.placeholder,
                                 text: Binding(
@@ -110,7 +107,7 @@ extension SettingsView {
                     VStack(alignment: .leading, spacing: 5) {
                         relayCompactConfigRow(title: "User ID") {
                             settingsConfigTextField(
-                                viewModel.localizedText("个人设置中的User ID", "User ID from personal settings"),
+                                viewModel.text(.relayUserIDPlaceholder),
                                 text: Binding(
                                     get: { newRelaySiteDraft.userID },
                                     set: {
@@ -128,7 +125,7 @@ extension SettingsView {
                 }
 
                 HStack(spacing: 12) {
-                    settingsSmallOutlineButton(viewModel.localizedText("测试链接", "Test Connection"), width: 60) {
+                    settingsSmallOutlineButton(viewModel.text(.relayTestConnection), width: 60) {
                         let selectedManifest = selectedNewRelaySiteManifest()
                         let resolvedBaseURL = resolvedRelayBaseURLInput(
                             typedBaseURL: newRelaySiteDraft.baseURL,
@@ -152,23 +149,23 @@ extension SettingsView {
                         }
                     }
 
-                    settingsSmallOutlineButton(viewModel.localizedText("保存站点", "Save Site"), width: 60) {
+                    settingsSmallOutlineButton(viewModel.text(.relaySaveSite), width: 60) {
                         saveNewRelaySiteDraft()
                     }
 
                     switch newRelaySiteDraft.testState {
                     case .unverified:
-                        Text(viewModel.localizedText("未验证，可先保存再到站点页测试", "Not verified — you can save now and test on the site page"))
+                        Text(viewModel.text(.relayNotVerifiedHint))
                             .font(.system(size: 10, weight: .regular))
                             .foregroundStyle(Color.white.opacity(0.40))
                             .lineLimit(1)
                     case .testing:
-                        Text(viewModel.localizedText("测试中…", "Testing…"))
+                        Text(viewModel.text(.relayTesting))
                             .font(.system(size: 10, weight: .regular))
                             .foregroundStyle(Color.white.opacity(0.60))
                             .lineLimit(1)
                     case .success:
-                        Text(viewModel.localizedText("链接成功接口正常", "Connection succeeded and endpoint is healthy"))
+                        Text(viewModel.text(.relayConnectionHealthy))
                             .font(.system(size: 10, weight: .regular))
                             .foregroundStyle(Color(hex: 0x69BD64))
                             .lineLimit(1)

@@ -109,7 +109,7 @@ extension SettingsView {
 
         settingsConfigurationRows {
             if officialCategory != nil {
-                settingsDetailGroupCaption(viewModel.localizedText("授权与导入", "Authorization & Import"))
+                settingsDetailGroupCaption(viewModel.text(.relayAuthorizationAndImport))
             } else {
                 settingsConfigToggleRow(
                     title: officialStatusBarTitle,
@@ -126,7 +126,7 @@ extension SettingsView {
                     )
                 }
 
-                relayCompactConfigRow(title: viewModel.localizedText("用量偏好", "Usage Preference")) {
+                relayCompactConfigRow(title: viewModel.text(.relayUsagePreference)) {
                     relayPillControl(
                         selection: quotaDisplayBinding.wrappedValue.id,
                         options: [
@@ -142,9 +142,9 @@ extension SettingsView {
                 }
             }
 
-            relayCompactConfigRow(title: viewModel.localizedText("站点地址", "Site Address")) {
+            relayCompactConfigRow(title: viewModel.text(.relaySiteAddress)) {
                 settingsConfigTextField(
-                    viewModel.localizedText("填写站点访问地址", "Enter site URL"),
+                    viewModel.text(.relaySiteAddressPlaceholder),
                     text: Binding(
                         get: { relayEditorDraft.baseURLInputs[provider.id] ?? currentBaseURL },
                         set: { relayEditorDraft.baseURLInputs[provider.id] = $0 }
@@ -154,7 +154,7 @@ extension SettingsView {
             }
 
             VStack(alignment: .leading, spacing: 5) {
-                relayCompactConfigRow(title: viewModel.localizedText("凭证模式", "Credential Mode")) {
+                relayCompactConfigRow(title: viewModel.text(.relayCredentialMode)) {
                     relayPillControl(
                         selection: credentialModeBinding.wrappedValue.id,
                         options: relayCredentialModeConfigOptions,
@@ -169,10 +169,7 @@ extension SettingsView {
                 }
 
                 thirdPartyHintText(
-                    viewModel.localizedText(
-                        "浏览器优先会在手动凭证失效时自动读取浏览器登录态；仅浏览器模式只使用浏览器登录态，不使用手动保存的 Cookie 或 Token。",
-                        "Browser preferred automatically falls back to browser login when manual credentials fail; Browser only never uses manually saved cookies or tokens."
-                    )
+                    viewModel.text(.relayCredentialModeHint)
                 )
             }
 
@@ -193,7 +190,7 @@ extension SettingsView {
                     )
                 ) {
                     VStack(alignment: .leading, spacing: 5) {
-                        relayCompactConfigRow(title: viewModel.localizedText("凭证", "Credential")) {
+                        relayCompactConfigRow(title: viewModel.text(.relayCredential)) {
                             HStack(spacing: 8) {
                                 Group {
                                     if showBalanceCredential {
@@ -225,7 +222,7 @@ extension SettingsView {
                                     }
                                 }
 
-                                settingsSmallOutlineButton(viewModel.localizedText("保存", "Save"), width: 46) {
+                                settingsSmallOutlineButton(viewModel.text(.save), width: 46) {
                                     saveCurrentCredentialIfNeeded()
                                 }
                             }
@@ -277,7 +274,7 @@ extension SettingsView {
             }
 
             HStack(spacing: 12) {
-                settingsSmallOutlineButton(viewModel.localizedText("测试链接", "Test Connection"), width: 60) {
+                settingsSmallOutlineButton(viewModel.text(.relayTestConnection), width: 60) {
                     saveCurrentCredentialIfNeeded()
                     let resultGeneration = relayTestResultGeneration
                     let providerID = provider.id
@@ -291,7 +288,7 @@ extension SettingsView {
                 }
 
                 if supportsBrowserImport {
-                    settingsSmallOutlineButton(viewModel.localizedText("从浏览器导入", "Import from Browser"), width: 82) {
+                    settingsSmallOutlineButton(viewModel.text(.importFromBrowser), width: 82) {
                         let resultGeneration = relayTestResultGeneration
                         let providerID = provider.id
                         Task {

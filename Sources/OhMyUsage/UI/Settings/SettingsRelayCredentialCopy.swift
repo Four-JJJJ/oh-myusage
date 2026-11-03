@@ -11,35 +11,22 @@ extension SettingsView {
         isAccount _: Bool,
         templateKind: RelayCredentialTemplateKind
     ) -> String {
-        let language = viewModel.language
         switch templateKind {
-        case .cookie:
-            return language == .zhHans ? "凭证信息" : "Credential"
-        case .bearer:
-            return language == .zhHans ? "凭证信息" : "Credential"
+        case .cookie, .bearer:
+            return viewModel.text(.relayCredentialInfo)
         case .custom(let header, _):
-            if language == .zhHans {
-                return "\(header) 值"
-            } else {
-                return "\(header) value"
-            }
+            return Localizer.format(.relayCustomHeaderValue, language: viewModel.language, header)
         }
     }
 
     func relayCredentialLookupHint(templateKind: RelayCredentialTemplateKind) -> String {
         switch templateKind {
         case .cookie:
-            return viewModel.language == .zhHans
-                ? "可在浏览器开发者工具的 Network 中打开对应请求，在 Request Headers 里复制完整 Cookie。"
-                : "Open the matching request in browser DevTools Network and copy the full Cookie value from Request Headers."
+            return viewModel.text(.relayCookieLookupHint)
         case .bearer:
-            return viewModel.language == .zhHans
-                ? "可在浏览器开发者工具的 Network 中打开对应请求，在 Request Headers 里复制 Authorization 的 Bearer 值。"
-                : "Open the matching request in browser DevTools Network and copy the Authorization bearer value from Request Headers."
+            return viewModel.text(.relayBearerLookupHint)
         case .custom(let header, _):
-            return viewModel.language == .zhHans
-                ? "可在浏览器开发者工具的 Network 中打开对应请求，在 Request Headers 里复制 \(header) 的值。"
-                : "Open the matching request in browser DevTools Network and copy the \(header) value from Request Headers."
+            return Localizer.format(.relayCustomHeaderLookupHint, language: viewModel.language, header)
         }
     }
 

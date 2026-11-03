@@ -32,7 +32,7 @@ extension SettingsView {
         )
         let showNameField = true
         let showBaseURLField = usesGenericTemplate || requiresBaseURLInput(for: selectedTemplate, currentBaseURL: currentBaseURL)
-        let tokenSaveButtonTitle = viewModel.language == .zhHans ? "保存" : "Save"
+        let tokenSaveButtonTitle = viewModel.text(.save)
         let quotaCredentialTemplate = relayCredentialTemplate(authHeader: "Authorization", authScheme: "Bearer")
         let balanceAuthHeader = relayEditorDraft.authHeaderInputs[provider.id]
             ?? seed.authHeader
@@ -44,10 +44,10 @@ extension SettingsView {
         let quotaPlaceholder = quotaCredentialTemplate.placeholder
         let balancePlaceholder: String = {
             if selectedTemplate.id == RelayAdapterRegistry.genericNewAPIAdapterID, viewModel.language == .zhHans {
-                return "粘帖Access Token"
+                return viewModel.text(.relayNewAPIAccessTokenPlaceholder)
             }
             if selectedTemplate.id == RelayAdapterRegistry.genericSub2APIAdapterID, viewModel.language == .zhHans {
-                return "粘贴 API Key，例如 sk-..."
+                return viewModel.text(.relaySub2APIKeyPlaceholder)
             }
             return balanceCredentialTemplate.placeholder
         }()
@@ -58,10 +58,10 @@ extension SettingsView {
         )
         let balanceHintLines: [String] = {
             if selectedTemplate.id == RelayAdapterRegistry.genericNewAPIAdapterID, viewModel.language == .zhHans {
-                return ["这里填写Access Token通过个人设置-安全设置-系统访问令牌, 生成令牌"]
+                return [viewModel.text(.relayNewAPIAccessTokenHint)]
             }
             if selectedTemplate.id == RelayAdapterRegistry.genericSub2APIAdapterID, viewModel.language == .zhHans {
-                return ["填写 Sub2API 分组 API Key；站点地址填根地址，不要带 /v1。"]
+                return [viewModel.text(.relaySub2APIKeyHint)]
             }
             return relayCredentialHintLines(
                 for: provider,
@@ -371,7 +371,7 @@ extension SettingsView {
                 }
 
                 if supportsBrowserImport {
-                    settingsCapsuleButton(viewModel.localizedText("从浏览器导入", "Import from Browser")) {
+                    settingsCapsuleButton(viewModel.text(.importFromBrowser)) {
                         let resultGeneration = relayTestResultGeneration
                         let providerID = provider.id
                         Task {
@@ -399,7 +399,7 @@ extension SettingsView {
             dividerLine
 
             VStack(alignment: .leading, spacing: 12) {
-                Text(viewModel.language == .zhHans ? "连接状态" : "Connection status")
+                Text(viewModel.text(.relayConnectionStatus))
                     .font(settingsLabelFont)
                     .foregroundStyle(settingsBodyColor)
 

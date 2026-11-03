@@ -57,7 +57,7 @@ extension SettingsView {
 
     func relayCondensedTestStatusText(_ result: RelayDiagnosticResult) -> String {
         if result.success {
-            return viewModel.localizedText("链接成功接口正常", "Connection succeeded and endpoint is healthy")
+            return viewModel.text(.relayConnectionHealthy)
         }
         return result.message
     }
