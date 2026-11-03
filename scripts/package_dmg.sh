@@ -29,7 +29,7 @@ cleanup() {
 trap cleanup EXIT
 APP_ZIP_PATH="$TMP_ROOT/$APP_NAME.zip"
 INSTALL_GUIDE_NAME="安装说明（请先看这里）.txt"
-ICON_SOURCE_PATH="$ROOT_DIR/Sources/OhMyUsage/Resources/app_icon_source.png"
+ICON_SOURCE_PATH="$ROOT_DIR/scripts/assets/app_icon_source.png"
 ICONSET_DIR="$TMP_ROOT/AppIcon.iconset"
 ICNS_PATH="$TMP_ROOT/AppIcon.icns"
 INSTALL_GUIDE_PATH="$DMG_STAGING/$INSTALL_GUIDE_NAME"
