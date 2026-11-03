@@ -226,6 +226,119 @@ enum L10nKey {
     case menuStatusRateLimited
     case menuStatusRefreshFailedStale
     case menuStatusRefreshFailed
+    // Settings provider sidebar and detail panes.
+    case enableProviderAccessibility
+    case relaySidebarEmptyState
+    case relayAddSite
+    case relaySub2APISiteName
+    case relayNewAPISiteName
+    case editName
+    case usageSection
+    case noUsageData
+    case relaySiteSection
+    case relayConnectionHealthy
+    case relayDeleteSite
+    case refreshThisProvider
+    case relayConsumed
+    case relayTotal
+    case configurationSection
+    case saveName
+    case officialBalanceAndUsage
+    case officialBalanceRemaining
+    case officialTotalLimit
+    case officialCredentialsEmptyHint
+    case officialAccountsAndQuotas
+    case officialAddJSON
+    case officialAddOAuth
+    case officialAccountsEmptyState
+    case providerDetailPlaceholder
+    case dragToReorder
+    // Settings relay configuration forms.
+    case relayCustomHeaderValue
+    case relayCustomHeaderLookupHint
+    case relayNewAPIAccessTokenPlaceholder
+    case relaySub2APIKeyPlaceholder
+    case relayNewAPIAccessTokenHint
+    case relaySub2APIKeyHint
+    case relayAuthorizationAndImport
+    case relayUsagePreference
+    case relaySiteAddress
+    case relaySiteAddressPlaceholder
+    case relayCredentialMode
+    case relayCredentialModeHint
+    case relayCredential
+    case relayTestConnection
+    case importFromBrowser
+    case relaySiteType
+    case relayUserIDPlaceholder
+    case relaySaveSite
+    case relayNotVerifiedHint
+    case relayTesting
+    case relayConnectionStatus
+    case relayCredentialInfo
+    case relayCookieLookupHint
+    case relayBearerLookupHint
+    // Settings local usage trend.
+    case usageTrendTitle
+    case usageTrendScopeAll
+    case usageTrendScopeAccount
+    case usageTrendSelectAccount
+    case usageTrendToday
+    case usageTrendYesterday
+    case usageTrendLast30Days
+    case usageTrend24Hours
+    case usageTrend7Days
+    case usageTrendScopeByAccount
+    // Settings official provider configuration.
+    case officialConfigSource
+    case officialConfigWeb
+    case officialDisplayAndAlerts
+    case officialMenubar
+    case officialShowAccount
+    case officialShowPlan
+    case officialResetTime
+    case officialDisplay
+    case officialDisplayPercent
+    case officialDisplayAmount
+    case officialWorkspaceIDPlaceholder
+    case officialAPIKeyPlaceholder
+    case officialTraeJWTPlaceholder
+    case officialAuthCookiePlaceholder
+    case officialCredentialPlaceholder
+    case officialZhipuCodingPlanKeyHint
+    case officialZhipuAPIKeyHint
+    case officialKimiCodingKeyHint
+    case officialMoonshotKeyHint
+    case officialOpenRouterKeyHint
+    case officialTraeTokenHint
+    case officialQwenCookieHint
+    case officialClaudeCodeImportSucceeded
+    case officialClaudeCodeImportNotFound
+    case officialImportFromClaudeCode
+    case officialDisplayAccount
+    case officialShowEmail
+    case officialPlanInfo
+    case officialMenuBarDisplay
+    case officialBalanceThreshold
+    // Settings general and menu bar sections.
+    case menuBarStyleBarName
+    case interval3Minutes
+    case interval5Minutes
+    case interval10Minutes
+    case interval15Minutes
+    case interval15Seconds
+    case interval30Seconds
+    case interval1Minute
+    case foregroundRefresh
+    case foregroundRefreshHint
+    case backgroundRefresh
+    case backgroundRefreshHint
+    case multiModelDisplay
+    case multiModelDisplayHint
+    case followWallpaper
+    case followWallpaperHint
+    // Settings launch-at-login switch hint.
+    case launchAtLoginToggleHint
 }
 
 enum Localizer {
@@ -456,6 +569,113 @@ enum Localizer {
             case .menuStatusRateLimited: return "限流"
             case .menuStatusRefreshFailedStale: return "刷新失败，显示旧数据"
             case .menuStatusRefreshFailed: return "刷新失败"
+            case .enableProviderAccessibility: return "启用 %@"
+            case .relaySidebarEmptyState: return "快来添加你的第一个代理中转站点吧～"
+            case .relayAddSite: return "添加站点"
+            case .relaySub2APISiteName: return "Sub2API站点"
+            case .relayNewAPISiteName: return "NewAPI站点"
+            case .editName: return "编辑名称"
+            case .usageSection: return "用量"
+            case .noUsageData: return "暂无用量信息"
+            case .relaySiteSection: return "站点"
+            case .relayConnectionHealthy: return "链接成功接口正常"
+            case .relayDeleteSite: return "删除站点"
+            case .refreshThisProvider: return "刷新此来源"
+            case .relayConsumed: return "已消耗"
+            case .relayTotal: return "总额"
+            case .configurationSection: return "配置"
+            case .saveName: return "保存名称"
+            case .officialBalanceAndUsage: return "余额与用量"
+            case .officialBalanceRemaining: return "余额 / 剩余额度"
+            case .officialTotalLimit: return "总额 / 限额"
+            case .officialCredentialsEmptyHint: return "配置凭证并刷新后显示账户数据。"
+            case .officialAccountsAndQuotas: return "账号与额度"
+            case .officialAddJSON: return "json添加"
+            case .officialAddOAuth: return "OAuth添加"
+            case .officialAccountsEmptyState: return "快来添加你的第一个账号吧～"
+            case .providerDetailPlaceholder: return "从左侧选择一个来源后，这里会显示完整配置。"
+            case .dragToReorder: return "拖拽排序"
+            case .relayCustomHeaderValue: return "%@ 值"
+            case .relayCustomHeaderLookupHint: return "可在浏览器开发者工具的 Network 中打开对应请求，在 Request Headers 里复制 %@ 的值。"
+            case .relayNewAPIAccessTokenPlaceholder: return "粘帖Access Token"
+            case .relaySub2APIKeyPlaceholder: return "粘贴 API Key，例如 sk-..."
+            case .relayNewAPIAccessTokenHint: return "这里填写Access Token通过个人设置-安全设置-系统访问令牌, 生成令牌"
+            case .relaySub2APIKeyHint: return "填写 Sub2API 分组 API Key；站点地址填根地址，不要带 /v1。"
+            case .relayAuthorizationAndImport: return "授权与导入"
+            case .relayUsagePreference: return "用量偏好"
+            case .relaySiteAddress: return "站点地址"
+            case .relaySiteAddressPlaceholder: return "填写站点访问地址"
+            case .relayCredentialMode: return "凭证模式"
+            case .relayCredentialModeHint: return "浏览器优先会在手动凭证失效时自动读取浏览器登录态；仅浏览器模式只使用浏览器登录态，不使用手动保存的 Cookie 或 Token。"
+            case .relayCredential: return "凭证"
+            case .relayTestConnection: return "测试链接"
+            case .importFromBrowser: return "从浏览器导入"
+            case .relaySiteType: return "站点类型"
+            case .relayUserIDPlaceholder: return "个人设置中的User ID"
+            case .relaySaveSite: return "保存站点"
+            case .relayNotVerifiedHint: return "未验证，可先保存再到站点页测试"
+            case .relayTesting: return "测试中…"
+            case .relayConnectionStatus: return "连接状态"
+            case .relayCredentialInfo: return "凭证信息"
+            case .relayCookieLookupHint: return "可在浏览器开发者工具的 Network 中打开对应请求，在 Request Headers 里复制完整 Cookie。"
+            case .relayBearerLookupHint: return "可在浏览器开发者工具的 Network 中打开对应请求，在 Request Headers 里复制 Authorization 的 Bearer 值。"
+            case .usageTrendTitle: return "使用趋势"
+            case .usageTrendScopeAll: return "全量"
+            case .usageTrendScopeAccount: return "账号"
+            case .usageTrendSelectAccount: return "请选择账号"
+            case .usageTrendToday: return "今日"
+            case .usageTrendYesterday: return "昨日"
+            case .usageTrendLast30Days: return "近30日"
+            case .usageTrend24Hours: return "24小时趋势"
+            case .usageTrend7Days: return "7天趋势"
+            case .usageTrendScopeByAccount: return "按账号"
+            case .officialConfigSource: return "来源"
+            case .officialConfigWeb: return "网页"
+            case .officialDisplayAndAlerts: return "显示与提醒"
+            case .officialMenubar: return "菜单栏"
+            case .officialShowAccount: return "显示账号"
+            case .officialShowPlan: return "显示套餐"
+            case .officialResetTime: return "重置时间"
+            case .officialDisplay: return "显示"
+            case .officialDisplayPercent: return "百分比"
+            case .officialDisplayAmount: return "数字"
+            case .officialWorkspaceIDPlaceholder: return "粘贴 wrk_... (必填)"
+            case .officialAPIKeyPlaceholder: return "粘贴 API Key"
+            case .officialTraeJWTPlaceholder: return "粘贴 Cloud-IDE-JWT / JWT"
+            case .officialAuthCookiePlaceholder: return "auth=... (可选，自动导入可留空)"
+            case .officialCredentialPlaceholder: return "粘贴凭证"
+            case .officialZhipuCodingPlanKeyHint: return "获取说明：已用 Claude Code 接入 GLM Coding Plan 时，自动模式会直接读取本地配置，也可点右侧「从 Claude Code 导入」一键填入；否则在智谱开放平台（z.ai 或 open.bigmodel.cn）「API Keys」页面创建密钥后粘贴到上方。与「Z.ai (API)」共用同一把密钥，填一次即可。"
+            case .officialZhipuAPIKeyHint: return "获取说明：点右侧「从 Claude Code 导入」可一键读取本机接入配置里的密钥；或登录智谱开放平台（open.bigmodel.cn 或国际站 z.ai），在「API Keys」页面创建密钥后粘贴到上方。与 Coding Plan 共用同一把密钥，填一次即可。"
+            case .officialKimiCodingKeyHint: return "获取说明：登录 kimi.com 的 Kimi for Coding 控制台（kimi.com/code），创建 API Key（即接入 Claude Code 时用的那把）后粘贴到上方，长期有效；本机已登录 Kimi CLI 时自动模式会直接读取登录态，无需填写。与「Kimi (API)」的 Moonshot 开放平台密钥不通用。"
+            case .officialMoonshotKeyHint: return "获取说明：登录 Moonshot 开放平台（platform.moonshot.cn），在「API Key 管理」页面创建密钥，复制后粘贴到上方。"
+            case .officialOpenRouterKeyHint: return "获取说明：登录 OpenRouter（openrouter.ai），在 Settings → Keys 页面创建密钥，复制后粘贴到上方。"
+            case .officialTraeTokenHint: return "获取说明：登录 trae.ai 后打开开发者工具 Network，刷新页面，复制 /trae/api/v1/pay/ide_user_ent_usage 请求头 Authorization（Cloud-IDE-JWT ...）粘贴到上方。"
+            case .officialQwenCookieHint: return "获取说明：浏览器登录千问AI平台（platform.qianwenai.com）后，手动刷新会自动导入登录 Cookie；也可打开开发者工具 Network，刷新页面，复制任意 platform.qianwenai.com 请求的 Cookie 请求头粘贴到上方。「Qwen」与「Qwen (API)」共用同一份 Cookie，填一次即可。"
+            case .officialClaudeCodeImportSucceeded: return "已从本机 Claude Code 配置导入密钥。"
+            case .officialClaudeCodeImportNotFound: return "未在 Claude Code 配置或环境变量中找到智谱密钥。"
+            case .officialImportFromClaudeCode: return "从 Claude Code 导入"
+            case .officialDisplayAccount: return "展示账号"
+            case .officialShowEmail: return "显示邮箱"
+            case .officialPlanInfo: return "套餐信息"
+            case .officialMenuBarDisplay: return "菜单栏显示"
+            case .officialBalanceThreshold: return "余额阈值"
+            case .menuBarStyleBarName: return "柱状图+名称"
+            case .interval3Minutes: return "3分钟"
+            case .interval5Minutes: return "5分钟"
+            case .interval10Minutes: return "10分钟"
+            case .interval15Minutes: return "15分钟"
+            case .interval15Seconds: return "15秒"
+            case .interval30Seconds: return "30秒"
+            case .interval1Minute: return "1分钟"
+            case .foregroundRefresh: return "前台刷新"
+            case .foregroundRefreshHint: return "菜单栏当前展示的服务按此频率刷新。"
+            case .backgroundRefresh: return "后台刷新"
+            case .backgroundRefreshHint: return "未显示在菜单栏的服务按此频率刷新。"
+            case .multiModelDisplay: return "多模展示"
+            case .multiModelDisplayHint: return "开启后菜单栏展示多个模型监控，过多的展示可能挤压菜单栏空间"
+            case .followWallpaper: return "跟随壁纸"
+            case .followWallpaperHint: return "根据壁纸自动选择清晰易读的显示外观"
+            case .launchAtLoginToggleHint: return "开启后会把 oh-myusage 注册为登录项。建议安装到“应用程序”后再启用"
             }
         case .en:
             switch key {
@@ -682,8 +902,131 @@ enum Localizer {
             case .menuStatusRateLimited: return "Rate limited"
             case .menuStatusRefreshFailedStale: return "Refresh failed, showing old data"
             case .menuStatusRefreshFailed: return "Refresh failed"
+            case .enableProviderAccessibility: return "Enable %@"
+            case .relaySidebarEmptyState: return "Add your first relay proxy site to get started"
+            case .relayAddSite: return "Add Site"
+            case .relaySub2APISiteName: return "Sub2API Site"
+            case .relayNewAPISiteName: return "NewAPI Site"
+            case .editName: return "Edit name"
+            case .usageSection: return "Usage"
+            case .noUsageData: return "No usage data yet"
+            case .relaySiteSection: return "Site"
+            case .relayConnectionHealthy: return "Connection succeeded and endpoint is healthy"
+            case .relayDeleteSite: return "Delete Site"
+            case .refreshThisProvider: return "Refresh this provider"
+            case .relayConsumed: return "Used"
+            case .relayTotal: return "Total"
+            case .configurationSection: return "Configuration"
+            case .saveName: return "Save name"
+            case .officialBalanceAndUsage: return "Balance & Usage"
+            case .officialBalanceRemaining: return "Balance / Remaining"
+            case .officialTotalLimit: return "Total / Limit"
+            case .officialCredentialsEmptyHint: return "Configure credentials and refresh to load account data."
+            case .officialAccountsAndQuotas: return "Accounts & Quotas"
+            case .officialAddJSON: return "Add JSON"
+            case .officialAddOAuth: return "Add OAuth"
+            case .officialAccountsEmptyState: return "Add your first account to get started"
+            case .providerDetailPlaceholder: return "Choose a source on the left to inspect and edit its full configuration."
+            case .dragToReorder: return "Drag to reorder"
+            case .relayCustomHeaderValue: return "%@ value"
+            case .relayCustomHeaderLookupHint: return "Open the matching request in browser DevTools Network and copy the %@ value from Request Headers."
+            case .relayNewAPIAccessTokenPlaceholder: return "Paste Access Token"
+            case .relaySub2APIKeyPlaceholder: return "Paste API Key, for example sk-..."
+            case .relayNewAPIAccessTokenHint: return "Generate an Access Token under Personal Settings - Security - System Access Token and paste it here."
+            case .relaySub2APIKeyHint: return "Enter the Sub2API group API key; use the site root as the address, without /v1."
+            case .relayAuthorizationAndImport: return "Authorization & Import"
+            case .relayUsagePreference: return "Usage Preference"
+            case .relaySiteAddress: return "Site Address"
+            case .relaySiteAddressPlaceholder: return "Enter site URL"
+            case .relayCredentialMode: return "Credential Mode"
+            case .relayCredentialModeHint: return "Browser preferred automatically falls back to browser login when manual credentials fail; Browser only never uses manually saved cookies or tokens."
+            case .relayCredential: return "Credential"
+            case .relayTestConnection: return "Test Connection"
+            case .importFromBrowser: return "Import from Browser"
+            case .relaySiteType: return "Site Type"
+            case .relayUserIDPlaceholder: return "User ID from personal settings"
+            case .relaySaveSite: return "Save Site"
+            case .relayNotVerifiedHint: return "Not verified — you can save now and test on the site page"
+            case .relayTesting: return "Testing…"
+            case .relayConnectionStatus: return "Connection status"
+            case .relayCredentialInfo: return "Credential"
+            case .relayCookieLookupHint: return "Open the matching request in browser DevTools Network and copy the full Cookie value from Request Headers."
+            case .relayBearerLookupHint: return "Open the matching request in browser DevTools Network and copy the Authorization bearer value from Request Headers."
+            case .usageTrendTitle: return "Usage Trend"
+            case .usageTrendScopeAll: return "All"
+            case .usageTrendScopeAccount: return "Account"
+            case .usageTrendSelectAccount: return "Select account"
+            case .usageTrendToday: return "Today"
+            case .usageTrendYesterday: return "Yesterday"
+            case .usageTrendLast30Days: return "Last 30d"
+            case .usageTrend24Hours: return "24h Trend"
+            case .usageTrend7Days: return "7d Trend"
+            case .usageTrendScopeByAccount: return "By Account"
+            case .officialConfigSource: return "Source"
+            case .officialConfigWeb: return "Web"
+            case .officialDisplayAndAlerts: return "Display & Alerts"
+            case .officialMenubar: return "Menubar"
+            case .officialShowAccount: return "Show Account"
+            case .officialShowPlan: return "Show Plan"
+            case .officialResetTime: return "Reset Time"
+            case .officialDisplay: return "Display"
+            case .officialDisplayPercent: return "Percent"
+            case .officialDisplayAmount: return "Amount"
+            case .officialWorkspaceIDPlaceholder: return "Paste wrk_... (Required)"
+            case .officialAPIKeyPlaceholder: return "Paste API Key"
+            case .officialTraeJWTPlaceholder: return "Paste Cloud-IDE-JWT / JWT"
+            case .officialAuthCookiePlaceholder: return "auth=... (Optional when auto import is enabled)"
+            case .officialCredentialPlaceholder: return "Paste credential"
+            case .officialZhipuCodingPlanKeyHint: return "How to get key: if you already use GLM Coding Plan via Claude Code, Auto mode reads the local config, or click \"Import from Claude Code\" to fill it in one click; otherwise create a key on the Zhipu platform (z.ai or open.bigmodel.cn) API Keys page and paste it above. The same key is shared with the Z.ai (API) card."
+            case .officialZhipuAPIKeyHint: return "How to get key: click \"Import from Claude Code\" to read the key from your local setup in one click; or sign in to the Zhipu platform (open.bigmodel.cn or z.ai), create a key on the API Keys page and paste it above. The same key is shared with the Coding Plan card."
+            case .officialKimiCodingKeyHint: return "How to get key: sign in to the Kimi for Coding console at kimi.com/code, create an API key (the same one used for Claude Code) and paste it above; it stays valid long-term. If Kimi CLI is signed in on this machine, Auto mode reads it directly. Not interchangeable with the Moonshot platform key used by Kimi (API)."
+            case .officialMoonshotKeyHint: return "How to get key: sign in to the Moonshot platform (platform.moonshot.cn), create a key on the API Keys page, then paste it above."
+            case .officialOpenRouterKeyHint: return "How to get key: sign in to OpenRouter (openrouter.ai), create a key under Settings → Keys, then paste it above."
+            case .officialTraeTokenHint: return "How to get token: sign in to trae.ai, open DevTools Network, refresh, then copy Authorization from /trae/api/v1/pay/ide_user_ent_usage (Cloud-IDE-JWT ...) and paste above."
+            case .officialQwenCookieHint: return "How to get cookie: sign in to platform.qianwenai.com in your browser — a manual refresh imports the session cookie automatically; or open DevTools Network, refresh the page, and paste the Cookie header of any platform.qianwenai.com request above. The same cookie is shared between the Qwen and Qwen (API) cards."
+            case .officialClaudeCodeImportSucceeded: return "Imported the key from the local Claude Code config."
+            case .officialClaudeCodeImportNotFound: return "No Zhipu key found in Claude Code config or environment variables."
+            case .officialImportFromClaudeCode: return "Import from Claude Code"
+            case .officialDisplayAccount: return "Display Account"
+            case .officialShowEmail: return "Show Email"
+            case .officialPlanInfo: return "Plan Info"
+            case .officialMenuBarDisplay: return "Menu Bar"
+            case .officialBalanceThreshold: return "Threshold"
+            case .menuBarStyleBarName: return "Bar + Name"
+            case .interval3Minutes: return "3m"
+            case .interval5Minutes: return "5m"
+            case .interval10Minutes: return "10m"
+            case .interval15Minutes: return "15m"
+            case .interval15Seconds: return "15s"
+            case .interval30Seconds: return "30s"
+            case .interval1Minute: return "1m"
+            case .foregroundRefresh: return "Foreground Refresh"
+            case .foregroundRefreshHint: return "Providers shown in the menu bar refresh at this interval."
+            case .backgroundRefresh: return "Background Refresh"
+            case .backgroundRefreshHint: return "Providers hidden from the menu bar refresh at this interval."
+            case .multiModelDisplay: return "Multi-Model Display"
+            case .multiModelDisplayHint: return "Show multiple monitored models in the menu bar; too many items may crowd the menu bar."
+            case .followWallpaper: return "Follow Wallpaper"
+            case .followWallpaperHint: return "Automatically picks a readable appearance from the wallpaper."
+            case .launchAtLoginToggleHint: return "When enabled, oh-myusage is registered as a login item. It's best to enable this after moving the app to Applications."
             }
         }
+    }
+
+    /// Substitutes each `%@` placeholder in the localized template, left to right, with
+    /// the matching argument. Arguments are inserted verbatim (never re-scanned), so a
+    /// provider name containing `%@` or `%` cannot corrupt the output.
+    static func format(_ key: L10nKey, language: AppLanguage, _ arguments: String...) -> String {
+        var remainder = Substring(text(key, language: language))
+        var result = ""
+        for argument in arguments {
+            guard let range = remainder.range(of: "%@") else { break }
+            result += remainder[..<range.lowerBound]
+            result += argument
+            remainder = remainder[range.upperBound...]
+        }
+        result += remainder
+        return result
     }
 
     static func lowBalanceBody(
