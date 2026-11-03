@@ -320,6 +320,25 @@ enum L10nKey {
     case officialPlanInfo
     case officialMenuBarDisplay
     case officialBalanceThreshold
+    // Settings general and menu bar sections.
+    case menuBarStyleBarName
+    case interval3Minutes
+    case interval5Minutes
+    case interval10Minutes
+    case interval15Minutes
+    case interval15Seconds
+    case interval30Seconds
+    case interval1Minute
+    case foregroundRefresh
+    case foregroundRefreshHint
+    case backgroundRefresh
+    case backgroundRefreshHint
+    case multiModelDisplay
+    case multiModelDisplayHint
+    case followWallpaper
+    case followWallpaperHint
+    // Settings launch-at-login switch hint.
+    case launchAtLoginToggleHint
 }
 
 enum Localizer {
@@ -640,6 +659,23 @@ enum Localizer {
             case .officialPlanInfo: return "套餐信息"
             case .officialMenuBarDisplay: return "菜单栏显示"
             case .officialBalanceThreshold: return "余额阈值"
+            case .menuBarStyleBarName: return "柱状图+名称"
+            case .interval3Minutes: return "3分钟"
+            case .interval5Minutes: return "5分钟"
+            case .interval10Minutes: return "10分钟"
+            case .interval15Minutes: return "15分钟"
+            case .interval15Seconds: return "15秒"
+            case .interval30Seconds: return "30秒"
+            case .interval1Minute: return "1分钟"
+            case .foregroundRefresh: return "前台刷新"
+            case .foregroundRefreshHint: return "菜单栏当前展示的服务按此频率刷新。"
+            case .backgroundRefresh: return "后台刷新"
+            case .backgroundRefreshHint: return "未显示在菜单栏的服务按此频率刷新。"
+            case .multiModelDisplay: return "多模展示"
+            case .multiModelDisplayHint: return "开启后菜单栏展示多个模型监控，过多的展示可能挤压菜单栏空间"
+            case .followWallpaper: return "跟随壁纸"
+            case .followWallpaperHint: return "根据壁纸自动选择清晰易读的显示外观"
+            case .launchAtLoginToggleHint: return "开启后会把 oh-myusage 注册为登录项。建议安装到“应用程序”后再启用"
             }
         case .en:
             switch key {
@@ -956,6 +992,23 @@ enum Localizer {
             case .officialPlanInfo: return "Plan Info"
             case .officialMenuBarDisplay: return "Menu Bar"
             case .officialBalanceThreshold: return "Threshold"
+            case .menuBarStyleBarName: return "Bar + Name"
+            case .interval3Minutes: return "3m"
+            case .interval5Minutes: return "5m"
+            case .interval10Minutes: return "10m"
+            case .interval15Minutes: return "15m"
+            case .interval15Seconds: return "15s"
+            case .interval30Seconds: return "30s"
+            case .interval1Minute: return "1m"
+            case .foregroundRefresh: return "Foreground Refresh"
+            case .foregroundRefreshHint: return "Providers shown in the menu bar refresh at this interval."
+            case .backgroundRefresh: return "Background Refresh"
+            case .backgroundRefreshHint: return "Providers hidden from the menu bar refresh at this interval."
+            case .multiModelDisplay: return "Multi-Model Display"
+            case .multiModelDisplayHint: return "Show multiple monitored models in the menu bar; too many items may crowd the menu bar."
+            case .followWallpaper: return "Follow Wallpaper"
+            case .followWallpaperHint: return "Automatically picks a readable appearance from the wallpaper."
+            case .launchAtLoginToggleHint: return "When enabled, oh-myusage is registered as a login item. It's best to enable this after moving the app to Applications."
             }
         }
     }
