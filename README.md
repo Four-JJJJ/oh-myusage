@@ -9,6 +9,20 @@ oh-myusage 把官方订阅额度、模型使用窗口、第三方中转余额、
 
 [下载最新版本](https://github.com/Four-JJJJ/oh-myusage/releases/latest) · [安装说明](docs/DOWNLOAD.md) · [支持的服务](docs/PROVIDERS.md) · [扩展指南](docs/EXTENDING.md) · [发布清单](docs/RELEASE_CHECKLIST.md) · [English](docs/README.en.md)
 
+## V2.6.8 更新
+
+V2.6.8 是一版性能与工程优化：Codex 查询更快返回、统计扫描不再空转占 CPU，并为后续更新签名校验打好基础。
+
+| 方向 | 改进 |
+| --- | --- |
+| Codex 查询 | 改为流式读取 Codex CLI app-server RPC，两个响应到齐即返回，去掉固定 sleep 和无效重试；取消任务立即返回，CLI 版本号改为真实版本 |
+| 统计扫描 | 扫描排队改为可挂起、可取消的串行闸门，不再用锁轮询空转；短锁只保护缓存，后台更安静 |
+| 更新安全 | 应用具备校验更新清单 Ed25519 签名的能力；公钥未配置前保持关闭，配置后发布流水线强制签名 |
+| 包体 | 739KB 的图标源图移出 app bundle，安装包更小 |
+| 工程结构 | Provider 元数据按模块收口、Settings 大文件拆分、约 150 条文案进本地化表，行为不变 |
+
+全量 1,526 项测试 0 失败。详见[本版发布说明](docs/releases/v2.6.8.md)。
+
 ## V2.6.7 更新
 
 V2.6.7 兼容 X 统一订阅。Grok、Cursor、Grok Bot 的包含额度是同一条每周额度池，三张卡片显示同一个每周剩余。

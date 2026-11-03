@@ -4,6 +4,16 @@ A macOS menu bar app for monitoring AI plan limits, credits, relay balances, and
 
 [Download Latest Release](https://github.com/Four-JJJJ/oh-myusage/releases/latest) · [Install Guide](DOWNLOAD.md) · [Supported Services](PROVIDERS.md) · [中文说明](../README.md)
 
+## V2.6.8
+
+- Codex queries now stream the Codex CLI app-server RPC and return as soon as both responses arrive, instead of waiting on fixed sleeps and dead retries; cancelled tasks return immediately and the reported CLI version is the real one
+- Analytics scans queue on a suspending, cancellable serial gate instead of spinning on a lock with 10 ms sleeps; short locks only guard cache entries
+- The app can now verify an Ed25519 signature on the update manifest (`latest.json.sig`); verification stays off until a public key is provisioned, after which the release pipeline requires signatures
+- The 739 KB icon source PNG no longer ships inside the app bundle, so installs get smaller
+- Engineering cleanup with no behavior change: provider metadata consolidated into per-provider modules, large Settings files split, and ~150 strings moved into the localization table
+
+All 1,526 tests pass. See the [release notes](releases/v2.6.8.md).
+
 ## V2.6.7
 
 - The X Subscription included usage is one weekly pool shared by Grok, Cursor, and Grok Bot. All three cards show that same weekly remaining
