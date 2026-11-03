@@ -16,8 +16,8 @@ extension SettingsView {
             reorderHandle()
         }
         .buttonStyle(.plain)
-        .help(viewModel.localizedText("拖拽排序", "Drag to reorder"))
-        .accessibilityLabel(viewModel.localizedText("拖拽排序", "Drag to reorder"))
+        .help(viewModel.text(.dragToReorder))
+        .accessibilityLabel(viewModel.text(.dragToReorder))
         .onDrag {
             beginProviderReorderDrag(providerID: providerID)
         }

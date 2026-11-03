@@ -64,10 +64,7 @@ extension SettingsView {
                         navigationState.selectedProviderID = provider.id
                     }
                 ),
-                accessibilityLabel: viewModel.localizedText(
-                    "启用 \(sidebarDisplayName(for: provider))",
-                    "Enable \(sidebarDisplayName(for: provider))"
-                )
+                accessibilityLabel: Localizer.format(.enableProviderAccessibility, language: viewModel.language, sidebarDisplayName(for: provider))
             )
 
             relayProviderIcon(size: SettingsVisualTokens.Sidebar.iconSize)
@@ -115,13 +112,10 @@ extension SettingsView {
 
     var relayProvidersEmptyState: some View {
         VStack(spacing: 16) {
-            Text(viewModel.localizedText(
-                "快来添加你的第一个代理中转站点吧～",
-                "Add your first relay proxy site to get started"
-            ))
-            .font(.system(size: 12, weight: .regular))
-            .foregroundStyle(SettingsVisualTokens.Text.tertiary)
-            .multilineTextAlignment(.center)
+            Text(viewModel.text(.relaySidebarEmptyState))
+                .font(.system(size: 12, weight: .regular))
+                .foregroundStyle(SettingsVisualTokens.Text.tertiary)
+                .multilineTextAlignment(.center)
 
             Button {
                 beginRelayNewSiteDraft()
@@ -152,7 +146,7 @@ extension SettingsView {
                 .font(.system(size: 14, weight: .regular))
                 .frame(width: 12, height: 12, alignment: .center)
 
-            Text(viewModel.localizedText("添加站点", "Add Site"))
+            Text(viewModel.text(.relayAddSite))
                 .font(.system(size: 12, weight: .regular))
         }
         .foregroundStyle(SettingsVisualTokens.Text.primary)

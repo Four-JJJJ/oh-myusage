@@ -18,7 +18,7 @@ extension SettingsView {
                 Text(viewModel.text(.selectProviderHint))
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(settingsTitleColor)
-                Text(viewModel.localizedText("从左侧选择一个来源后，这里会显示完整配置。", "Choose a source on the left to inspect and edit its full configuration."))
+                Text(viewModel.text(.providerDetailPlaceholder))
                     .font(.system(size: 12, weight: .regular))
                     .foregroundStyle(settingsHintColor)
                     .multilineTextAlignment(.center)
@@ -151,7 +151,7 @@ extension SettingsView {
             newRelaySiteDraft.testState = .unverified
             dialogState.isNewAPISiteDialogPresented = true
         } label: {
-            Text(viewModel.language == .zhHans ? "添加站点" : "Add Site")
+            Text(viewModel.text(.relayAddSite))
                 .font(.system(size: 10, weight: .semibold))
                 .frame(maxWidth: .infinity, alignment: .center)
         }

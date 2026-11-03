@@ -226,6 +226,33 @@ enum L10nKey {
     case menuStatusRateLimited
     case menuStatusRefreshFailedStale
     case menuStatusRefreshFailed
+    // Settings provider sidebar and detail panes.
+    case enableProviderAccessibility
+    case relaySidebarEmptyState
+    case relayAddSite
+    case relaySub2APISiteName
+    case relayNewAPISiteName
+    case editName
+    case usageSection
+    case noUsageData
+    case relaySiteSection
+    case relayConnectionHealthy
+    case relayDeleteSite
+    case refreshThisProvider
+    case relayConsumed
+    case relayTotal
+    case configurationSection
+    case saveName
+    case officialBalanceAndUsage
+    case officialBalanceRemaining
+    case officialTotalLimit
+    case officialCredentialsEmptyHint
+    case officialAccountsAndQuotas
+    case officialAddJSON
+    case officialAddOAuth
+    case officialAccountsEmptyState
+    case providerDetailPlaceholder
+    case dragToReorder
 }
 
 enum Localizer {
@@ -456,6 +483,32 @@ enum Localizer {
             case .menuStatusRateLimited: return "限流"
             case .menuStatusRefreshFailedStale: return "刷新失败，显示旧数据"
             case .menuStatusRefreshFailed: return "刷新失败"
+            case .enableProviderAccessibility: return "启用 %@"
+            case .relaySidebarEmptyState: return "快来添加你的第一个代理中转站点吧～"
+            case .relayAddSite: return "添加站点"
+            case .relaySub2APISiteName: return "Sub2API站点"
+            case .relayNewAPISiteName: return "NewAPI站点"
+            case .editName: return "编辑名称"
+            case .usageSection: return "用量"
+            case .noUsageData: return "暂无用量信息"
+            case .relaySiteSection: return "站点"
+            case .relayConnectionHealthy: return "链接成功接口正常"
+            case .relayDeleteSite: return "删除站点"
+            case .refreshThisProvider: return "刷新此来源"
+            case .relayConsumed: return "已消耗"
+            case .relayTotal: return "总额"
+            case .configurationSection: return "配置"
+            case .saveName: return "保存名称"
+            case .officialBalanceAndUsage: return "余额与用量"
+            case .officialBalanceRemaining: return "余额 / 剩余额度"
+            case .officialTotalLimit: return "总额 / 限额"
+            case .officialCredentialsEmptyHint: return "配置凭证并刷新后显示账户数据。"
+            case .officialAccountsAndQuotas: return "账号与额度"
+            case .officialAddJSON: return "json添加"
+            case .officialAddOAuth: return "OAuth添加"
+            case .officialAccountsEmptyState: return "快来添加你的第一个账号吧～"
+            case .providerDetailPlaceholder: return "从左侧选择一个来源后，这里会显示完整配置。"
+            case .dragToReorder: return "拖拽排序"
             }
         case .en:
             switch key {
@@ -682,8 +735,50 @@ enum Localizer {
             case .menuStatusRateLimited: return "Rate limited"
             case .menuStatusRefreshFailedStale: return "Refresh failed, showing old data"
             case .menuStatusRefreshFailed: return "Refresh failed"
+            case .enableProviderAccessibility: return "Enable %@"
+            case .relaySidebarEmptyState: return "Add your first relay proxy site to get started"
+            case .relayAddSite: return "Add Site"
+            case .relaySub2APISiteName: return "Sub2API Site"
+            case .relayNewAPISiteName: return "NewAPI Site"
+            case .editName: return "Edit name"
+            case .usageSection: return "Usage"
+            case .noUsageData: return "No usage data yet"
+            case .relaySiteSection: return "Site"
+            case .relayConnectionHealthy: return "Connection succeeded and endpoint is healthy"
+            case .relayDeleteSite: return "Delete Site"
+            case .refreshThisProvider: return "Refresh this provider"
+            case .relayConsumed: return "Used"
+            case .relayTotal: return "Total"
+            case .configurationSection: return "Configuration"
+            case .saveName: return "Save name"
+            case .officialBalanceAndUsage: return "Balance & Usage"
+            case .officialBalanceRemaining: return "Balance / Remaining"
+            case .officialTotalLimit: return "Total / Limit"
+            case .officialCredentialsEmptyHint: return "Configure credentials and refresh to load account data."
+            case .officialAccountsAndQuotas: return "Accounts & Quotas"
+            case .officialAddJSON: return "Add JSON"
+            case .officialAddOAuth: return "Add OAuth"
+            case .officialAccountsEmptyState: return "Add your first account to get started"
+            case .providerDetailPlaceholder: return "Choose a source on the left to inspect and edit its full configuration."
+            case .dragToReorder: return "Drag to reorder"
             }
         }
+    }
+
+    /// Substitutes each `%@` placeholder in the localized template, left to right, with
+    /// the matching argument. Arguments are inserted verbatim (never re-scanned), so a
+    /// provider name containing `%@` or `%` cannot corrupt the output.
+    static func format(_ key: L10nKey, language: AppLanguage, _ arguments: String...) -> String {
+        var remainder = Substring(text(key, language: language))
+        var result = ""
+        for argument in arguments {
+            guard let range = remainder.range(of: "%@") else { break }
+            result += remainder[..<range.lowerBound]
+            result += argument
+            remainder = remainder[range.upperBound...]
+        }
+        result += remainder
+        return result
     }
 
     static func lowBalanceBody(

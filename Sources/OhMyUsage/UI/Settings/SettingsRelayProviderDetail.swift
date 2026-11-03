@@ -44,7 +44,7 @@ extension SettingsView {
 
                 relayTitleIconButton(
                     systemName: "pencil",
-                    accessibilityLabel: viewModel.localizedText("编辑名称", "Edit name"),
+                    accessibilityLabel: viewModel.text(.editName),
                     action: { beginRelayProviderNameEdit(provider) }
                 )
             }
@@ -68,8 +68,8 @@ extension SettingsView {
                 settingsCompactToolbarIcon(named: "refresh_icon", fallback: "arrow.clockwise")
             }
             .buttonStyle(.plain)
-            .help(viewModel.localizedText("刷新此来源", "Refresh this provider"))
-            .accessibilityLabel(viewModel.localizedText("刷新此来源", "Refresh this provider"))
+            .help(viewModel.text(.refreshThisProvider))
+            .accessibilityLabel(viewModel.text(.refreshThisProvider))
 
             SettingsToggleSwitch(
                 isOn: Binding(
@@ -79,10 +79,7 @@ extension SettingsView {
                 offTrackColor: SettingsVisualTokens.Fill.control,
                 onTrackColor: SettingsVisualTokens.Text.tertiary,
                 knobColor: SettingsVisualTokens.Text.primary,
-                accessibilityLabel: viewModel.localizedText(
-                    "启用 \(sidebarDisplayName(for: provider))",
-                    "Enable \(sidebarDisplayName(for: provider))"
-                )
+                accessibilityLabel: Localizer.format(.enableProviderAccessibility, language: viewModel.language, sidebarDisplayName(for: provider))
             )
         }
         .frame(width: 88, height: 24, alignment: .trailing)
@@ -96,24 +93,24 @@ extension SettingsView {
         let used = snapshot?.used
         let limit = snapshot?.limit ?? relayUsageTotalFallback(remaining: remaining, used: used)
 
-        return settingsConfigurationSection(title: viewModel.localizedText("用量", "Usage")) {
+        return settingsConfigurationSection(title: viewModel.text(.usageSection)) {
             HStack(alignment: .center, spacing: 0) {
                 relayUsageMetric(
-                    title: viewModel.localizedText("余额", "Balance"),
+                    title: viewModel.text(.balanceLabel),
                     value: formattedRelayUsageAmount(remaining ?? 0)
                 )
 
                 Spacer(minLength: 0)
 
                 relayUsageMetric(
-                    title: viewModel.localizedText("已消耗", "Used"),
+                    title: viewModel.text(.relayConsumed),
                     value: formattedRelayUsageAmount(used ?? 0)
                 )
 
                 Spacer(minLength: 0)
 
                 relayUsageMetric(
-                    title: viewModel.localizedText("总额", "Total"),
+                    title: viewModel.text(.relayTotal),
                     value: formattedRelayUsageAmount(limit ?? 0)
                 )
             }
@@ -157,7 +154,7 @@ extension SettingsView {
 
     @ViewBuilder
     func relayConfigPanel(_ provider: ProviderDescriptor) -> some View {
-        settingsConfigurationSection(title: viewModel.localizedText("配置", "Configuration")) {
+        settingsConfigurationSection(title: viewModel.text(.configurationSection)) {
             relayCondensedConfigSection(provider)
         }
     }
@@ -166,7 +163,7 @@ extension SettingsView {
         _ provider: ProviderDescriptor,
         snapshot: UsageSnapshot?
     ) -> some View {
-        settingsConfigurationSection(title: viewModel.localizedText("站点", "Site")) {
+        settingsConfigurationSection(title: viewModel.text(.relaySiteSection)) {
             relaySiteRow(provider, snapshot: snapshot)
         }
     }
@@ -182,13 +179,13 @@ extension SettingsView {
         let metrics = [
             SettingsCompactRecordMetric(
                 id: "balance",
-                title: viewModel.localizedText("余额", "Balance"),
+                title: viewModel.text(.balanceLabel),
                 valueText: snapshot?.remaining.map(formattedSettingsAmount) ?? "-",
                 resetText: nil
             ),
             SettingsCompactRecordMetric(
                 id: "used",
-                title: viewModel.localizedText("已用", "Used"),
+                title: viewModel.text(.used),
                 valueText: snapshot?.used.map(formattedSettingsAmount) ?? "-",
                 resetText: nil
             )
@@ -196,7 +193,7 @@ extension SettingsView {
         let actions = [
             SettingsCompactRecordAction(
                 id: "delete",
-                title: viewModel.localizedText("删除站点", "Delete Site"),
+                title: viewModel.text(.relayDeleteSite),
                 destructive: true,
                 action: { viewModel.removeProvider(providerID: provider.id) }
             )

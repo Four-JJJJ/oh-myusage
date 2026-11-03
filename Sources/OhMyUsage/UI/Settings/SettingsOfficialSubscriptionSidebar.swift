@@ -77,10 +77,7 @@ extension SettingsView {
                         navigationState.selectedProviderID = provider.id
                     }
                 ),
-                accessibilityLabel: viewModel.localizedText(
-                    "启用 \(displayName)",
-                    "Enable \(displayName)"
-                )
+                accessibilityLabel: Localizer.format(.enableProviderAccessibility, language: viewModel.language, displayName)
             )
 
             providerIcon(for: provider, size: SettingsVisualTokens.Sidebar.iconSize)

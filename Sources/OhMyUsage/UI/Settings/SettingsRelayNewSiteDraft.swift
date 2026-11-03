@@ -15,9 +15,9 @@ extension SettingsView {
 
     var relayDefaultNewSiteTitle: String {
         if newRelaySiteDraft.templateID == RelayAdapterRegistry.genericSub2APIAdapterID {
-            return viewModel.localizedText("Sub2API站点", "Sub2API Site")
+            return viewModel.text(.relaySub2APISiteName)
         }
-        return viewModel.localizedText("NewAPI站点", "NewAPI Site")
+        return viewModel.text(.relayNewAPISiteName)
     }
 
     var relayNewSiteHeaderTitle: String {
@@ -52,7 +52,7 @@ extension SettingsView {
 
                 relayTitleIconButton(
                     systemName: "pencil",
-                    accessibilityLabel: viewModel.localizedText("编辑名称", "Edit name"),
+                    accessibilityLabel: viewModel.text(.editName),
                     action: beginNewRelaySiteNameEdit
                 )
             }
@@ -67,9 +67,9 @@ extension SettingsView {
     }
 
     var relayNewSiteDraftUsagePanel: some View {
-        settingsConfigurationSection(title: viewModel.localizedText("用量", "Usage")) {
+        settingsConfigurationSection(title: viewModel.text(.usageSection)) {
             officialSubscriptionCenteredPlaceholder(
-                viewModel.localizedText("暂无用量信息", "No usage data yet"),
+                viewModel.text(.noUsageData),
                 minHeight: 80,
                 textColor: settingsMutedHintColor
             )
@@ -77,25 +77,25 @@ extension SettingsView {
     }
 
     var relayNewSiteDraftSitePanel: some View {
-        settingsConfigurationSection(title: viewModel.localizedText("站点", "Site")) {
+        settingsConfigurationSection(title: viewModel.text(.relaySiteSection)) {
             relayNewSiteDraftSiteRow
         }
     }
 
     var relayNewSiteDraftSiteRow: some View {
         let statusText = newRelaySiteDraft.testState == .success
-            ? viewModel.localizedText("链接成功接口正常", "Connection succeeded and endpoint is healthy")
+            ? viewModel.text(.relayConnectionHealthy)
             : ""
         let metrics = [
             SettingsCompactRecordMetric(
                 id: "balance",
-                title: viewModel.localizedText("余额", "Balance"),
+                title: viewModel.text(.balanceLabel),
                 valueText: "-",
                 resetText: nil
             ),
             SettingsCompactRecordMetric(
                 id: "used",
-                title: viewModel.localizedText("已用", "Used"),
+                title: viewModel.text(.used),
                 valueText: "-",
                 resetText: nil
             )
@@ -103,7 +103,7 @@ extension SettingsView {
         let actions = [
             SettingsCompactRecordAction(
                 id: "delete",
-                title: viewModel.localizedText("删除站点", "Delete Site"),
+                title: viewModel.text(.relayDeleteSite),
                 destructive: true,
                 action: discardRelayNewSiteDraft
             )

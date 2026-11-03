@@ -91,8 +91,8 @@ extension SettingsView {
             }
             .buttonStyle(.plain)
             .padding(.trailing, 8)
-            .accessibilityLabel(viewModel.localizedText("保存名称", "Save name"))
-            .help(viewModel.localizedText("保存名称", "Save name"))
+            .accessibilityLabel(viewModel.text(.saveName))
+            .help(viewModel.text(.saveName))
         }
         .frame(width: 240, height: 24, alignment: .leading)
         .background(

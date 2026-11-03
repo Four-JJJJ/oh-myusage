@@ -31,7 +31,7 @@ extension SettingsView {
     }
 
     func officialAPIUsageSection(snapshot: UsageSnapshot?) -> some View {
-        officialSubscriptionPanel(title: viewModel.localizedText("余额与用量", "Balance & Usage")) {
+        officialSubscriptionPanel(title: viewModel.text(.officialBalanceAndUsage)) {
             officialSubscriptionSectionCard(padding: 16, cornerRadius: SettingsVisualTokens.Radius.control) {
                 VStack(alignment: .leading, spacing: 16) {
                     if let account = snapshot?.accountLabel, !account.isEmpty {
@@ -40,12 +40,12 @@ extension SettingsView {
                             .foregroundStyle(SettingsVisualTokens.Text.primary)
                     }
                     HStack(alignment: .top, spacing: 12) {
-                        officialAPIAmount(title: viewModel.localizedText("余额 / 剩余额度", "Balance / Remaining"), value: snapshot?.remaining, unit: snapshot?.unit)
-                        officialAPIAmount(title: viewModel.localizedText("已用", "Used"), value: snapshot?.used, unit: snapshot?.unit)
-                        officialAPIAmount(title: viewModel.localizedText("总额 / 限额", "Total / Limit"), value: snapshot?.limit, unit: snapshot?.unit)
+                        officialAPIAmount(title: viewModel.text(.officialBalanceRemaining), value: snapshot?.remaining, unit: snapshot?.unit)
+                        officialAPIAmount(title: viewModel.text(.used), value: snapshot?.used, unit: snapshot?.unit)
+                        officialAPIAmount(title: viewModel.text(.officialTotalLimit), value: snapshot?.limit, unit: snapshot?.unit)
                     }
                     if snapshot == nil {
-                        Text(viewModel.localizedText("配置凭证并刷新后显示账户数据。", "Configure credentials and refresh to load account data."))
+                        Text(viewModel.text(.officialCredentialsEmptyHint))
                             .font(.system(size: 11))
                             .foregroundStyle(SettingsVisualTokens.Text.tertiary)
                     }
@@ -89,8 +89,8 @@ extension SettingsView {
                     settingsCompactToolbarIcon(named: "refresh_icon", fallback: "arrow.clockwise")
                 }
                 .buttonStyle(.plain)
-                .help(viewModel.localizedText("刷新此来源", "Refresh this provider"))
-                .accessibilityLabel(viewModel.localizedText("刷新此来源", "Refresh this provider"))
+                .help(viewModel.text(.refreshThisProvider))
+                .accessibilityLabel(viewModel.text(.refreshThisProvider))
 
                 SettingsToggleSwitch(
                     isOn: Binding(
@@ -100,10 +100,7 @@ extension SettingsView {
                     offTrackColor: SettingsVisualTokens.Fill.control,
                     onTrackColor: SettingsVisualTokens.Text.tertiary,
                     knobColor: SettingsVisualTokens.Text.primary,
-                    accessibilityLabel: viewModel.localizedText(
-                        "启用 \(sidebarDisplayName(for: provider))",
-                        "Enable \(sidebarDisplayName(for: provider))"
-                    )
+                    accessibilityLabel: Localizer.format(.enableProviderAccessibility, language: viewModel.language, sidebarDisplayName(for: provider))
                 )
             }
         }
@@ -155,7 +152,7 @@ extension SettingsView {
         let shouldShowEmptyState = hasNoAccounts
             || !officialUsageSectionHasData(provider: provider, snapshot: snapshot)
 
-        officialSubscriptionPanel(title: viewModel.localizedText("用量", "Usage"), spacing: 12) {
+        officialSubscriptionPanel(title: viewModel.text(.usageSection), spacing: 12) {
             if shouldShowEmptyState {
                 officialSubscriptionSectionCard(
                     padding: 0,
@@ -163,7 +160,7 @@ extension SettingsView {
                     strokeOpacity: 0.15
                 ) {
                     officialSubscriptionCenteredPlaceholder(
-                        viewModel.localizedText("暂无用量信息", "No usage data yet"),
+                        viewModel.text(.noUsageData),
                         minHeight: 80,
                         textColor: settingsMutedHintColor
                     )
@@ -199,7 +196,7 @@ extension SettingsView {
     ) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .center) {
-                Text(viewModel.localizedText("账号与额度", "Accounts & Quotas"))
+                Text(viewModel.text(.officialAccountsAndQuotas))
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(settingsBodyColor)
 
@@ -208,7 +205,7 @@ extension SettingsView {
                 if provider.type == .codex || provider.type == .claude {
                     HStack(spacing: 8) {
                         officialSubscriptionAddAccountButton(
-                            viewModel.localizedText("json添加", "Add JSON"),
+                            viewModel.text(.officialAddJSON),
                             width: 60
                         ) {
                             if provider.type == .codex {
@@ -218,7 +215,7 @@ extension SettingsView {
                             }
                         }
                         officialSubscriptionAddAccountButton(
-                            viewModel.localizedText("OAuth添加", "Add OAuth"),
+                            viewModel.text(.officialAddOAuth),
                             width: 69
                         ) {
                             if provider.type == .codex {
@@ -239,7 +236,7 @@ extension SettingsView {
             ) {
                 if officialSubscriptionHasNoAccounts(provider) {
                     officialSubscriptionCenteredPlaceholder(
-                        viewModel.localizedText("快来添加你的第一个账号吧～", "Add your first account to get started"),
+                        viewModel.text(.officialAccountsEmptyState),
                         minHeight: 80,
                         textColor: settingsMutedHintColor
                     )
@@ -275,7 +272,7 @@ extension SettingsView {
 
     @ViewBuilder
     func officialSubscriptionConfigSection(_ provider: ProviderDescriptor) -> some View {
-        settingsConfigurationSection(title: viewModel.localizedText("配置", "Configuration")) {
+        settingsConfigurationSection(title: viewModel.text(.configurationSection)) {
             switch SettingsProviderConfigurationSectionPresenter.sectionKind(for: provider) {
             case .official:
                 officialProviderConfigurationContent(provider)
