@@ -1,4 +1,5 @@
 import SwiftUI
+import OhMyUsageApplication
 
 struct UsageAnalyticsSettingsView: View {
     @Bindable var viewModel: AppViewModel

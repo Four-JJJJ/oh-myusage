@@ -1,8 +1,6 @@
 import Foundation
 import OhMyUsagePresentation
 
-typealias MenuPermissionGuidePresentation = OhMyUsagePresentation.MenuPermissionGuidePresentation
-typealias MenuPermissionGuideRowPresentation = OhMyUsagePresentation.MenuPermissionGuideRowPresentation
 
 enum MenuPermissionGuidePresenter {
     typealias LocalDiscoveryState = MenuPermissionGuideLocalDiscoveryState

@@ -863,7 +863,12 @@ final class MonolithRetirementBoundaryTests: XCTestCase {
         let rootURL = packageRepositoryRootURL()
         let applicationTypesURL = rootURL.appendingPathComponent("Sources/OhMyUsageApplication/UsageAnalyticsTypes.swift")
         let executableTypesURL = rootURL.appendingPathComponent("Sources/OhMyUsage/Services/UsageAnalyticsTypes.swift")
-        let executableTypes = try String(contentsOf: executableTypesURL, encoding: .utf8)
+        // The typealias shim is gone; callers import OhMyUsageApplication directly.
+        XCTAssertFalse(
+            FileManager.default.fileExists(atPath: executableTypesURL.path),
+            "Executable Services should not re-export usage analytics types through a shim"
+        )
+        let executableTypes = (try? String(contentsOf: executableTypesURL, encoding: .utf8)) ?? ""
 
         XCTAssertTrue(
             FileManager.default.fileExists(atPath: applicationTypesURL.path),

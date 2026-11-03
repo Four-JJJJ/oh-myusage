@@ -1,6 +1,7 @@
 import Foundation
 import XCTest
 @testable import OhMyUsage
+import OhMyUsageApplication
 
 @MainActor
 final class UsageAnalyticsRefreshCoordinatorTests: XCTestCase {

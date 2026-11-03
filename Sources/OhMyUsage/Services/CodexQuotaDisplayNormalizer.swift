@@ -1,3 +1,0 @@
-import OhMyUsageApplication
-
-typealias CodexQuotaDisplayNormalizer = OhMyUsageApplication.CodexQuotaDisplayNormalizer

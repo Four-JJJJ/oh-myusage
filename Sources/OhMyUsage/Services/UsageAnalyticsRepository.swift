@@ -1,5 +1,6 @@
 import Foundation
 import OhMyUsageProviders
+import OhMyUsageApplication
 
 final class UsageAnalyticsRepository: @unchecked Sendable {
     typealias CCSwitchSourceFingerprintProvider = (_ ccSwitchReader: CCSwitchUsageLogReader) -> UsageAnalyticsFileFingerprint

@@ -2,6 +2,7 @@ import OhMyUsageDomain
 import Foundation
 import XCTest
 @testable import OhMyUsage
+import OhMyUsageApplication
 
 final class CodexQuotaDisplayNormalizerTests: XCTestCase {
     func testInactiveExpiredSessionWindowRollsForwardAndResetsToFull() throws {

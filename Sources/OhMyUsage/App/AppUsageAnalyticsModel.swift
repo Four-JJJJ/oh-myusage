@@ -1,4 +1,5 @@
 import Foundation
+import OhMyUsageApplication
 
 /// Owns the UsageAnalytics session boundary: refresh coordinator wiring.
 /// Filter / snapshot / loading projections remain on AppViewModel so Observation keeps working.

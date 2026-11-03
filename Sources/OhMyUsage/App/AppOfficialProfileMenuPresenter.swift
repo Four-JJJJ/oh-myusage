@@ -1,4 +1,5 @@
 import Foundation
+import OhMyUsageApplication
 
 enum AppOfficialProfileMenuPresenter {
     static func codexSlotViewModels(
