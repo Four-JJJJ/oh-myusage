@@ -614,7 +614,7 @@ extension SettingsView {
         }
         switch window.kind {
         case .session:
-            if provider.type == .ollamaCloud {
+            if ProviderTypeMetadataCatalog.metadata(for: provider.type).titlesSessionQuotaAsSession {
                 baseTitle = viewModel.localizedText("会话", "Session")
             } else {
                 baseTitle = viewModel.text(.quotaFiveHour)
@@ -676,7 +676,7 @@ extension SettingsView {
     }
 
     static func isPureBalanceProvider(_ type: ProviderType) -> Bool {
-        type == .zaiBalance || type == .kimiBalance || type == .qwenBalance
+        ProviderTypeMetadataCatalog.metadata(for: type).isPureBalance
     }
 
     /// 余额健康度映射：对齐菜单金额卡阈值（>50 充足 / >0 紧张 / <=0 耗尽）。
