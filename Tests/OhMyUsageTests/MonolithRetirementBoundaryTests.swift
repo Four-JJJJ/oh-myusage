@@ -317,8 +317,9 @@ final class MonolithRetirementBoundaryTests: XCTestCase {
         let officialRelayCatalogURL = rootURL.appendingPathComponent("Sources/OhMyUsage/Models/OfficialRelayProviderDefaultCatalog.swift")
         let relayCatalogURL = rootURL.appendingPathComponent("Sources/OhMyUsage/Models/RelayProviderDefaultCatalog.swift")
         let appConfigURL = rootURL.appendingPathComponent("Sources/OhMyUsage/Models/AppConfigModels.swift")
+        let relayModuleURL = rootURL.appendingPathComponent("Sources/OhMyUsage/Providers/Modules/ProviderModule+Relay.swift")
 
-        for catalogURL in [providerCatalogURL, officialCatalogURL, officialRelayCatalogURL, relayCatalogURL] {
+        for catalogURL in [providerCatalogURL, officialCatalogURL, officialRelayCatalogURL, relayCatalogURL, relayModuleURL] {
             XCTAssertTrue(
                 FileManager.default.fileExists(atPath: catalogURL.path),
                 "\(catalogURL.lastPathComponent) should own focused provider default construction or policy"
@@ -331,6 +332,7 @@ final class MonolithRetirementBoundaryTests: XCTestCase {
         let officialRelayCatalog = try String(contentsOf: officialRelayCatalogURL, encoding: .utf8)
         let relayCatalog = try String(contentsOf: relayCatalogURL, encoding: .utf8)
         let appConfigModels = try String(contentsOf: appConfigURL, encoding: .utf8)
+        let relayModule = try String(contentsOf: relayModuleURL, encoding: .utf8)
 
         XCTAssertFalse(facades.contains("ProviderDescriptor("))
         XCTAssertFalse(facades.contains("OfficialRelayMetadataCatalog.metadata"))
@@ -343,21 +345,37 @@ final class MonolithRetirementBoundaryTests: XCTestCase {
 
         XCTAssertTrue(providerCatalog.contains("enum ProviderDefaultCatalog"))
         XCTAssertTrue(providerCatalog.contains("allDefaultProviders"))
-        XCTAssertTrue(providerCatalog.contains("OfficialProviderDefaultCatalog.codex()"))
         XCTAssertTrue(
-            providerCatalog.contains("OfficialRelayProviderDefaultCatalog.allDefaultProviders"),
-            "ProviderDefaultCatalog should expand official relays from OfficialRelayProviderDefaultCatalog.allDefaultProviders"
+            providerCatalog.contains("ProviderModuleRegistry.allModules"),
+            "ProviderDefaultCatalog should list defaults from the ProviderModule table"
         )
         XCTAssertFalse(
-            providerCatalog.contains("OfficialRelayProviderDefaultCatalog.moonshot()"),
-            "ProviderDefaultCatalog should not hand-enumerate official relay defaults"
+            providerCatalog.contains("OfficialProviderDefaultCatalog."),
+            "ProviderDefaultCatalog should not hand-enumerate official provider defaults"
         )
-        XCTAssertFalse(providerCatalog.contains("OfficialRelayProviderDefaultCatalog.miniMax()"))
-        XCTAssertFalse(providerCatalog.contains("OfficialRelayProviderDefaultCatalog.deepSeek()"))
-        XCTAssertFalse(providerCatalog.contains("OfficialRelayProviderDefaultCatalog.xiaomiMIMO()"))
+        XCTAssertTrue(
+            relayModule.contains("OfficialRelayProviderDefaultCatalog.allDefaultProviders"),
+            "The relay ProviderModule should expand official relays from OfficialRelayProviderDefaultCatalog.allDefaultProviders"
+        )
+        for source in [providerCatalog, relayModule] {
+            XCTAssertFalse(
+                source.contains("OfficialRelayProviderDefaultCatalog.moonshot()"),
+                "Default provider listing should not hand-enumerate official relay defaults"
+            )
+            XCTAssertFalse(source.contains("OfficialRelayProviderDefaultCatalog.miniMax()"))
+            XCTAssertFalse(source.contains("OfficialRelayProviderDefaultCatalog.deepSeek()"))
+            XCTAssertFalse(source.contains("OfficialRelayProviderDefaultCatalog.xiaomiMIMO()"))
+        }
         XCTAssertTrue(officialCatalog.contains("enum OfficialProviderDefaultCatalog"))
         XCTAssertTrue(officialCatalog.contains("static func config(for type: ProviderType)"))
-        XCTAssertTrue(officialCatalog.contains("switch type"))
+        XCTAssertTrue(
+            officialCatalog.contains("ProviderModuleRegistry.module(for: type)"),
+            "OfficialProviderDefaultCatalog should read per-type defaults from the ProviderModule table"
+        )
+        XCTAssertFalse(
+            officialCatalog.contains("switch type"),
+            "OfficialProviderDefaultCatalog should not keep its own per-type switch"
+        )
         XCTAssertTrue(officialRelayCatalog.contains("enum OfficialRelayProviderDefaultCatalog"))
         XCTAssertTrue(officialRelayCatalog.contains("OfficialRelayMetadataCatalog.metadata(forProviderID:"))
         XCTAssertTrue(

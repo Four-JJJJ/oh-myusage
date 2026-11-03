@@ -5,67 +5,67 @@ extension ProviderDescriptor {
     // MARK: - Official / relay provider constructors (Catalog facades)
 
     static func defaultOfficialCodex() -> ProviderDescriptor {
-        OfficialProviderDefaultCatalog.codex()
+        OfficialProviderDefaultCatalog.descriptor(for: .codex)
     }
 
     static func defaultOfficialClaude() -> ProviderDescriptor {
-        OfficialProviderDefaultCatalog.claude()
+        OfficialProviderDefaultCatalog.descriptor(for: .claude)
     }
 
     static func defaultOfficialGemini() -> ProviderDescriptor {
-        OfficialProviderDefaultCatalog.gemini()
+        OfficialProviderDefaultCatalog.descriptor(for: .gemini)
     }
 
     static func defaultOfficialCopilot() -> ProviderDescriptor {
-        OfficialProviderDefaultCatalog.copilot()
+        OfficialProviderDefaultCatalog.descriptor(for: .copilot)
     }
 
     static func defaultOfficialMicrosoftCopilot() -> ProviderDescriptor {
-        OfficialProviderDefaultCatalog.microsoftCopilot()
+        OfficialProviderDefaultCatalog.descriptor(for: .microsoftCopilot)
     }
 
     static func defaultOfficialZai() -> ProviderDescriptor {
-        OfficialProviderDefaultCatalog.zai()
+        OfficialProviderDefaultCatalog.descriptor(for: .zai)
     }
 
     static func defaultOfficialZaiBalance() -> ProviderDescriptor {
-        OfficialProviderDefaultCatalog.zaiBalance()
+        OfficialProviderDefaultCatalog.descriptor(for: .zaiBalance)
     }
 
     static func defaultOfficialAmp() -> ProviderDescriptor {
-        OfficialProviderDefaultCatalog.amp()
+        OfficialProviderDefaultCatalog.descriptor(for: .amp)
     }
 
     static func defaultOfficialCursor() -> ProviderDescriptor {
-        OfficialProviderDefaultCatalog.cursor()
+        OfficialProviderDefaultCatalog.descriptor(for: .cursor)
     }
 
     static func defaultOfficialGrokBot() -> ProviderDescriptor {
-        OfficialProviderDefaultCatalog.grokBot()
+        OfficialProviderDefaultCatalog.descriptor(for: .grokBot)
     }
 
     static func defaultOfficialJetBrains() -> ProviderDescriptor {
-        OfficialProviderDefaultCatalog.jetBrains()
+        OfficialProviderDefaultCatalog.descriptor(for: .jetbrains)
     }
 
     static func defaultOfficialKiro() -> ProviderDescriptor {
-        OfficialProviderDefaultCatalog.kiro()
+        OfficialProviderDefaultCatalog.descriptor(for: .kiro)
     }
 
     static func defaultOfficialWindsurf() -> ProviderDescriptor {
-        OfficialProviderDefaultCatalog.windsurf()
+        OfficialProviderDefaultCatalog.descriptor(for: .windsurf)
     }
 
     static func defaultOfficialKimi() -> ProviderDescriptor {
-        OfficialProviderDefaultCatalog.kimi()
+        OfficialProviderDefaultCatalog.descriptor(for: .kimi)
     }
 
     static func defaultOfficialKimiBalance() -> ProviderDescriptor {
-        OfficialProviderDefaultCatalog.kimiBalance()
+        OfficialProviderDefaultCatalog.descriptor(for: .kimiBalance)
     }
 
     static func defaultOfficialGrok() -> ProviderDescriptor {
-        OfficialProviderDefaultCatalog.grok()
+        OfficialProviderDefaultCatalog.descriptor(for: .grok)
     }
 
     static func defaultOfficialMoonshot() -> ProviderDescriptor {
@@ -85,31 +85,31 @@ extension ProviderDescriptor {
     }
 
     static func defaultOfficialTrae() -> ProviderDescriptor {
-        OfficialProviderDefaultCatalog.trae()
+        OfficialProviderDefaultCatalog.descriptor(for: .trae)
     }
 
     static func defaultOfficialOpenRouterCredits() -> ProviderDescriptor {
-        OfficialProviderDefaultCatalog.openRouterCredits()
+        OfficialProviderDefaultCatalog.descriptor(for: .openrouterCredits)
     }
 
     static func defaultOfficialOpenRouterAPI() -> ProviderDescriptor {
-        OfficialProviderDefaultCatalog.openRouterAPI()
+        OfficialProviderDefaultCatalog.descriptor(for: .openrouterAPI)
     }
 
     static func defaultOfficialOllamaCloud() -> ProviderDescriptor {
-        OfficialProviderDefaultCatalog.ollamaCloud()
+        OfficialProviderDefaultCatalog.descriptor(for: .ollamaCloud)
     }
 
     static func defaultOfficialOpenCodeGo() -> ProviderDescriptor {
-        OfficialProviderDefaultCatalog.openCodeGo()
+        OfficialProviderDefaultCatalog.descriptor(for: .opencodeGo)
     }
 
     static func defaultOfficialQwen() -> ProviderDescriptor {
-        OfficialProviderDefaultCatalog.qwen()
+        OfficialProviderDefaultCatalog.descriptor(for: .qwen)
     }
 
     static func defaultOfficialQwenBalance() -> ProviderDescriptor {
-        OfficialProviderDefaultCatalog.qwenBalance()
+        OfficialProviderDefaultCatalog.descriptor(for: .qwenBalance)
     }
 
     static func defaultOpenAilinyu() -> ProviderDescriptor {

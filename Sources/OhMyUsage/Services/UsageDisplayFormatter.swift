@@ -173,19 +173,18 @@ enum TraeValueDisplayFormatter {
 }
 
 enum PlanTypeDisplayFormatter {
-    private static let supportedProviderTypes: Set<ProviderType> = [
-        .codex, .claude, .gemini, .copilot, .microsoftCopilot,
-        .zai, .amp, .cursor, .windsurf, .trae, .ollamaCloud,
-        .kimi, .grok, .grokBot, .qwen, .relay, .open, .dragon
-    ]
-
     private static let hiddenValues: Set<String> = [
         "-", "--", "unknown", "undefined", "n/a", "na", "none", "null",
         "nil", "unspecified", "(null)", "(unknown)"
     ]
 
     static func supportsPlanType(providerType: ProviderType) -> Bool {
-        supportedProviderTypes.contains(providerType)
+        displayStyle(for: providerType) != nil
+    }
+
+    /// Per-provider plan naming, declared by each `ProviderModule`'s metadata.
+    private static func displayStyle(for providerType: ProviderType) -> PlanTypeDisplayStyle? {
+        ProviderTypeMetadataCatalog.metadata(for: providerType).planTypeDisplayStyle
     }
 
     static func normalizedPlanType(_ value: String?, providerType: ProviderType? = nil) -> String? {
@@ -194,7 +193,7 @@ enum PlanTypeDisplayFormatter {
             return nil
         }
 
-        if providerType == .trae {
+        if let providerType, displayStyle(for: providerType) == .trae {
             let cleaned = stripTraePlanKeyword(raw)
             guard !cleaned.isEmpty else {
                 return nil
@@ -258,18 +257,18 @@ enum PlanTypeDisplayFormatter {
     }
 
     private static func normalizedDisplayPlanType(_ value: String, providerType: ProviderType) -> String {
-        switch providerType {
+        switch displayStyle(for: providerType) ?? .titleCased {
         case .kimi:
             return normalizedKimiPlanType(value)
         case .cursor:
             return normalizedCursorPlanType(value)
-        case .grok, .grokBot:
+        case .grok:
             return normalizedGrokPlanType(value)
-        case .zai, .amp, .microsoftCopilot:
+        case .verbatim:
             return value
         case .trae:
             return mappedCommonPlanType(value) ?? value
-        default:
+        case .titleCased:
             return mappedCommonPlanType(value)
                 ?? titleCaseASCIIWords(value.replacingOccurrences(of: "_", with: " "))
         }

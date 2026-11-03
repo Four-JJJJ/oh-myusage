@@ -1,7 +1,7 @@
 import Foundation
 import OhMyUsageDomain
 
-struct ProviderTypeMetadata {
+struct ProviderTypeMetadata: Sendable {
     var displayName: String
     var officialDisplayName: String?
     var iconName: String
@@ -12,11 +12,32 @@ struct ProviderTypeMetadata {
     var supportsOfficialBearerCredentialInput: Bool = false
     var supportedSourceModes: [OfficialSourceMode] = [.auto, .api]
     var supportedWebModes: [OfficialWebMode] = [.disabled]
+    /// Pure money balance (no quota windows): rendered as a balance card.
+    var isPureBalance: Bool = false
+    /// How plan/tier names are shown; `nil` hides the plan type for this provider.
+    var planTypeDisplayStyle: PlanTypeDisplayStyle? = .titleCased
+    /// Titles `.session` quota windows "Session" instead of the five-hour label.
+    var titlesSessionQuotaAsSession: Bool = false
+
+    static let localAndWebSourceModes: [OfficialSourceMode] = [.auto, .api, .cli, .web]
+    static let cliSourceModes: [OfficialSourceMode] = [.auto, .cli]
+    static let webSourceModes: [OfficialSourceMode] = [.auto, .web]
+    static let importableWebModes: [OfficialWebMode] = [.disabled, .autoImport, .manual]
+
+    static let relay = ProviderTypeMetadata(
+        displayName: "第三方中转站",
+        iconName: "menu_relay_icon",
+        fallbackSystemIcon: "link",
+        supportedSourceModes: [],
+        supportedWebModes: []
+    )
 }
 
+/// Type-level metadata lookup. The metadata itself is declared by each
+/// `ProviderModule` (`Sources/OhMyUsage/Providers/Modules`).
 enum ProviderTypeMetadataCatalog {
     static var registeredProviderTypes: Set<ProviderType> {
-        Set(providerTypeMetadata.keys)
+        ProviderModuleRegistry.registeredProviderTypes
     }
 
     static var missingProviderTypes: [ProviderType] {
@@ -24,148 +45,6 @@ enum ProviderTypeMetadataCatalog {
     }
 
     static func metadata(for type: ProviderType) -> ProviderTypeMetadata {
-        providerTypeMetadata[type] ?? relayMetadata
+        ProviderModuleRegistry.module(for: type).metadata
     }
-
-    private static let localAndWebSourceModes: [OfficialSourceMode] = [.auto, .api, .cli, .web]
-    private static let cliSourceModes: [OfficialSourceMode] = [.auto, .cli]
-    private static let webSourceModes: [OfficialSourceMode] = [.auto, .web]
-    private static let importableWebModes: [OfficialWebMode] = [.disabled, .autoImport, .manual]
-
-    private static let relayMetadata = ProviderTypeMetadata(
-        displayName: "第三方中转站",
-        iconName: "menu_relay_icon",
-        fallbackSystemIcon: "link",
-        supportedSourceModes: [],
-        supportedWebModes: []
-    )
-
-    private static let providerTypeMetadata: [ProviderType: ProviderTypeMetadata] = [
-        .codex: ProviderTypeMetadata(
-            displayName: "Codex",
-            iconName: "menu_codex_icon",
-            fallbackSystemIcon: "terminal.fill",
-            supportsAccountSwitching: true,
-            supportsLocalUsageHistory: true,
-            supportedSourceModes: localAndWebSourceModes,
-            supportedWebModes: importableWebModes
-        ),
-        .claude: ProviderTypeMetadata(
-            displayName: "Claude",
-            iconName: "menu_claude_icon",
-            fallbackSystemIcon: "sparkles",
-            preferredMetricCount: 4,
-            supportsAccountSwitching: true,
-            supportsLocalUsageHistory: true,
-            supportedSourceModes: localAndWebSourceModes,
-            supportedWebModes: importableWebModes
-        ),
-        .gemini: ProviderTypeMetadata(
-            displayName: "Gemini",
-            iconName: "menu_gemini_icon",
-            fallbackSystemIcon: "sparkles",
-            supportsLocalUsageHistory: true
-        ),
-        .copilot: ProviderTypeMetadata(displayName: "GitHub Copilot", iconName: "menu_github_copilot_icon", fallbackSystemIcon: "chevron.left.forwardslash.chevron.right"),
-        .microsoftCopilot: ProviderTypeMetadata(displayName: "Microsoft Copilot", iconName: "menu_microsoft_copilot_icon", fallbackSystemIcon: "building.2.crop.circle"),
-        .zai: ProviderTypeMetadata(
-            displayName: "Z.ai",
-            iconName: "menu_zai_icon",
-            fallbackSystemIcon: "z.square.fill",
-            supportsOfficialBearerCredentialInput: true
-        ),
-        .zaiBalance: ProviderTypeMetadata(
-            displayName: "Z.ai (API)",
-            iconName: "menu_zai_icon",
-            fallbackSystemIcon: "z.square.fill",
-            preferredMetricCount: 1,
-            supportsOfficialBearerCredentialInput: true
-        ),
-        .amp: ProviderTypeMetadata(displayName: "Amp", iconName: "menu_amp_icon", fallbackSystemIcon: "bolt.fill"),
-        .cursor: ProviderTypeMetadata(
-            displayName: "Cursor",
-            iconName: "menu_cursor_icon",
-            fallbackSystemIcon: "cursorarrow.rays",
-            supportsLocalUsageHistory: true
-        ),
-        .grokBot: ProviderTypeMetadata(
-            displayName: "Grok Bot",
-            iconName: "menu_grokbot_icon",
-            fallbackSystemIcon: "sparkle",
-            preferredMetricCount: 2
-        ),
-        .jetbrains: ProviderTypeMetadata(displayName: "JetBrains", iconName: "menu_jetbrains_icon", fallbackSystemIcon: "brain.head.profile"),
-        .kiro: ProviderTypeMetadata(
-            displayName: "Kiro",
-            iconName: "menu_kiro_icon",
-            fallbackSystemIcon: "wand.and.stars.inverse",
-            supportedSourceModes: cliSourceModes
-        ),
-        .windsurf: ProviderTypeMetadata(displayName: "Windsurf", iconName: "menu_windsurf_icon", fallbackSystemIcon: "wind"),
-        .kimi: ProviderTypeMetadata(
-            displayName: "Kimi",
-            iconName: "menu_kimi_icon",
-            fallbackSystemIcon: "moon.stars.fill",
-            supportsLocalUsageHistory: true,
-            supportsOfficialBearerCredentialInput: true
-        ),
-        .kimiBalance: ProviderTypeMetadata(
-            displayName: "Kimi (API)",
-            iconName: "menu_kimi_icon",
-            fallbackSystemIcon: "moon.stars.fill",
-            preferredMetricCount: 1,
-            supportsOfficialBearerCredentialInput: true
-        ),
-        .grok: ProviderTypeMetadata(
-            displayName: "Grok",
-            iconName: "menu_grok_icon",
-            fallbackSystemIcon: "sparkle",
-            supportsLocalUsageHistory: true
-        ),
-        .trae: ProviderTypeMetadata(displayName: "Trae SOLO", iconName: "menu_relay_icon", fallbackSystemIcon: "link"),
-        .openrouterCredits: ProviderTypeMetadata(
-            displayName: "OpenRouter Credits",
-            iconName: "menu_openrouter_icon",
-            fallbackSystemIcon: "link",
-            supportsOfficialBearerCredentialInput: true
-        ),
-        .openrouterAPI: ProviderTypeMetadata(
-            displayName: "OpenRouter API",
-            iconName: "menu_openrouter_icon",
-            fallbackSystemIcon: "link",
-            supportsOfficialBearerCredentialInput: true
-        ),
-        .ollamaCloud: ProviderTypeMetadata(
-            displayName: "Ollama Cloud",
-            iconName: "menu_ollama_icon",
-            fallbackSystemIcon: "link",
-            supportedSourceModes: webSourceModes,
-            supportedWebModes: importableWebModes
-        ),
-        .opencodeGo: ProviderTypeMetadata(
-            displayName: "OpenCode Go",
-            iconName: "menu_opencode_icon",
-            fallbackSystemIcon: "link",
-            supportedSourceModes: webSourceModes,
-            supportedWebModes: importableWebModes
-        ),
-        .qwen: ProviderTypeMetadata(
-            displayName: "Qwen",
-            iconName: "menu_qwen_icon",
-            fallbackSystemIcon: "sparkles",
-            supportedSourceModes: webSourceModes,
-            supportedWebModes: importableWebModes
-        ),
-        .qwenBalance: ProviderTypeMetadata(
-            displayName: "Qwen (API)",
-            iconName: "menu_qwen_icon",
-            fallbackSystemIcon: "sparkles",
-            preferredMetricCount: 1,
-            supportedSourceModes: webSourceModes,
-            supportedWebModes: importableWebModes
-        ),
-        .relay: relayMetadata,
-        .open: relayMetadata,
-        .dragon: relayMetadata
-    ]
 }

@@ -187,10 +187,10 @@ final class MenuVisualSnapshotRenderingTests: XCTestCase {
         let context = try await makeSettingsDetailContext(idSuffix: "unified-sidebar")
         let viewModel = context.viewModel
         let examples = [
-            OfficialProviderDefaultCatalog.kimi(),
-            OfficialProviderDefaultCatalog.kimiBalance(),
-            OfficialProviderDefaultCatalog.openRouterCredits(),
-            OfficialProviderDefaultCatalog.openRouterAPI(),
+            OfficialProviderDefaultCatalog.descriptor(for: .kimi),
+            OfficialProviderDefaultCatalog.descriptor(for: .kimiBalance),
+            OfficialProviderDefaultCatalog.descriptor(for: .openrouterCredits),
+            OfficialProviderDefaultCatalog.descriptor(for: .openrouterAPI),
             OfficialRelayProviderDefaultCatalog.deepSeek()
         ]
         viewModel.config.providers = examples.enumerated().map { index, provider in
@@ -217,10 +217,10 @@ final class MenuVisualSnapshotRenderingTests: XCTestCase {
         let context = try await makeSettingsDetailContext(idSuffix: "categories")
         let viewModel = context.viewModel
         let examples = [
-            OfficialProviderDefaultCatalog.zaiBalance(),
+            OfficialProviderDefaultCatalog.descriptor(for: .zaiBalance),
             OfficialRelayProviderDefaultCatalog.deepSeek(),
             OfficialRelayProviderDefaultCatalog.xiaomiMIMO(),
-            OfficialProviderDefaultCatalog.copilot()
+            OfficialProviderDefaultCatalog.descriptor(for: .copilot)
         ]
         for provider in examples {
             let isAPI = OfficialSettingsCategory.resolve(for: provider) == .api
@@ -259,7 +259,7 @@ final class MenuVisualSnapshotRenderingTests: XCTestCase {
             )
         }
         viewModel.setLanguage(.en)
-        let api = OfficialProviderDefaultCatalog.zaiBalance()
+        let api = OfficialProviderDefaultCatalog.descriptor(for: .zaiBalance)
         let settingsView = SettingsView(
             viewModel: viewModel,
             navigationState: SettingsNavigationState(selectedProviderID: api.id)
