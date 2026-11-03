@@ -289,6 +289,37 @@ enum L10nKey {
     case usageTrend24Hours
     case usageTrend7Days
     case usageTrendScopeByAccount
+    // Settings official provider configuration.
+    case officialConfigSource
+    case officialConfigWeb
+    case officialDisplayAndAlerts
+    case officialMenubar
+    case officialShowAccount
+    case officialShowPlan
+    case officialResetTime
+    case officialDisplay
+    case officialDisplayPercent
+    case officialDisplayAmount
+    case officialWorkspaceIDPlaceholder
+    case officialAPIKeyPlaceholder
+    case officialTraeJWTPlaceholder
+    case officialAuthCookiePlaceholder
+    case officialCredentialPlaceholder
+    case officialZhipuCodingPlanKeyHint
+    case officialZhipuAPIKeyHint
+    case officialKimiCodingKeyHint
+    case officialMoonshotKeyHint
+    case officialOpenRouterKeyHint
+    case officialTraeTokenHint
+    case officialQwenCookieHint
+    case officialClaudeCodeImportSucceeded
+    case officialClaudeCodeImportNotFound
+    case officialImportFromClaudeCode
+    case officialDisplayAccount
+    case officialShowEmail
+    case officialPlanInfo
+    case officialMenuBarDisplay
+    case officialBalanceThreshold
 }
 
 enum Localizer {
@@ -579,6 +610,36 @@ enum Localizer {
             case .usageTrend24Hours: return "24小时趋势"
             case .usageTrend7Days: return "7天趋势"
             case .usageTrendScopeByAccount: return "按账号"
+            case .officialConfigSource: return "来源"
+            case .officialConfigWeb: return "网页"
+            case .officialDisplayAndAlerts: return "显示与提醒"
+            case .officialMenubar: return "菜单栏"
+            case .officialShowAccount: return "显示账号"
+            case .officialShowPlan: return "显示套餐"
+            case .officialResetTime: return "重置时间"
+            case .officialDisplay: return "显示"
+            case .officialDisplayPercent: return "百分比"
+            case .officialDisplayAmount: return "数字"
+            case .officialWorkspaceIDPlaceholder: return "粘贴 wrk_... (必填)"
+            case .officialAPIKeyPlaceholder: return "粘贴 API Key"
+            case .officialTraeJWTPlaceholder: return "粘贴 Cloud-IDE-JWT / JWT"
+            case .officialAuthCookiePlaceholder: return "auth=... (可选，自动导入可留空)"
+            case .officialCredentialPlaceholder: return "粘贴凭证"
+            case .officialZhipuCodingPlanKeyHint: return "获取说明：已用 Claude Code 接入 GLM Coding Plan 时，自动模式会直接读取本地配置，也可点右侧「从 Claude Code 导入」一键填入；否则在智谱开放平台（z.ai 或 open.bigmodel.cn）「API Keys」页面创建密钥后粘贴到上方。与「Z.ai (API)」共用同一把密钥，填一次即可。"
+            case .officialZhipuAPIKeyHint: return "获取说明：点右侧「从 Claude Code 导入」可一键读取本机接入配置里的密钥；或登录智谱开放平台（open.bigmodel.cn 或国际站 z.ai），在「API Keys」页面创建密钥后粘贴到上方。与 Coding Plan 共用同一把密钥，填一次即可。"
+            case .officialKimiCodingKeyHint: return "获取说明：登录 kimi.com 的 Kimi for Coding 控制台（kimi.com/code），创建 API Key（即接入 Claude Code 时用的那把）后粘贴到上方，长期有效；本机已登录 Kimi CLI 时自动模式会直接读取登录态，无需填写。与「Kimi (API)」的 Moonshot 开放平台密钥不通用。"
+            case .officialMoonshotKeyHint: return "获取说明：登录 Moonshot 开放平台（platform.moonshot.cn），在「API Key 管理」页面创建密钥，复制后粘贴到上方。"
+            case .officialOpenRouterKeyHint: return "获取说明：登录 OpenRouter（openrouter.ai），在 Settings → Keys 页面创建密钥，复制后粘贴到上方。"
+            case .officialTraeTokenHint: return "获取说明：登录 trae.ai 后打开开发者工具 Network，刷新页面，复制 /trae/api/v1/pay/ide_user_ent_usage 请求头 Authorization（Cloud-IDE-JWT ...）粘贴到上方。"
+            case .officialQwenCookieHint: return "获取说明：浏览器登录千问AI平台（platform.qianwenai.com）后，手动刷新会自动导入登录 Cookie；也可打开开发者工具 Network，刷新页面，复制任意 platform.qianwenai.com 请求的 Cookie 请求头粘贴到上方。「Qwen」与「Qwen (API)」共用同一份 Cookie，填一次即可。"
+            case .officialClaudeCodeImportSucceeded: return "已从本机 Claude Code 配置导入密钥。"
+            case .officialClaudeCodeImportNotFound: return "未在 Claude Code 配置或环境变量中找到智谱密钥。"
+            case .officialImportFromClaudeCode: return "从 Claude Code 导入"
+            case .officialDisplayAccount: return "展示账号"
+            case .officialShowEmail: return "显示邮箱"
+            case .officialPlanInfo: return "套餐信息"
+            case .officialMenuBarDisplay: return "菜单栏显示"
+            case .officialBalanceThreshold: return "余额阈值"
             }
         case .en:
             switch key {
@@ -865,6 +926,36 @@ enum Localizer {
             case .usageTrend24Hours: return "24h Trend"
             case .usageTrend7Days: return "7d Trend"
             case .usageTrendScopeByAccount: return "By Account"
+            case .officialConfigSource: return "Source"
+            case .officialConfigWeb: return "Web"
+            case .officialDisplayAndAlerts: return "Display & Alerts"
+            case .officialMenubar: return "Menubar"
+            case .officialShowAccount: return "Show Account"
+            case .officialShowPlan: return "Show Plan"
+            case .officialResetTime: return "Reset Time"
+            case .officialDisplay: return "Display"
+            case .officialDisplayPercent: return "Percent"
+            case .officialDisplayAmount: return "Amount"
+            case .officialWorkspaceIDPlaceholder: return "Paste wrk_... (Required)"
+            case .officialAPIKeyPlaceholder: return "Paste API Key"
+            case .officialTraeJWTPlaceholder: return "Paste Cloud-IDE-JWT / JWT"
+            case .officialAuthCookiePlaceholder: return "auth=... (Optional when auto import is enabled)"
+            case .officialCredentialPlaceholder: return "Paste credential"
+            case .officialZhipuCodingPlanKeyHint: return "How to get key: if you already use GLM Coding Plan via Claude Code, Auto mode reads the local config, or click \"Import from Claude Code\" to fill it in one click; otherwise create a key on the Zhipu platform (z.ai or open.bigmodel.cn) API Keys page and paste it above. The same key is shared with the Z.ai (API) card."
+            case .officialZhipuAPIKeyHint: return "How to get key: click \"Import from Claude Code\" to read the key from your local setup in one click; or sign in to the Zhipu platform (open.bigmodel.cn or z.ai), create a key on the API Keys page and paste it above. The same key is shared with the Coding Plan card."
+            case .officialKimiCodingKeyHint: return "How to get key: sign in to the Kimi for Coding console at kimi.com/code, create an API key (the same one used for Claude Code) and paste it above; it stays valid long-term. If Kimi CLI is signed in on this machine, Auto mode reads it directly. Not interchangeable with the Moonshot platform key used by Kimi (API)."
+            case .officialMoonshotKeyHint: return "How to get key: sign in to the Moonshot platform (platform.moonshot.cn), create a key on the API Keys page, then paste it above."
+            case .officialOpenRouterKeyHint: return "How to get key: sign in to OpenRouter (openrouter.ai), create a key under Settings → Keys, then paste it above."
+            case .officialTraeTokenHint: return "How to get token: sign in to trae.ai, open DevTools Network, refresh, then copy Authorization from /trae/api/v1/pay/ide_user_ent_usage (Cloud-IDE-JWT ...) and paste above."
+            case .officialQwenCookieHint: return "How to get cookie: sign in to platform.qianwenai.com in your browser — a manual refresh imports the session cookie automatically; or open DevTools Network, refresh the page, and paste the Cookie header of any platform.qianwenai.com request above. The same cookie is shared between the Qwen and Qwen (API) cards."
+            case .officialClaudeCodeImportSucceeded: return "Imported the key from the local Claude Code config."
+            case .officialClaudeCodeImportNotFound: return "No Zhipu key found in Claude Code config or environment variables."
+            case .officialImportFromClaudeCode: return "Import from Claude Code"
+            case .officialDisplayAccount: return "Display Account"
+            case .officialShowEmail: return "Show Email"
+            case .officialPlanInfo: return "Plan Info"
+            case .officialMenuBarDisplay: return "Menu Bar"
+            case .officialBalanceThreshold: return "Threshold"
             }
         }
     }

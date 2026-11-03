@@ -43,10 +43,10 @@ extension SettingsView {
             || providerConfigurationFacade.hasOfficialManualCookie(for: provider)
 
         settingsConfigurationRows {
-            settingsDetailGroupCaption(viewModel.localizedText("授权与导入", "Authorization & Import"))
+            settingsDetailGroupCaption(viewModel.text(.relayAuthorizationAndImport))
 
             if !supportedSourceModes.isEmpty {
-                settingsConfigRow(title: viewModel.localizedText("来源", "Source"), nested: true) {
+                settingsConfigRow(title: viewModel.text(.officialConfigSource), nested: true) {
                     settingsConfigSegmentedControl(
                         options: supportedSourceModes.map {
                             SettingsPillSegmentOption(id: $0.id, title: officialConfigSourceModeLabel($0))
@@ -63,7 +63,7 @@ extension SettingsView {
 
             if visibleWebModes.count > 1 {
                 let webSelection = officialConfigResolvedWebSelection(webBinding.wrappedValue, visibleModes: visibleWebModes)
-                settingsConfigRow(title: viewModel.localizedText("网页", "Web"), nested: true) {
+                settingsConfigRow(title: viewModel.text(.officialConfigWeb), nested: true) {
                     settingsConfigSegmentedControl(
                         options: visibleWebModes.map {
                             SettingsPillSegmentOption(id: $0.id, title: officialConfigWebModeLabel($0))
@@ -160,10 +160,10 @@ extension SettingsView {
         let providerConfiguration = providerConfigurationFacade
         let category = OfficialSettingsCategory.resolve(for: provider) ?? .subscription
 
-        settingsDetailGroupCaption(viewModel.localizedText("显示与提醒", "Display & Alerts"))
+        settingsDetailGroupCaption(viewModel.text(.officialDisplayAndAlerts))
 
         settingsConfigToggleRow(
-            title: viewModel.localizedText("菜单栏", "Menubar"),
+            title: viewModel.text(.officialMenubar),
             isOn: Binding(
                 get: { providerConfiguration.isStatusBarProvider(providerID: provider.id) },
                 set: { providerConfiguration.setStatusBarDisplayEnabled($0, providerID: provider.id) }
@@ -172,7 +172,7 @@ extension SettingsView {
 
         if category == .subscription {
             settingsConfigToggleRow(
-                title: viewModel.localizedText("显示账号", "Show Account"),
+                title: viewModel.text(.officialShowAccount),
                 isOn: Binding(
                     get: { providerConfiguration.showOfficialAccountEmailInMenuBar },
                     set: { providerConfiguration.setShowOfficialAccountEmailInMenuBar($0) }
@@ -180,7 +180,7 @@ extension SettingsView {
             )
 
             settingsConfigToggleRow(
-                title: viewModel.localizedText("显示套餐", "Show Plan"),
+                title: viewModel.text(.officialShowPlan),
                 isOn: Binding(
                     get: { providerConfiguration.showOfficialPlanTypeInMenuBar(providerID: provider.id) },
                     set: { providerConfiguration.setShowOfficialPlanTypeInMenuBar($0, providerID: provider.id) }
@@ -190,7 +190,7 @@ extension SettingsView {
 
         if shouldShowExpirationTimeToggle(for: provider) {
             settingsConfigToggleRow(
-                title: viewModel.localizedText("重置时间", "Reset Time"),
+                title: viewModel.text(.officialResetTime),
                 isOn: relayExpirationTimeBinding(provider, providerConfiguration: providerConfiguration)
             )
         }
@@ -198,11 +198,11 @@ extension SettingsView {
         officialUsagePreferenceConfigRow(quotaDisplayBinding)
 
         if let traeValueDisplayBinding, provider.type == .trae {
-            settingsConfigRow(title: viewModel.localizedText("显示", "Display"), nested: true) {
+            settingsConfigRow(title: viewModel.text(.officialDisplay), nested: true) {
                 settingsConfigSegmentedControl(
                     options: [
-                        SettingsPillSegmentOption(id: OfficialTraeValueDisplayMode.percent.id, title: viewModel.localizedText("百分比", "Percent")),
-                        SettingsPillSegmentOption(id: OfficialTraeValueDisplayMode.amount.id, title: viewModel.localizedText("数字", "Amount"))
+                        SettingsPillSegmentOption(id: OfficialTraeValueDisplayMode.percent.id, title: viewModel.text(.officialDisplayPercent)),
+                        SettingsPillSegmentOption(id: OfficialTraeValueDisplayMode.amount.id, title: viewModel.text(.officialDisplayAmount))
                     ],
                     selection: traeValueDisplayBinding.wrappedValue.id,
                     width: 112
@@ -247,7 +247,7 @@ extension SettingsView {
     }
 
     func officialUsagePreferenceConfigRow(_ quotaDisplayBinding: Binding<OfficialQuotaDisplayMode>) -> some View {
-        settingsConfigRow(title: viewModel.localizedText("用量偏好", "Usage Preference")) {
+        settingsConfigRow(title: viewModel.text(.relayUsagePreference)) {
             settingsConfigSegmentedControl(
                 options: [
                     SettingsPillSegmentOption(id: OfficialQuotaDisplayMode.remaining.id, title: viewModel.text(.quotaDisplayRemaining)),
@@ -301,7 +301,7 @@ extension SettingsView {
     func officialConfigSourceModeLabel(_ mode: OfficialSourceMode) -> String {
         switch mode {
         case .auto:
-            return viewModel.localizedText("自动", "Auto")
+            return viewModel.text(.kimiAuthAuto)
         case .api:
             return "API"
         case .cli:
@@ -314,11 +314,11 @@ extension SettingsView {
     func officialConfigWebModeLabel(_ mode: OfficialWebMode) -> String {
         switch mode {
         case .disabled:
-            return viewModel.localizedText("关闭", "Off")
+            return viewModel.text(.toggleOff)
         case .autoImport:
-            return viewModel.localizedText("自动", "Auto")
+            return viewModel.text(.kimiAuthAuto)
         case .manual:
-            return viewModel.localizedText("手动", "Manual")
+            return viewModel.text(.webManual)
         }
     }
 
@@ -331,17 +331,17 @@ extension SettingsView {
             let hasSavedToken = providerConfigurationFacade.hasToken(for: provider)
             return hasSavedToken
                 ? maskedSecretDots(length: providerConfigurationFacade.savedTokenLength(for: provider))
-                : viewModel.localizedText("粘贴 wrk_... (必填)", "Paste wrk_... (Required)")
+                : viewModel.text(.officialWorkspaceIDPlaceholder)
         case .bearerToken:
             let hasSavedToken = providerConfigurationFacade.hasToken(for: provider)
             return hasSavedToken
                 ? maskedSecretDots(length: providerConfigurationFacade.savedTokenLength(for: provider))
-                : viewModel.localizedText("粘贴 API Key", "Paste API Key")
+                : viewModel.text(.officialAPIKeyPlaceholder)
         case .traeAuthorization:
             let hasSavedToken = providerConfigurationFacade.hasToken(for: provider)
             return hasSavedToken
                 ? maskedSecretDots(length: providerConfigurationFacade.savedTokenLength(for: provider))
-                : viewModel.localizedText("粘贴 Cloud-IDE-JWT / JWT", "Paste Cloud-IDE-JWT / JWT")
+                : viewModel.text(.officialTraeJWTPlaceholder)
         case .manualCookie:
             let hasSavedManualCookie = providerConfigurationFacade.hasOfficialManualCookie(for: provider)
             return hasSavedManualCookie
@@ -351,12 +351,12 @@ extension SettingsView {
             let hasSavedManualCookie = providerConfigurationFacade.hasOfficialManualCookie(for: provider)
             return hasSavedManualCookie
                 ? maskedSecretDots(length: providerConfigurationFacade.savedOfficialManualCookieLength(for: provider))
-                : viewModel.localizedText("auth=... (可选，自动导入可留空)", "auth=... (Optional when auto import is enabled)")
+                : viewModel.text(.officialAuthCookiePlaceholder)
         case .relayBalanceAuth, .relayQuotaAuth:
             let hasSavedToken = providerConfigurationFacade.hasToken(for: provider)
             return hasSavedToken
                 ? maskedSecretDots(length: providerConfigurationFacade.savedTokenLength(for: provider))
-                : viewModel.localizedText("粘贴凭证", "Paste credential")
+                : viewModel.text(.officialCredentialPlaceholder)
         }
     }
 
@@ -367,7 +367,7 @@ extension SettingsView {
         case .opencodeManualCookie:
             return "Cookie"
         case .bearerToken, .manualCookie, .traeAuthorization, .relayBalanceAuth, .relayQuotaAuth:
-            return viewModel.localizedText("凭证", "Credential")
+            return viewModel.text(.relayCredential)
         }
     }
 
@@ -379,47 +379,26 @@ extension SettingsView {
         case .bearerToken:
             switch provider.type {
             case .zai:
-                return viewModel.localizedText(
-                    "获取说明：已用 Claude Code 接入 GLM Coding Plan 时，自动模式会直接读取本地配置，也可点右侧「从 Claude Code 导入」一键填入；否则在智谱开放平台（z.ai 或 open.bigmodel.cn）「API Keys」页面创建密钥后粘贴到上方。与「Z.ai (API)」共用同一把密钥，填一次即可。",
-                    "How to get key: if you already use GLM Coding Plan via Claude Code, Auto mode reads the local config, or click \"Import from Claude Code\" to fill it in one click; otherwise create a key on the Zhipu platform (z.ai or open.bigmodel.cn) API Keys page and paste it above. The same key is shared with the Z.ai (API) card."
-                )
+                return viewModel.text(.officialZhipuCodingPlanKeyHint)
             case .zaiBalance:
-                return viewModel.localizedText(
-                    "获取说明：点右侧「从 Claude Code 导入」可一键读取本机接入配置里的密钥；或登录智谱开放平台（open.bigmodel.cn 或国际站 z.ai），在「API Keys」页面创建密钥后粘贴到上方。与 Coding Plan 共用同一把密钥，填一次即可。",
-                    "How to get key: click \"Import from Claude Code\" to read the key from your local setup in one click; or sign in to the Zhipu platform (open.bigmodel.cn or z.ai), create a key on the API Keys page and paste it above. The same key is shared with the Coding Plan card."
-                )
+                return viewModel.text(.officialZhipuAPIKeyHint)
             case .kimi:
-                return viewModel.localizedText(
-                    "获取说明：登录 kimi.com 的 Kimi for Coding 控制台（kimi.com/code），创建 API Key（即接入 Claude Code 时用的那把）后粘贴到上方，长期有效；本机已登录 Kimi CLI 时自动模式会直接读取登录态，无需填写。与「Kimi (API)」的 Moonshot 开放平台密钥不通用。",
-                    "How to get key: sign in to the Kimi for Coding console at kimi.com/code, create an API key (the same one used for Claude Code) and paste it above; it stays valid long-term. If Kimi CLI is signed in on this machine, Auto mode reads it directly. Not interchangeable with the Moonshot platform key used by Kimi (API)."
-                )
+                return viewModel.text(.officialKimiCodingKeyHint)
             case .kimiBalance:
-                return viewModel.localizedText(
-                    "获取说明：登录 Moonshot 开放平台（platform.moonshot.cn），在「API Key 管理」页面创建密钥，复制后粘贴到上方。",
-                    "How to get key: sign in to the Moonshot platform (platform.moonshot.cn), create a key on the API Keys page, then paste it above."
-                )
+                return viewModel.text(.officialMoonshotKeyHint)
             case .openrouterCredits, .openrouterAPI:
-                return viewModel.localizedText(
-                    "获取说明：登录 OpenRouter（openrouter.ai），在 Settings → Keys 页面创建密钥，复制后粘贴到上方。",
-                    "How to get key: sign in to OpenRouter (openrouter.ai), create a key under Settings → Keys, then paste it above."
-                )
+                return viewModel.text(.officialOpenRouterKeyHint)
             default:
                 return nil
             }
         case .traeAuthorization:
-            return viewModel.localizedText(
-                "获取说明：登录 trae.ai 后打开开发者工具 Network，刷新页面，复制 /trae/api/v1/pay/ide_user_ent_usage 请求头 Authorization（Cloud-IDE-JWT ...）粘贴到上方。",
-                "How to get token: sign in to trae.ai, open DevTools Network, refresh, then copy Authorization from /trae/api/v1/pay/ide_user_ent_usage (Cloud-IDE-JWT ...) and paste above."
-            )
+            return viewModel.text(.officialTraeTokenHint)
         case .opencodeWorkspaceID, .opencodeManualCookie, .relayBalanceAuth, .relayQuotaAuth:
             return nil
         case .manualCookie:
             switch provider.type {
             case .qwen, .qwenBalance:
-                return viewModel.localizedText(
-                    "获取说明：浏览器登录千问AI平台（platform.qianwenai.com）后，手动刷新会自动导入登录 Cookie；也可打开开发者工具 Network，刷新页面，复制任意 platform.qianwenai.com 请求的 Cookie 请求头粘贴到上方。「Qwen」与「Qwen (API)」共用同一份 Cookie，填一次即可。",
-                    "How to get cookie: sign in to platform.qianwenai.com in your browser — a manual refresh imports the session cookie automatically; or open DevTools Network, refresh the page, and paste the Cookie header of any platform.qianwenai.com request above. The same cookie is shared between the Qwen and Qwen (API) cards."
-                )
+                return viewModel.text(.officialQwenCookieHint)
             default:
                 return nil
             }
@@ -484,8 +463,8 @@ extension SettingsView {
                    let importSucceeded = officialEditorDraft.officialCredentialImportResults[provider.id] {
                     Text(
                         importSucceeded
-                            ? viewModel.localizedText("已从本机 Claude Code 配置导入密钥。", "Imported the key from the local Claude Code config.")
-                            : viewModel.localizedText("未在 Claude Code 配置或环境变量中找到智谱密钥。", "No Zhipu key found in Claude Code config or environment variables.")
+                            ? viewModel.text(.officialClaudeCodeImportSucceeded)
+                            : viewModel.text(.officialClaudeCodeImportNotFound)
                     )
                     .font(.system(size: 10, weight: .regular))
                     .foregroundStyle(importSucceeded ? Color(hex: 0x69BD64) : Color(hex: 0xEB654F))
@@ -508,7 +487,7 @@ extension SettingsView {
         switch capability {
         case .claudeCodeConfig:
             return (
-                viewModel.localizedText("从 Claude Code 导入", "Import from Claude Code"),
+                viewModel.text(.officialImportFromClaudeCode),
                 {
                     importZaiCredentialFromClaudeCode(
                         provider: provider,
@@ -676,23 +655,23 @@ extension SettingsView {
     }
 
     var officialShowEmailTitle: String {
-        viewModel.language == .zhHans ? "显示邮箱" : "Show Email"
+        viewModel.text(.officialShowEmail)
     }
 
     var officialShowPlanTypeTitle: String {
-        viewModel.language == .zhHans ? "套餐信息" : "Plan Info"
+        viewModel.text(.officialPlanInfo)
     }
 
     var officialStatusBarTitle: String {
-        viewModel.language == .zhHans ? "菜单栏显示" : "Menu Bar"
+        viewModel.text(.officialMenuBarDisplay)
     }
 
     var officialDisplayAccountTitle: String {
-        viewModel.localizedText("展示账号", "Display Account")
+        viewModel.text(.officialDisplayAccount)
     }
 
     var officialThresholdTitle: String {
-        viewModel.language == .zhHans ? "余额阈值" : "Threshold"
+        viewModel.text(.officialBalanceThreshold)
     }
 
     func maskedSecretDots(length: Int?) -> String {
