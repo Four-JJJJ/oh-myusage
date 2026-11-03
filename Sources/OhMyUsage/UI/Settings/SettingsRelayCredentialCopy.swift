@@ -26,29 +26,6 @@ extension SettingsView {
         }
     }
 
-    func relayCredentialSectionTitle(
-        isAccount: Bool,
-        templateKind: RelayCredentialTemplateKind
-    ) -> String {
-        let fieldName = relayCredentialFieldName(isAccount: isAccount, templateKind: templateKind)
-        if viewModel.language == .zhHans {
-            return isAccount ? "余额 \(fieldName)" : "配额 \(fieldName)"
-        } else {
-            return isAccount ? "Balance \(fieldName)" : "Quota \(fieldName)"
-        }
-    }
-
-    func relayCredentialSaveLabel(templateKind: RelayCredentialTemplateKind) -> String {
-        switch templateKind {
-        case .cookie:
-            return viewModel.language == .zhHans ? "保存 Cookie" : "Save Cookie"
-        case .bearer:
-            return viewModel.language == .zhHans ? "保存 Access Token" : "Save Access Token"
-        case .custom(let header, _):
-            return viewModel.language == .zhHans ? "保存 \(header)" : "Save \(header)"
-        }
-    }
-
     func relayCredentialLookupHint(templateKind: RelayCredentialTemplateKind) -> String {
         switch templateKind {
         case .cookie:
