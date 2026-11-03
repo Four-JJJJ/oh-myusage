@@ -1,4 +1,5 @@
 import Foundation
+import OhMyUsageProviders
 
 final class UsageAnalyticsRepository: @unchecked Sendable {
     typealias CCSwitchSourceFingerprintProvider = (_ ccSwitchReader: CCSwitchUsageLogReader) -> UsageAnalyticsFileFingerprint
@@ -67,7 +68,12 @@ final class UsageAnalyticsRepository: @unchecked Sendable {
         var records: [UsageAnalyticsRecord]
         var diagnostics: [String]
     }
-    private let rawLock = NSLock()
+    /// Guards `rawEntry` only; held for reads and writes, never across a scan.
+    private let rawStateLock = NSLock()
+    /// Serializes full scans so concurrent refreshes queue instead of reading
+    /// the same sources twice. Waiters suspend (and honor cancellation)
+    /// rather than polling a lock on a pool thread.
+    private let scanGate = SerialOfficialFetchGate()
     private let rawEpochLock = NSLock()
     private var rawEpoch: UInt64 = 0
     private func currentRawEpoch() -> UInt64 { rawEpochLock.withLock { rawEpoch } }
@@ -108,15 +114,10 @@ final class UsageAnalyticsRepository: @unchecked Sendable {
     ) -> UsageAnalyticsSnapshot {
         let now = nowProvider()
         let epoch = currentRawEpoch()
-        while !rawLock.try() {
-            if Task.isCancelled { return .empty(filter: filter, generatedAt: now) }
-            Thread.sleep(forTimeInterval: 0.01)
-        }
-        defer { rawLock.unlock() }
         if Task.isCancelled { return .empty(filter: filter, generatedAt: now) }
         let fingerprint = sourceFingerprint(claudeAllConfigDirs: claudeAllConfigDirs, bypassCache: bypassCache)
         let dirs = claudeAllConfigDirs.sorted()
-        if !bypassCache, let cached = rawEntry, cached.epoch == epoch, epoch == currentRawEpoch(), cached.range == filter.range,
+        if !bypassCache, let cached = rawStateLock.withLock({ rawEntry }), cached.epoch == epoch, epoch == currentRawEpoch(), cached.range == filter.range,
            cached.configDirs == dirs, cached.fingerprint == fingerprint,
            now.timeIntervalSince(cached.loadedAt) >= 0,
            now.timeIntervalSince(cached.loadedAt) < 60,
@@ -154,10 +155,11 @@ final class UsageAnalyticsRepository: @unchecked Sendable {
         diagnostics.append(contentsOf: localResult.diagnostics)
 
         let isPartial = localResult.isPartial || ccSwitchResult.sourceStatus == .failed
-        if !Task.isCancelled && epoch == currentRawEpoch() && records.count <= 100_000 && !isPartial {
-            rawEntry = RawEntry(epoch: epoch, range: filter.range, configDirs: dirs, fingerprint: fingerprint,
-                                loadedAt: now, records: records, diagnostics: diagnostics)
-        } else { rawEntry = nil }
+        let entry: RawEntry? = !Task.isCancelled && epoch == currentRawEpoch() && records.count <= 100_000 && !isPartial
+            ? RawEntry(epoch: epoch, range: filter.range, configDirs: dirs, fingerprint: fingerprint,
+                       loadedAt: now, records: records, diagnostics: diagnostics)
+            : nil
+        rawStateLock.withLock { rawEntry = entry }
         var snapshot = UsageAnalyticsAggregator.snapshot(
             records: records,
             filter: filter,
@@ -171,12 +173,8 @@ final class UsageAnalyticsRepository: @unchecked Sendable {
 
     private func reusableSnapshot(filter: UsageAnalyticsFilter, dirs: [String], now: Date) -> UsageAnalyticsSnapshot? {
         let fingerprint = sourceFingerprint(claudeAllConfigDirs: dirs)
-        while !rawLock.try() {
-            if Task.isCancelled { return nil }
-            Thread.sleep(forTimeInterval: 0.01)
-        }
-        defer { rawLock.unlock() }
-        guard let cached = rawEntry, cached.epoch == currentRawEpoch(), cached.fingerprint == fingerprint, cached.range == filter.range, cached.configDirs == dirs.sorted(),
+        if Task.isCancelled { return nil }
+        guard let cached = rawStateLock.withLock({ rawEntry }), cached.epoch == currentRawEpoch(), cached.fingerprint == fingerprint, cached.range == filter.range, cached.configDirs == dirs.sorted(),
               now.timeIntervalSince(cached.loadedAt) >= 0, now.timeIntervalSince(cached.loadedAt) < 60,
               calendar.isDate(cached.loadedAt, equalTo: now, toGranularity: .hour) else { return nil }
         return UsageAnalyticsAggregator.snapshot(records: cached.records, filter: filter,
@@ -196,10 +194,12 @@ final class UsageAnalyticsRepository: @unchecked Sendable {
         }
         let interval = UsageAnalyticsAggregator.rangeInterval(filter.range, calendar: calendar, now: now)
         let cursor = try await cursorService.fetchEventResultAsync(since: interval.start, until: interval.end)
-        let worker = Task.detached(priority: .utility) { [self] in
-            snapshot(filter: filter, claudeAllConfigDirs: claudeAllConfigDirs, bypassCache: bypassCache, cursorOverride: cursor)
+        let result = try await scanGate.withPermit { [self] in
+            let worker = Task.detached(priority: .utility) { [self] in
+                snapshot(filter: filter, claudeAllConfigDirs: claudeAllConfigDirs, bypassCache: bypassCache, cursorOverride: cursor)
+            }
+            return await withTaskCancellationHandler { await worker.value } onCancel: { worker.cancel() }
         }
-        let result = await withTaskCancellationHandler { await worker.value } onCancel: { worker.cancel() }
         try Task.checkCancellation()
         return result
     }
