@@ -9,6 +9,7 @@ import AppKit
 enum OhMyUsageMain {
     @MainActor
     static func main() {
+        PerformanceSignposts.event("ProcessStart")
         let app = NSApplication.shared
         let delegate = AppLifecycleDelegate()
         app.delegate = delegate

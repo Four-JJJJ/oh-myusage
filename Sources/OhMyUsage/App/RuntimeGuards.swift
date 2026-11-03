@@ -82,6 +82,7 @@ final class AppLifecycleDelegate: NSObject, NSApplicationDelegate {
         let viewModel = AppViewModel()
         self.viewModel = viewModel
         statusBarController = StatusBarController(viewModel: viewModel)
+        PerformanceSignposts.event("LaunchFinished")
         // Clear a notes window scheduled by an older build. Updates should
         // relaunch into the menu bar without a release-notes panel.
         postUpdateReleaseNotesStore.reset()

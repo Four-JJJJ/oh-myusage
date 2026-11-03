@@ -198,7 +198,9 @@ final class UsageAnalyticsRepository: @unchecked Sendable {
             let worker = Task.detached(priority: .utility) { [self] in
                 snapshot(filter: filter, claudeAllConfigDirs: claudeAllConfigDirs, bypassCache: bypassCache, cursorOverride: cursor)
             }
-            return await withTaskCancellationHandler { await worker.value } onCancel: { worker.cancel() }
+            return await PerformanceSignposts.interval("AnalyticsScan", filter.range.rawValue) {
+                await withTaskCancellationHandler { await worker.value } onCancel: { worker.cancel() }
+            }
         }
         try Task.checkCancellation()
         return result
