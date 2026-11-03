@@ -5,11 +5,11 @@ import XCTest
 final class OfficialSettingsCategoryTests: XCTestCase {
     func testCodingPlansStaySubscriptionsEvenWhenFetchedThroughAPI() {
         for provider in [
-            OfficialProviderDefaultCatalog.codex(),
-            OfficialProviderDefaultCatalog.claude(),
-            OfficialProviderDefaultCatalog.zai(),
-            OfficialProviderDefaultCatalog.kimi(),
-            OfficialProviderDefaultCatalog.qwen()
+            OfficialProviderDefaultCatalog.descriptor(for: .codex),
+            OfficialProviderDefaultCatalog.descriptor(for: .claude),
+            OfficialProviderDefaultCatalog.descriptor(for: .zai),
+            OfficialProviderDefaultCatalog.descriptor(for: .kimi),
+            OfficialProviderDefaultCatalog.descriptor(for: .qwen)
         ] {
             XCTAssertEqual(OfficialSettingsCategory.resolve(for: provider), .subscription, provider.id)
         }
@@ -17,11 +17,11 @@ final class OfficialSettingsCategoryTests: XCTestCase {
 
     func testMeteredBalancesAndBothOpenRouterViewsAreAPI() {
         for provider in [
-            OfficialProviderDefaultCatalog.zaiBalance(),
-            OfficialProviderDefaultCatalog.kimiBalance(),
-            OfficialProviderDefaultCatalog.qwenBalance(),
-            OfficialProviderDefaultCatalog.openRouterCredits(),
-            OfficialProviderDefaultCatalog.openRouterAPI(),
+            OfficialProviderDefaultCatalog.descriptor(for: .zaiBalance),
+            OfficialProviderDefaultCatalog.descriptor(for: .kimiBalance),
+            OfficialProviderDefaultCatalog.descriptor(for: .qwenBalance),
+            OfficialProviderDefaultCatalog.descriptor(for: .openrouterCredits),
+            OfficialProviderDefaultCatalog.descriptor(for: .openrouterAPI),
             OfficialRelayProviderDefaultCatalog.moonshot(),
             OfficialRelayProviderDefaultCatalog.miniMax(),
             OfficialRelayProviderDefaultCatalog.deepSeek()
@@ -50,12 +50,12 @@ final class OfficialSettingsCategoryTests: XCTestCase {
         XCTAssertEqual(grouped.count, defaults.count)
         XCTAssertEqual(Set(grouped.map(\.id)), Set(defaults.map(\.id)))
 
-        var kimi = OfficialProviderDefaultCatalog.kimiBalance()
+        var kimi = OfficialProviderDefaultCatalog.descriptor(for: .kimiBalance)
         kimi.enabled = true
-        var zai = OfficialProviderDefaultCatalog.zaiBalance()
+        var zai = OfficialProviderDefaultCatalog.descriptor(for: .zaiBalance)
         zai.enabled = true
         let disabled = OfficialRelayProviderDefaultCatalog.deepSeek()
-        let mixed = [disabled, kimi, OfficialProviderDefaultCatalog.codex(), zai]
+        let mixed = [disabled, kimi, OfficialProviderDefaultCatalog.descriptor(for: .codex), zai]
         XCTAssertEqual(OfficialSettingsCategory.api.providers(in: mixed).map(\.id), [kimi.id, zai.id, disabled.id])
     }
 
@@ -68,11 +68,11 @@ final class OfficialSettingsCategoryTests: XCTestCase {
 
     func testAPIProvidersUseOneParenthesizedSuffix() {
         let examples: [(ProviderDescriptor, String)] = [
-            (OfficialProviderDefaultCatalog.zaiBalance(), "Z.ai (API)"),
-            (OfficialProviderDefaultCatalog.kimiBalance(), "Kimi (API)"),
-            (OfficialProviderDefaultCatalog.qwenBalance(), "Qwen (API)"),
-            (OfficialProviderDefaultCatalog.openRouterCredits(), "OpenRouter Credits (API)"),
-            (OfficialProviderDefaultCatalog.openRouterAPI(), "OpenRouter (API)"),
+            (OfficialProviderDefaultCatalog.descriptor(for: .zaiBalance), "Z.ai (API)"),
+            (OfficialProviderDefaultCatalog.descriptor(for: .kimiBalance), "Kimi (API)"),
+            (OfficialProviderDefaultCatalog.descriptor(for: .qwenBalance), "Qwen (API)"),
+            (OfficialProviderDefaultCatalog.descriptor(for: .openrouterCredits), "OpenRouter Credits (API)"),
+            (OfficialProviderDefaultCatalog.descriptor(for: .openrouterAPI), "OpenRouter (API)"),
             (OfficialRelayProviderDefaultCatalog.moonshot(), "Moonshot (API)"),
             (OfficialRelayProviderDefaultCatalog.miniMax(), "MiniMax (API)"),
             (OfficialRelayProviderDefaultCatalog.deepSeek(), "DeepSeek (API)")
@@ -84,8 +84,8 @@ final class OfficialSettingsCategoryTests: XCTestCase {
 
     func testSubscriptionsAndCustomEndpointsKeepTheirNames() {
         for provider in [
-            OfficialProviderDefaultCatalog.codex(),
-            OfficialProviderDefaultCatalog.kimi(),
+            OfficialProviderDefaultCatalog.descriptor(for: .codex),
+            OfficialProviderDefaultCatalog.descriptor(for: .kimi),
             OfficialRelayProviderDefaultCatalog.xiaomiMIMO(),
             .makeOpenRelay(name: "Custom API", baseURL: "https://example.test")
         ] {
@@ -99,10 +99,10 @@ final class OfficialSettingsCategoryTests: XCTestCase {
 
     func testCategoryReorderMapsBackToGlobalOrderInBothDirections() {
         var providers = [
-            OfficialProviderDefaultCatalog.codex(),
-            OfficialProviderDefaultCatalog.zaiBalance(),
-            OfficialProviderDefaultCatalog.claude(),
-            OfficialProviderDefaultCatalog.kimiBalance()
+            OfficialProviderDefaultCatalog.descriptor(for: .codex),
+            OfficialProviderDefaultCatalog.descriptor(for: .zaiBalance),
+            OfficialProviderDefaultCatalog.descriptor(for: .claude),
+            OfficialProviderDefaultCatalog.descriptor(for: .kimiBalance)
         ]
         for index in providers.indices { providers[index].enabled = true }
         let apiIDs = OfficialSettingsCategory.api.providers(in: providers).map(\.id)
@@ -130,10 +130,10 @@ final class OfficialSettingsCategoryTests: XCTestCase {
 
     func testUnifiedListSupportsDraggingAcrossSubscriptionAndAPIProviders() {
         var providers = [
-            OfficialProviderDefaultCatalog.codex(),
-            OfficialProviderDefaultCatalog.zaiBalance(),
-            OfficialProviderDefaultCatalog.claude(),
-            OfficialProviderDefaultCatalog.kimiBalance()
+            OfficialProviderDefaultCatalog.descriptor(for: .codex),
+            OfficialProviderDefaultCatalog.descriptor(for: .zaiBalance),
+            OfficialProviderDefaultCatalog.descriptor(for: .claude),
+            OfficialProviderDefaultCatalog.descriptor(for: .kimiBalance)
         ]
         for index in providers.indices { providers[index].enabled = true }
         let allIDs = providers.map(\.id)

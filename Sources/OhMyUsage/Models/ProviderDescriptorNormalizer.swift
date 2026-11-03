@@ -10,8 +10,6 @@ enum ProviderDescriptorNormalizer {
         }
 
         switch copy.type {
-        case .codex, .claude, .gemini, .copilot, .microsoftCopilot, .zai, .zaiBalance, .amp, .cursor, .grokBot, .jetbrains, .kiro, .windsurf, .kimiBalance, .grok, .trae, .openrouterCredits, .openrouterAPI, .ollamaCloud, .opencodeGo, .qwen, .qwenBalance:
-            return normalizedOfficialProvider(copy)
         case .relay:
             return normalizedRelayProvider(copy, source: provider)
         case .kimi:
@@ -19,6 +17,10 @@ enum ProviderDescriptorNormalizer {
         case .open, .dragon:
             assertionFailure("Legacy relay provider types must be normalized before provider routing")
             return normalizedRelayProvider(copy, source: provider)
+        default:
+            // Every other type is an official provider; per-type defaults and
+            // legacy config fix-ups come from its `ProviderModule`.
+            return normalizedOfficialProvider(copy)
         }
     }
 
@@ -37,12 +39,9 @@ enum ProviderDescriptorNormalizer {
         if copy.officialConfig?.oauthAccountImportEnabled == nil {
             copy.officialConfig?.oauthAccountImportEnabled = ProviderDescriptor.defaultOfficialConfig(type: copy.type).oauthAccountImportEnabled
         }
-        if copy.type == .trae, var official = copy.officialConfig {
-            // 兼容旧版 Trae：历史 quotaDisplayMode 用于“百分比/数字”开关，新版改为 traeValueDisplayMode。
-            if official.traeValueDisplayMode == nil {
-                official.traeValueDisplayMode = official.quotaDisplayMode == .used ? .amount : .percent
-                official.quotaDisplayMode = .remaining
-            }
+        if let migrateLegacyOfficialConfig = ProviderModuleRegistry.module(for: copy.type).migrateLegacyOfficialConfig,
+           var official = copy.officialConfig {
+            migrateLegacyOfficialConfig(&official)
             copy.officialConfig = official
         }
         if copy.baseURL?.isEmpty ?? true {
@@ -155,7 +154,7 @@ enum ProviderDescriptorNormalizer {
             copy.family = .official
             copy.name = "Kimi"
             if copy.auth.kind == .none {
-                copy.auth = OfficialProviderDefaultCatalog.kimi().auth
+                copy.auth = OfficialProviderDefaultCatalog.descriptor(for: .kimi).auth
             }
             if copy.officialConfig == nil {
                 copy.officialConfig = ProviderDescriptor.defaultOfficialConfig(type: .kimi)

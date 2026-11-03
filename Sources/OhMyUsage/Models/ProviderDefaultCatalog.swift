@@ -1,34 +1,9 @@
 import Foundation
 
 enum ProviderDefaultCatalog {
+    /// Built-in providers in `ProviderModuleRegistry.allModules` order. Official
+    /// relay sites are expanded by the relay module (`ProviderModule+Relay.swift`).
     static var allDefaultProviders: [ProviderDescriptor] {
-        [
-            OfficialProviderDefaultCatalog.codex(),
-            OfficialProviderDefaultCatalog.claude(),
-            OfficialProviderDefaultCatalog.gemini(),
-            OfficialProviderDefaultCatalog.copilot(),
-            OfficialProviderDefaultCatalog.microsoftCopilot(),
-            OfficialProviderDefaultCatalog.zai(),
-            OfficialProviderDefaultCatalog.zaiBalance(),
-            OfficialProviderDefaultCatalog.amp(),
-            OfficialProviderDefaultCatalog.cursor(),
-            OfficialProviderDefaultCatalog.grokBot(),
-            OfficialProviderDefaultCatalog.jetBrains(),
-            OfficialProviderDefaultCatalog.kiro(),
-            OfficialProviderDefaultCatalog.windsurf(),
-            OfficialProviderDefaultCatalog.grok(),
-            OfficialProviderDefaultCatalog.kimi(),
-            OfficialProviderDefaultCatalog.kimiBalance()
-        ]
-            + OfficialRelayProviderDefaultCatalog.allDefaultProviders
-            + [
-                OfficialProviderDefaultCatalog.trae(),
-                OfficialProviderDefaultCatalog.openRouterCredits(),
-                OfficialProviderDefaultCatalog.openRouterAPI(),
-                OfficialProviderDefaultCatalog.ollamaCloud(),
-                OfficialProviderDefaultCatalog.openCodeGo(),
-                OfficialProviderDefaultCatalog.qwen(),
-                OfficialProviderDefaultCatalog.qwenBalance()
-            ]
+        ProviderModuleRegistry.allModules.flatMap { $0.defaultDescriptors() }
     }
 }
