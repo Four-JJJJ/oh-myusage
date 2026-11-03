@@ -13,7 +13,7 @@ import XCTest
 /// regex patterns, fixture-like constants) legitimately stay inline and are part of
 /// the budget.
 final class LocalizationLiteralBudgetTests: XCTestCase {
-    private static let baseline = 651
+    private static let baseline = 469
 
     func testCJKStringLiteralCountStaysWithinBudget() throws {
         let counts = try Self.cjkLiteralCountsBySourceFile()
