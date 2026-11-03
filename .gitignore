@@ -10,3 +10,4 @@ DerivedData/
 .codex/
 /.build
 .opencode/
+.claude/worktrees/

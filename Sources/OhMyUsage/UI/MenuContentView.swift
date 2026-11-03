@@ -2,6 +2,7 @@ import OhMyUsageDomain
 import AppKit
 import SwiftUI
 import OhMyUsageApplication
+import OhMyUsagePresentation
 
 private struct MenuCardsContentHeightPreferenceKey: PreferenceKey {
     static let defaultValue: CGFloat = 0

@@ -37,6 +37,7 @@ enum AppUpdateError: LocalizedError {
     case invalidMetadata
     case missingZipAsset
     case missingChecksum
+    case manifestSignatureInvalid
     case checksumMismatch
     case signatureVerificationFailed(String)
     case extractedAppNotFound
@@ -51,6 +52,8 @@ enum AppUpdateError: LocalizedError {
             return "No macOS ZIP asset is available for automatic update"
         case .missingChecksum:
             return "Update manifest does not provide a download checksum"
+        case .manifestSignatureInvalid:
+            return "Update manifest signature is missing or invalid"
         case .checksumMismatch:
             return "Downloaded update checksum mismatch"
         case .signatureVerificationFailed(let reason):
@@ -115,15 +118,18 @@ actor AppUpdateService {
     private let session: URLSession
     private let latestMetadataURLs: [URL]
     private let fileManager: FileManager
+    private let manifestPublicKey: Curve25519.Signing.PublicKey?
 
     init(
         session: URLSession = .shared,
         latestMetadataURLs: [URL] = defaultMetadataURLs,
-        fileManager: FileManager = .default
+        fileManager: FileManager = .default,
+        manifestPublicKey: Curve25519.Signing.PublicKey? = UpdateManifestSignature.embeddedPublicKey
     ) {
         self.session = session
         self.latestMetadataURLs = latestMetadataURLs
         self.fileManager = fileManager
+        self.manifestPublicKey = manifestPublicKey
     }
 
     func fetchLatestRelease() async throws -> AppUpdateInfo {
@@ -156,6 +162,9 @@ actor AppUpdateService {
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
             throw URLError(.badServerResponse)
         }
+        if let manifestPublicKey {
+            try await verifyManifestSignature(data, manifestURL: metadataURL, publicKey: manifestPublicKey)
+        }
 
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
@@ -173,6 +182,31 @@ actor AppUpdateService {
             zipAsset: manifest.assets.macOSZip.map { AppUpdateAsset(url: $0.url, sha256: $0.sha256, size: $0.size) },
             dmgAsset: manifest.assets.macOSDMG.map { AppUpdateAsset(url: $0.url, sha256: $0.sha256, size: $0.size) }
         )
+    }
+
+    /// A missing or unreachable signature is a rejection, not a fallback:
+    /// once a key is embedded an unsigned manifest is never trusted.
+    private func verifyManifestSignature(
+        _ manifest: Data,
+        manifestURL: URL,
+        publicKey: Curve25519.Signing.PublicKey
+    ) async throws {
+        var request = URLRequest(url: UpdateManifestSignature.signatureURL(forManifestAt: manifestURL))
+        request.httpMethod = "GET"
+        request.timeoutInterval = 15
+        request.setValue("OhMyUsage", forHTTPHeaderField: "User-Agent")
+
+        let signature: Data
+        do {
+            let (data, response) = try await session.data(for: request)
+            guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+                throw AppUpdateError.manifestSignatureInvalid
+            }
+            signature = data
+        } catch {
+            throw AppUpdateError.manifestSignatureInvalid
+        }
+        try UpdateManifestSignature.verify(manifest: manifest, signatureFile: signature, publicKey: publicKey)
     }
 
     private static func shouldTryNextMetadataURL(after error: Error) -> Bool {

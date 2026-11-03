@@ -499,7 +499,9 @@ enum MenuQuotaPresenter {
         let baseTitle: String
         switch window.kind {
         case .session:
-            baseTitle = provider.type == .ollamaCloud ? localization.session : localization.quotaFiveHour
+            baseTitle = ProviderTypeMetadataCatalog.metadata(for: provider.type).titlesSessionQuotaAsSession
+                ? localization.session
+                : localization.quotaFiveHour
         case .weekly:
             baseTitle = localization.quotaWeekly
         default:

@@ -21,8 +21,7 @@ enum AppIconImageProvider {
     private static func bundledImage() -> NSImage? {
         let candidates: [(Bundle, String, String)] = [
             (.main, "AppIcon", "icns"),
-            (.module, "AppIcon", "icns"),
-            (.module, "app_icon_source", "png")
+            (.module, "AppIcon", "icns")
         ]
 
         for (bundle, name, ext) in candidates {

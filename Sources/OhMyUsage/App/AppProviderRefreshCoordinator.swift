@@ -481,7 +481,9 @@ final class AppProviderRefreshCoordinator {
     ) async throws -> UsageSnapshot {
         let worker = Task.detached(priority: .utility) {
             try Task.checkCancellation()
-            return try await provider.fetch(forceRefresh: forceRefresh)
+            return try await PerformanceSignposts.interval("ProviderFetch", provider.descriptor.type.rawValue) {
+                try await provider.fetch(forceRefresh: forceRefresh)
+            }
         }
         return try await withTaskCancellationHandler {
             try await worker.value

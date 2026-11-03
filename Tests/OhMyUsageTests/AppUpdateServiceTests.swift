@@ -1,3 +1,4 @@
+import CryptoKit
 import Darwin
 import Foundation
 import XCTest
@@ -261,6 +262,112 @@ final class AppUpdateServiceTests: XCTestCase {
         } catch {
             XCTFail("Expected checksumMismatch, got \(error).")
         }
+    }
+
+    func testSignedManifestIsAcceptedWithEmbeddedKey() async throws {
+        let key = Curve25519.Signing.PrivateKey()
+        let manifest = Self.minimalManifest(version: "3.0.0")
+        let signature = Data(try key.signature(for: manifest).base64EncodedString().utf8)
+        var requested: [URL] = []
+        let session = makeMockSession { request in
+            let url = try XCTUnwrap(request.url)
+            requested.append(url)
+            let body = url.pathExtension == "sig" ? signature : manifest
+            return (HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!, body)
+        }
+        let service = AppUpdateService(
+            session: session,
+            latestMetadataURLs: [AppUpdateService.metadataURL],
+            manifestPublicKey: key.publicKey
+        )
+
+        let update = try await service.fetchLatestRelease()
+
+        XCTAssertEqual(update.latestVersion, "3.0.0")
+        XCTAssertEqual(requested, [
+            AppUpdateService.metadataURL,
+            UpdateManifestSignature.signatureURL(forManifestAt: AppUpdateService.metadataURL)
+        ])
+        XCTAssertEqual(requested.last?.lastPathComponent, "latest.json.sig")
+    }
+
+    func testTamperedManifestIsRejected() async throws {
+        let key = Curve25519.Signing.PrivateKey()
+        let signed = Self.minimalManifest(version: "3.0.0")
+        let served = Self.minimalManifest(version: "3.0.1")
+        let signature = Data(try key.signature(for: signed).base64EncodedString().utf8)
+        let session = makeMockSession { request in
+            let url = try XCTUnwrap(request.url)
+            let body = url.pathExtension == "sig" ? signature : served
+            return (HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!, body)
+        }
+        let service = AppUpdateService(
+            session: session,
+            latestMetadataURLs: [AppUpdateService.metadataURL],
+            manifestPublicKey: key.publicKey
+        )
+
+        do {
+            _ = try await service.fetchLatestRelease()
+            XCTFail("Expected manifestSignatureInvalid")
+        } catch AppUpdateError.manifestSignatureInvalid {
+        }
+    }
+
+    func testMissingSignatureIsRejectedWhenKeyIsEmbedded() async throws {
+        let manifest = Self.minimalManifest(version: "3.0.0")
+        let session = makeMockSession { request in
+            let url = try XCTUnwrap(request.url)
+            let status = url.pathExtension == "sig" ? 404 : 200
+            return (HTTPURLResponse(url: url, statusCode: status, httpVersion: nil, headerFields: nil)!, manifest)
+        }
+        let service = AppUpdateService(
+            session: session,
+            latestMetadataURLs: [AppUpdateService.metadataURL],
+            manifestPublicKey: Curve25519.Signing.PrivateKey().publicKey
+        )
+
+        do {
+            _ = try await service.fetchLatestRelease()
+            XCTFail("Expected manifestSignatureInvalid")
+        } catch AppUpdateError.manifestSignatureInvalid {
+        }
+    }
+
+    func testUnprovisionedKeySkipsSignatureRequest() async throws {
+        let manifest = Self.minimalManifest(version: "3.0.0")
+        var requested: [URL] = []
+        let session = makeMockSession { request in
+            let url = try XCTUnwrap(request.url)
+            requested.append(url)
+            return (HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!, manifest)
+        }
+        let service = AppUpdateService(
+            session: session,
+            latestMetadataURLs: [AppUpdateService.metadataURL],
+            manifestPublicKey: nil
+        )
+
+        _ = try await service.fetchLatestRelease()
+
+        XCTAssertEqual(requested, [AppUpdateService.metadataURL])
+    }
+
+    func testEmbeddedPublicKeyResourceIsEmptyOrValid() throws {
+        let text = try XCTUnwrap(UpdateManifestSignature.embeddedPublicKeyText(), "resource must ship in the bundle")
+        // Fails loudly if someone commits a malformed key, which would
+        // otherwise silently disable verification.
+        XCTAssertNoThrow(try UpdateManifestSignature.publicKey(fromBase64: text))
+        let provisioned = !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        XCTAssertEqual(UpdateManifestSignature.embeddedPublicKey != nil, provisioned)
+    }
+
+    private static func minimalManifest(version: String) -> Data {
+        Data(
+            """
+            {"version":"\(version)","assets":{"macos_zip":{"url":"https://github.com/Four-JJJJ/oh-myusage/releases/download/v\(version)/oh-myusage-macOS.zip"}}}
+            """.utf8
+        )
     }
 
     private func makeMockSession(

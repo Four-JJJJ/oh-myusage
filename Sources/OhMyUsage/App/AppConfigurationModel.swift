@@ -169,56 +169,10 @@ final class AppConfigurationModel {
     }
 
     func displayNameForDiscovery(_ descriptor: ProviderDescriptor) -> String {
-        switch descriptor.type {
-        case .codex:
-            return "Codex"
-        case .claude:
-            return "Claude"
-        case .gemini:
-            return "Gemini"
-        case .copilot:
-            return "GitHub Copilot"
-        case .microsoftCopilot:
-            return "Microsoft Copilot"
-        case .zai:
-            return "Z.ai"
-        case .zaiBalance:
-            return "Z.ai (API)"
-        case .amp:
-            return "Amp"
-        case .cursor:
-            return "Cursor"
-        case .grokBot:
-            return "Grok Bot"
-        case .jetbrains:
-            return "JetBrains"
-        case .kiro:
-            return "Kiro"
-        case .windsurf:
-            return "Windsurf"
-        case .kimi:
-            return "Kimi"
-        case .kimiBalance:
-            return "Kimi (API)"
-        case .trae:
-            return "Trae SOLO"
-        case .openrouterCredits:
-            return "OpenRouter Credits"
-        case .openrouterAPI:
-            return "OpenRouter API"
-        case .ollamaCloud:
-            return "Ollama Cloud"
-        case .opencodeGo:
-            return "OpenCode Go"
-        case .qwen:
-            return "Qwen"
-        case .qwenBalance:
-            return "Qwen (API)"
-        case .grok:
-            return "Grok"
-        case .relay, .open, .dragon:
+        if descriptor.isRelay {
             return descriptor.name
         }
+        return ProviderTypeMetadataCatalog.metadata(for: descriptor.type).displayName
     }
 
     // MARK: - Private orchestration

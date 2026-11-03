@@ -10,13 +10,52 @@ The goal is to keep future work on the extracted seams instead of pushing logic 
 
 ## Add A New Official Provider
 
-### 1. Add the provider model surface
+Per-type facts live in one `ProviderModule` per provider under
+[Sources/OhMyUsage/Providers/Modules](../Sources/OhMyUsage/Providers/Modules). The catalogs and
+registries (`ProviderTypeMetadataCatalog`, `OfficialProviderDefaultCatalog`, `ProviderDefaultCatalog`,
+`ProviderFetchPlanRegistry`, `ProviderFactoryRegistry`) look the type up in
+[ProviderModuleRegistry.swift](../Sources/OhMyUsage/Providers/Modules/ProviderModuleRegistry.swift)
+instead of keeping their own switch or dictionary, so they do not need editing.
 
-- Define or extend the provider type in [ProviderModels.swift](../Sources/OhMyUsage/Models/ProviderModels.swift).
-- Add default config behavior and any migration/default ordering changes there as well.
+### 1. Add the provider type and its module
+
+- Add the case to [ProviderType.swift](../Sources/OhMyUsageDomain/ProviderType.swift).
+- Create `Sources/OhMyUsage/Providers/Modules/ProviderModule+<Name>.swift` declaring
+  `extension ProviderModule { static let <name> = ProviderModule(...) }`, using
+  [ProviderModule+Windsurf.swift](../Sources/OhMyUsage/Providers/Modules/ProviderModule+Windsurf.swift) as the minimal
+  example. A module declares:
+  - `metadata`: display name, icons, preferred metric count, capability flags (account switching,
+    local usage history, bearer input), supported source/web modes, and presentation constants
+    (`isPureBalance`, `planTypeDisplayStyle` — `nil` hides the plan type, `titlesSessionQuotaAsSession`);
+  - `defaultBaseURL` and `defaultOfficialConfig` (defaults to `ProviderModule.standardOfficialConfig`);
+  - `defaults`: `.official(id:name:pollIntervalSec:auth:)` for the built-in disabled descriptor
+    (also returned by `OfficialProviderDefaultCatalog.descriptor(for:)`), `.custom` or `.none`;
+  - `fetchPlan`: the `ProviderFetchPlan` request-cost policy, with a comment describing the requests;
+  - `makeProvider`: how the runtime provider is constructed from `ProviderFactoryRegistry.Dependencies`;
+  - optionally `migrateLegacyOfficialConfig` for a provider-specific config fix-up during normalization.
+- Add the module to `ProviderModuleRegistry.allModules`. Its position is the provider's position in
+  `AppConfig.default.providers`, so update the expected order in
+  `MonolithRetirementBoundaryTests.testDefaultProviderCatalogPreservesDefaultOrderAndCredentialAccounts`.
+- [ProviderModuleRegistryTests.swift](../Tests/OhMyUsageTests/ProviderModuleRegistryTests.swift) fails when a
+  `ProviderType` has no module or more than one, so a missing entry never falls back to a default silently.
+- Optionally add a `ProviderDescriptor.defaultOfficial<Name>()` convenience in
+  [ProviderDescriptor+CatalogFacades.swift](../Sources/OhMyUsage/Models/ProviderDescriptor+CatalogFacades.swift)
+  for tests; it should only forward to `OfficialProviderDefaultCatalog.descriptor(for:)`.
 - If the provider has settings-specific capability flags, update [ProviderSettingsSpec.swift](../Sources/OhMyUsage/Models/ProviderSettingsSpec.swift).
 
-### 2. Implement the runtime
+### 2. Add per-provider presentation that is real logic
+
+These switches stay outside the module because their branches are localized UI logic, not constants:
+
+- Menu placeholder metrics shown before the first snapshot: `placeholderMetrics` in
+  [MenuQuotaPresenter.swift](../Sources/OhMyUsage/UI/Presenters/MenuQuotaPresenter.swift)
+  (exhaustive, so the compiler asks for a new case).
+- Settings placeholder quota windows: `codexQuotaMetrics` in
+  [SettingsQuotaDisplayHelpers.swift](../Sources/OhMyUsage/UI/Settings/SettingsQuotaDisplayHelpers.swift)
+  (has a default five-hour/weekly placeholder).
+- Account-switching providers (Codex, Claude) also need their profile stores and coordinators.
+
+### 3. Implement the runtime
 
 - Create the provider in `Sources/OhMyUsage/Providers/`.
 - Reuse the shared official runtime pieces where possible:
@@ -30,20 +69,21 @@ The goal is to keep future work on the extracted seams instead of pushing logic 
   - response parsing
   - provider-only fallback rules
 
-### 3. Wire the factory
+### 4. Wire app-state handling
 
-- Register the provider in [ProviderFactory.swift](../Sources/OhMyUsage/Services/ProviderFactory.swift).
+- No factory edit is needed: [ProviderFactoryRegistry.swift](../Sources/OhMyUsage/Services/ProviderFactoryRegistry.swift)
+  builds its makers from each module's `makeProvider`.
 - If the provider needs special app-state handling for profile/session behavior, extend the extracted app coordinators before touching `AppViewModel`:
   - [AppProviderRefreshCoordinator.swift](../Sources/OhMyUsage/App/AppProviderRefreshCoordinator.swift)
   - [AppOfficialProfileRefreshCoordinator.swift](../Sources/OhMyUsage/App/AppOfficialProfileRefreshCoordinator.swift)
   - [AppOfficialProfileStateCoordinator.swift](../Sources/OhMyUsage/App/AppOfficialProfileStateCoordinator.swift)
 
-### 4. Expose settings
+### 5. Expose settings
 
 - Extend [ProviderSettingsSpec.swift](../Sources/OhMyUsage/Models/ProviderSettingsSpec.swift) with supported source modes, web modes, and credential fields.
 - Keep provider-detail UI in `Sources/OhMyUsage/UI/Settings/` instead of adding new branching directly to root settings composition.
 
-### 5. Add tests
+### 6. Add tests
 
 - Prefer provider fixture tests beside the provider file in `Tests/OhMyUsageTests/`.
 - Add app-state tests if the provider changes refresh/fallback/account behavior.

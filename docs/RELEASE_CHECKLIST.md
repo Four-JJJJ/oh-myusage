@@ -48,6 +48,18 @@ This checklist is the pre-push and release gate for `oh-myusage`. It should be c
   - `assets.macos_dmg.url`, `sha256`, and `size`
 - Confirm the workflow `Validate update manifest` step passes before announcing the release.
 
+### Manifest signature (Ed25519)
+
+The app verifies a detached `latest.json.sig` once `Sources/OhMyUsage/Resources/update_signing_public_key.txt` holds a key. While the file is empty, verification is off and the workflow publishes an unsigned manifest.
+
+One-time provisioning:
+
+1. `swift scripts/update_signing.swift generate` prints a private key and a public key.
+2. Store the private key as the repository secret `UPDATE_SIGNING_PRIVATE_KEY`. Keep an offline backup; never commit it.
+3. Commit the public key into `update_signing_public_key.txt` and ship it in the next release.
+
+After that, the `Sign update manifest` step fails the release if the secret is missing, so a release can never strand users on a version that rejects unsigned manifests. Losing the private key means shipping a new public key through a release signed with the old one, so keep the backup.
+
 ## 6. Publish
 
 - Prefer pushing a signed or reviewed tag like `v2.0.0`, or use the `Release` workflow manual dispatch with the same version.

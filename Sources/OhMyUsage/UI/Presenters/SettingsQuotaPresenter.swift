@@ -2,7 +2,6 @@ import Foundation
 import OhMyUsageDomain
 import OhMyUsagePresentation
 
-typealias OfficialMonitoringHealthStatus = OhMyUsagePresentation.OfficialMonitoringHealthStatus
 
 enum SettingsQuotaPresenter {
     nonisolated static func resolvedOfficialMonitoringProvider(

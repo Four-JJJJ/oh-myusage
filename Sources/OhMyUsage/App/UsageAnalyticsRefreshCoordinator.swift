@@ -1,4 +1,5 @@
 import Foundation
+import OhMyUsageApplication
 
 @MainActor
 final class UsageAnalyticsRefreshCoordinator {

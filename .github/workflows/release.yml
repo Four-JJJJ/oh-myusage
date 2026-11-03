@@ -126,6 +126,27 @@ jobs:
           }
           JSON
 
+      - name: Sign update manifest
+        env:
+          UPDATE_SIGNING_PRIVATE_KEY: ${{ secrets.UPDATE_SIGNING_PRIVATE_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          PUBLIC_KEY_FILE="Sources/OhMyUsage/Resources/update_signing_public_key.txt"
+          if [[ -z "$(tr -d '[:space:]' < "$PUBLIC_KEY_FILE")" ]]; then
+            echo "Update signing is not provisioned (empty $PUBLIC_KEY_FILE); publishing an unsigned manifest."
+            exit 0
+          fi
+          # Shipped apps embed this key and reject unsigned manifests, so a
+          # release without the secret would strand every user on this version.
+          if [[ -z "${UPDATE_SIGNING_PRIVATE_KEY:-}" ]]; then
+            echo "UPDATE_SIGNING_PRIVATE_KEY secret is required because $PUBLIC_KEY_FILE holds a key." >&2
+            exit 1
+          fi
+          swift scripts/update_signing.swift sign dist/latest.json
+          swift scripts/update_signing.swift verify dist/latest.json "$PUBLIC_KEY_FILE"
+
       - name: Validate update manifest
         env:
           EXPECTED_TAG: ${{ steps.version.outputs.tag }}
@@ -281,16 +302,17 @@ jobs:
           set -euo pipefail
 
           TAG="${{ steps.version.outputs.tag }}"
+          ASSETS=(dist/latest.json "dist/oh-myusage.dmg" dist/oh-myusage-macOS.zip dist/SHA256SUMS.txt)
+          if [[ -f dist/latest.json.sig ]]; then
+            ASSETS+=(dist/latest.json.sig)
+          fi
 
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" dist/latest.json "dist/oh-myusage.dmg" dist/oh-myusage-macOS.zip dist/SHA256SUMS.txt --clobber
+            gh release upload "$TAG" "${ASSETS[@]}" --clobber
             gh release edit "$TAG" --notes-file dist/release_notes.md
           else
             gh release create "$TAG" \
-              dist/latest.json \
-              "dist/oh-myusage.dmg" \
-              dist/oh-myusage-macOS.zip \
-              dist/SHA256SUMS.txt \
+              "${ASSETS[@]}" \
               --title "$TAG" \
               --notes-file dist/release_notes.md
           fi

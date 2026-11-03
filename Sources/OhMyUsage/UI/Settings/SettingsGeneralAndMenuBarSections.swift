@@ -136,7 +136,7 @@ extension SettingsView {
 
                 HStack(spacing: 8) {
                     menuBarStyleCard(
-                        title: viewModel.localizedText("图标+百分比", "Icon + Percent"),
+                        title: viewModel.text(.statusBarStyleIconPercent),
                         selected: viewModel.statusBarDisplayStyle == .iconPercent
                     ) {
                         iconPercentPreview
@@ -145,7 +145,7 @@ extension SettingsView {
                     }
 
                     menuBarStyleCard(
-                        title: viewModel.localizedText("柱状图+名称", "Bar + Name"),
+                        title: viewModel.text(.menuBarStyleBarName),
                         selected: viewModel.statusBarDisplayStyle == .barNamePercent
                     ) {
                         barNamePercentPreview
@@ -224,10 +224,10 @@ extension SettingsView {
     var backgroundRefreshSegmentControl: some View {
         SettingsPillSegmentedControl(
             options: [
-                SettingsPillSegmentOption(id: ResourceMode.background3Minutes.id, title: viewModel.localizedText("3分钟", "3m")),
-                SettingsPillSegmentOption(id: ResourceMode.background5Minutes.id, title: viewModel.localizedText("5分钟", "5m")),
-                SettingsPillSegmentOption(id: ResourceMode.background10Minutes.id, title: viewModel.localizedText("10分钟", "10m")),
-                SettingsPillSegmentOption(id: ResourceMode.background15Minutes.id, title: viewModel.localizedText("15分钟", "15m"))
+                SettingsPillSegmentOption(id: ResourceMode.background3Minutes.id, title: viewModel.text(.interval3Minutes)),
+                SettingsPillSegmentOption(id: ResourceMode.background5Minutes.id, title: viewModel.text(.interval5Minutes)),
+                SettingsPillSegmentOption(id: ResourceMode.background10Minutes.id, title: viewModel.text(.interval10Minutes)),
+                SettingsPillSegmentOption(id: ResourceMode.background15Minutes.id, title: viewModel.text(.interval15Minutes))
             ],
             selection: viewModel.resourceMode.id,
             backgroundColor: Color.white.opacity(0.15),
@@ -270,10 +270,10 @@ extension SettingsView {
     var refreshIntervalSegmentControl: some View {
         SettingsPillSegmentedControl(
             options: [
-                SettingsPillSegmentOption(id: 15, title: viewModel.localizedText("15秒", "15s")),
-                SettingsPillSegmentOption(id: 30, title: viewModel.localizedText("30秒", "30s")),
-                SettingsPillSegmentOption(id: 60, title: viewModel.localizedText("1分钟", "1m")),
-                SettingsPillSegmentOption(id: 300, title: viewModel.localizedText("5分钟", "5m"))
+                SettingsPillSegmentOption(id: 15, title: viewModel.text(.interval15Seconds)),
+                SettingsPillSegmentOption(id: 30, title: viewModel.text(.interval30Seconds)),
+                SettingsPillSegmentOption(id: 60, title: viewModel.text(.interval1Minute)),
+                SettingsPillSegmentOption(id: 300, title: viewModel.text(.interval5Minutes))
             ],
             selection: viewModel.globalRefreshIntervalSeconds,
             backgroundColor: Color.white.opacity(0.15),
@@ -417,50 +417,39 @@ extension SettingsView {
     }
 
     var settingsLanguageTitle: String {
-        viewModel.language == .zhHans ? "选择语言" : viewModel.text(.language)
+        viewModel.text(.language)
     }
 
     var settingsLaunchTitle: String {
-        viewModel.language == .zhHans ? "开机启动" : viewModel.text(.launchAtLogin)
+        viewModel.text(.launchAtLogin)
     }
 
     var settingsLaunchHint: String {
-        viewModel.language == .zhHans
-            ? "开启后会把 oh-myusage 注册为登录项。建议安装到“应用程序”后再启用"
-            : viewModel.text(.launchAtLoginHint)
+        viewModel.text(.launchAtLoginToggleHint)
     }
 
     var settingsRefreshIntervalTitle: String {
-        viewModel.localizedText("前台刷新", "Foreground Refresh")
+        viewModel.text(.foregroundRefresh)
     }
 
     var settingsRefreshIntervalHint: String {
-        viewModel.localizedText(
-            "菜单栏当前展示的服务按此频率刷新。",
-            "Providers shown in the menu bar refresh at this interval."
-        )
+        viewModel.text(.foregroundRefreshHint)
     }
 
     var settingsBackgroundRefreshTitle: String {
-        viewModel.localizedText("后台刷新", "Background Refresh")
+        viewModel.text(.backgroundRefresh)
     }
 
     var settingsBackgroundRefreshHint: String {
-        viewModel.localizedText(
-            "未显示在菜单栏的服务按此频率刷新。",
-            "Providers hidden from the menu bar refresh at this interval."
-        )
+        viewModel.text(.backgroundRefreshHint)
     }
 
     var settingsStatusBarMultiUsageTitle: String {
-        viewModel.localizedText("多模展示", "Multi-Model Display")
+        viewModel.text(.multiModelDisplay)
     }
 
     var settingsStatusBarMultiUsageHint: String {
-        viewModel.localizedText(
-            "开启后菜单栏展示多个模型监控，过多的展示可能挤压菜单栏空间",
-            "Show multiple monitored models in the menu bar; too many items may crowd the menu bar."
-        )
+        viewModel.text(.multiModelDisplayHint)
     }
 
     var settingsStatusBarDisplayStyleTitle: String {
@@ -472,7 +461,7 @@ extension SettingsView {
     }
 
     var settingsAppearanceFollowWallpaper: String {
-        viewModel.localizedText("跟随壁纸", "Follow Wallpaper")
+        viewModel.text(.followWallpaper)
     }
 
     var settingsAppearanceDark: String {
@@ -480,10 +469,7 @@ extension SettingsView {
     }
 
     var settingsAppearanceModeHint: String {
-        viewModel.localizedText(
-            "根据壁纸自动选择清晰易读的显示外观",
-            "Automatically picks a readable appearance from the wallpaper."
-        )
+        viewModel.text(.followWallpaperHint)
     }
 
     var settingsAppearanceLight: String {
