@@ -123,7 +123,7 @@ extension SettingsView {
 
                 VStack(alignment: .leading, spacing: 0) {
                     if showsTitle {
-                        Text(title ?? viewModel.localizedText("使用趋势", "Usage Trend"))
+                        Text(title ?? viewModel.text(.usageTrendTitle))
                             .font(.system(size: 12, weight: .semibold))
                             .foregroundStyle(settingsBodyColor)
                     }

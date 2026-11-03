@@ -73,8 +73,8 @@ extension SettingsView {
     ) -> some View {
         SettingsPillSegmentedControl(
             options: [
-                SettingsPillSegmentOption(id: LocalUsageTrendScope.allAccounts.id, title: viewModel.localizedText("全量", "All")),
-                SettingsPillSegmentOption(id: LocalUsageTrendScope.currentAccount.id, title: viewModel.localizedText("账号", "Account"))
+                SettingsPillSegmentOption(id: LocalUsageTrendScope.allAccounts.id, title: viewModel.text(.usageTrendScopeAll)),
+                SettingsPillSegmentOption(id: LocalUsageTrendScope.currentAccount.id, title: viewModel.text(.usageTrendScopeAccount))
             ],
             selection: scope.id,
             backgroundColor: Color.white.opacity(0.15),
@@ -97,7 +97,7 @@ extension SettingsView {
         let resolved = options.first(where: { $0.id == selectedAccountKey }) ?? options.first
         let isExpanded = navigationState.localUsageTrendExpandedAccountSelectorProviderID == providerID
         let selectorText = localUsageTrendTrimmed(resolved?.selectorLabel)
-            ?? viewModel.localizedText("请选择账号", "Select account")
+            ?? viewModel.text(.usageTrendSelectAccount)
 
         return Button {
             navigationState.localUsageTrendExpandedAccountSelectorProviderID = isExpanded ? nil : providerID
@@ -144,21 +144,21 @@ extension SettingsView {
         HStack(alignment: .center, spacing: 0) {
             if let summary {
                 localUsageSubscriptionSummaryItem(
-                    label: viewModel.localizedText("今日", "Today"),
+                    label: viewModel.text(.usageTrendToday),
                     period: summary.today
                 )
 
                 Spacer(minLength: 0)
 
                 localUsageSubscriptionSummaryItem(
-                    label: viewModel.localizedText("昨日", "Yesterday"),
+                    label: viewModel.text(.usageTrendYesterday),
                     period: summary.yesterday
                 )
 
                 Spacer(minLength: 0)
 
                 localUsageSubscriptionSummaryItem(
-                    label: viewModel.localizedText("近30日", "Last 30d"),
+                    label: viewModel.text(.usageTrendLast30Days),
                     period: summary.last30Days
                 )
             } else {
@@ -210,7 +210,7 @@ extension SettingsView {
         hideVisualization: Bool
     ) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text(viewModel.localizedText("24小时趋势", "24h Trend"))
+            Text(viewModel.text(.usageTrend24Hours))
                 .font(.system(size: 12, weight: .regular))
                 .foregroundStyle(Color.white.opacity(0.80))
                 .frame(width: 534, height: 12, alignment: .leading)
@@ -244,7 +244,7 @@ extension SettingsView {
         let displayPoints = hideVisualization ? [] : localUsageWeeklyDisplayPoints(points)
 
         return VStack(alignment: .leading, spacing: 0) {
-            Text(viewModel.localizedText("7天趋势", "7d Trend"))
+            Text(viewModel.text(.usageTrend7Days))
                 .font(.system(size: 12, weight: .regular))
                 .foregroundStyle(Color.white.opacity(0.80))
                 .frame(width: 534, height: 12, alignment: .leading)

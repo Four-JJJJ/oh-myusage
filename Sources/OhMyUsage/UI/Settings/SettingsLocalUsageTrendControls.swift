@@ -63,8 +63,8 @@ extension SettingsView {
                 }
             }
         )) {
-            Text(viewModel.localizedText("全量", "All")).tag(LocalUsageTrendScope.allAccounts.id)
-            Text(viewModel.localizedText("按账号", "By Account")).tag(LocalUsageTrendScope.currentAccount.id)
+            Text(viewModel.text(.usageTrendScopeAll)).tag(LocalUsageTrendScope.allAccounts.id)
+            Text(viewModel.text(.usageTrendScopeByAccount)).tag(LocalUsageTrendScope.currentAccount.id)
         }
         .pickerStyle(.segmented)
         .controlSize(.small)
@@ -80,7 +80,7 @@ extension SettingsView {
         let resolved = options.first(where: { $0.id == selectedAccountKey }) ?? options.first
         let isExpanded = navigationState.localUsageTrendExpandedAccountSelectorProviderID == providerID
         let selectorText = localUsageTrendTrimmed(resolved?.selectorLabel)
-            ?? viewModel.localizedText("请选择账号", "Select account")
+            ?? viewModel.text(.usageTrendSelectAccount)
 
         Button {
             navigationState.localUsageTrendExpandedAccountSelectorProviderID = isExpanded ? nil : providerID

@@ -10,7 +10,7 @@ extension SettingsView {
         let displayPoints = hideVisualization ? [] : points
 
         VStack(alignment: .leading, spacing: 0) {
-            Text(viewModel.localizedText("24小时趋势", "24h Trend"))
+            Text(viewModel.text(.usageTrend24Hours))
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(settingsBodyColor)
 
@@ -81,7 +81,7 @@ extension SettingsView {
     ) -> some View {
         let displayPoints = hideVisualization ? [] : localUsageWeeklyDisplayPoints(points)
         VStack(alignment: .leading, spacing: 0) {
-            Text(viewModel.localizedText("7天趋势", "7d Trend"))
+            Text(viewModel.text(.usageTrend7Days))
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(settingsBodyColor)
 
@@ -212,11 +212,11 @@ extension SettingsView {
             if let summary {
                 HStack(spacing: 16) {
                     localUsageTrendSummaryItem(
-                        label: viewModel.localizedText("今日", "Today"),
+                        label: viewModel.text(.usageTrendToday),
                         period: summary.today
                     )
                     localUsageTrendSummaryItem(
-                        label: viewModel.localizedText("昨日", "Yesterday"),
+                        label: viewModel.text(.usageTrendYesterday),
                         period: summary.yesterday
                     )
                 }
@@ -224,7 +224,7 @@ extension SettingsView {
                 Spacer(minLength: 0)
 
                 localUsageTrendSummaryItem(
-                    label: viewModel.localizedText("近30日", "Last 30d"),
+                    label: viewModel.text(.usageTrendLast30Days),
                     period: summary.last30Days
                 )
             } else {
@@ -296,9 +296,9 @@ extension SettingsView {
     }
 
     func localUsageTrendSummaryText(_ summary: LocalUsageSummary) -> String {
-        let today = "\(viewModel.localizedText("今日", "Today")) \(localUsageTrendSummaryValueText(summary.today))"
-        let yesterday = "\(viewModel.localizedText("昨日", "Yesterday")) \(localUsageTrendSummaryValueText(summary.yesterday))"
-        let last30 = "\(viewModel.localizedText("近30日", "Last 30d")) \(localUsageTrendSummaryValueText(summary.last30Days))"
+        let today = "\(viewModel.text(.usageTrendToday)) \(localUsageTrendSummaryValueText(summary.today))"
+        let yesterday = "\(viewModel.text(.usageTrendYesterday)) \(localUsageTrendSummaryValueText(summary.yesterday))"
+        let last30 = "\(viewModel.text(.usageTrendLast30Days)) \(localUsageTrendSummaryValueText(summary.last30Days))"
         return "\(today) · \(yesterday) · \(last30)"
     }
 }

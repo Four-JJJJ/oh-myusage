@@ -278,6 +278,17 @@ enum L10nKey {
     case relayCredentialInfo
     case relayCookieLookupHint
     case relayBearerLookupHint
+    // Settings local usage trend.
+    case usageTrendTitle
+    case usageTrendScopeAll
+    case usageTrendScopeAccount
+    case usageTrendSelectAccount
+    case usageTrendToday
+    case usageTrendYesterday
+    case usageTrendLast30Days
+    case usageTrend24Hours
+    case usageTrend7Days
+    case usageTrendScopeByAccount
 }
 
 enum Localizer {
@@ -558,6 +569,16 @@ enum Localizer {
             case .relayCredentialInfo: return "凭证信息"
             case .relayCookieLookupHint: return "可在浏览器开发者工具的 Network 中打开对应请求，在 Request Headers 里复制完整 Cookie。"
             case .relayBearerLookupHint: return "可在浏览器开发者工具的 Network 中打开对应请求，在 Request Headers 里复制 Authorization 的 Bearer 值。"
+            case .usageTrendTitle: return "使用趋势"
+            case .usageTrendScopeAll: return "全量"
+            case .usageTrendScopeAccount: return "账号"
+            case .usageTrendSelectAccount: return "请选择账号"
+            case .usageTrendToday: return "今日"
+            case .usageTrendYesterday: return "昨日"
+            case .usageTrendLast30Days: return "近30日"
+            case .usageTrend24Hours: return "24小时趋势"
+            case .usageTrend7Days: return "7天趋势"
+            case .usageTrendScopeByAccount: return "按账号"
             }
         case .en:
             switch key {
@@ -834,6 +855,16 @@ enum Localizer {
             case .relayCredentialInfo: return "Credential"
             case .relayCookieLookupHint: return "Open the matching request in browser DevTools Network and copy the full Cookie value from Request Headers."
             case .relayBearerLookupHint: return "Open the matching request in browser DevTools Network and copy the Authorization bearer value from Request Headers."
+            case .usageTrendTitle: return "Usage Trend"
+            case .usageTrendScopeAll: return "All"
+            case .usageTrendScopeAccount: return "Account"
+            case .usageTrendSelectAccount: return "Select account"
+            case .usageTrendToday: return "Today"
+            case .usageTrendYesterday: return "Yesterday"
+            case .usageTrendLast30Days: return "Last 30d"
+            case .usageTrend24Hours: return "24h Trend"
+            case .usageTrend7Days: return "7d Trend"
+            case .usageTrendScopeByAccount: return "By Account"
             }
         }
     }
