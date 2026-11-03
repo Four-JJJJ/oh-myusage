@@ -161,7 +161,7 @@ final class CodexProvider: UsageProvider, @unchecked Sendable {
     }
 
     private func loadFromCLI(forceRefresh: Bool) async throws -> UsageSnapshot {
-        let rpcSnapshot = try runCodexRPCSnapshot()
+        let rpcSnapshot = try await runCodexRPCSnapshot()
         var snapshot = rpcSnapshot
         let official = descriptor.officialConfig ?? ProviderDescriptor.defaultOfficialConfig(type: .codex)
 
@@ -671,25 +671,23 @@ final class CodexProvider: UsageProvider, @unchecked Sendable {
         return true
     }
 
-    private func runCodexRPCSnapshot() throws -> UsageSnapshot {
-        var responses = try runCodexRPC(keepAliveSeconds: 3.0)
-        if responses["2"] == nil || responses["3"] == nil {
-            responses = try runCodexRPC(keepAliveSeconds: 10.0)
+    private func runCodexRPCSnapshot() async throws -> UsageSnapshot {
+        guard let codexPath = resolveCodexExecutablePath() else {
+            throw ProviderError.unavailable("Unable to locate codex CLI. Set CODEX_CLI_PATH or install Codex.app.")
         }
-        if responses["2"] == nil || responses["3"] == nil {
-            responses = try runCodexRPC(keepAliveSeconds: 18.0)
-        }
+        let client = CodexAppServerRPCClient(
+            executablePath: codexPath,
+            clientVersion: AppVersionResolver.detectCurrentAppVersion()
+        )
+        let responses = try await client.readAccountAndRateLimits()
 
-        guard let accountResult = responses["2"] else {
+        guard let accountData = responses[CodexAppServerRPCClient.accountRequestID] else {
             throw ProviderError.invalidResponse("missing account/read response")
         }
 
-        guard let limitsResult = responses["3"] else {
+        guard let limitsData = responses[CodexAppServerRPCClient.rateLimitsRequestID] else {
             throw ProviderError.invalidResponse("missing account/rateLimits/read response")
         }
-
-        let accountData = try JSONSerialization.data(withJSONObject: accountResult)
-        let limitsData = try JSONSerialization.data(withJSONObject: limitsResult)
 
         let account = try JSONDecoder().decode(CodexAccountReadResult.self, from: accountData)
         let limits = try JSONDecoder().decode(CodexRateLimitsReadResult.self, from: limitsData)
@@ -762,106 +760,6 @@ final class CodexProvider: UsageProvider, @unchecked Sendable {
             fingerprint: nil
         )
         return snapshot
-    }
-
-    private func runCodexRPC(keepAliveSeconds: TimeInterval) throws -> [String: [String: Any]] {
-        guard let codexPath = resolveCodexExecutablePath() else {
-            throw ProviderError.unavailable("Unable to locate codex CLI. Set CODEX_CLI_PATH or install Codex.app.")
-        }
-
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: codexPath)
-        process.arguments = ["app-server", "--listen", "stdio://"]
-
-        let inputPipe = Pipe()
-        let outputPipe = Pipe()
-        let errorPipe = Pipe()
-
-        process.standardInput = inputPipe
-        process.standardOutput = outputPipe
-        process.standardError = errorPipe
-
-        let terminated = DispatchSemaphore(value: 0)
-        process.terminationHandler = { _ in terminated.signal() }
-        try process.run()
-
-        let messages = [
-            #"{"jsonrpc":"2.0","id":"1","method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"OhMyUsage","version":"0.2"}}}"#,
-            #"{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}"#,
-            #"{"jsonrpc":"2.0","id":"2","method":"account/read","params":{}}"#,
-            #"{"jsonrpc":"2.0","id":"3","method":"account/rateLimits/read","params":{}}"#
-        ]
-
-        let payload = messages.joined(separator: "\n") + "\n"
-        if let data = payload.data(using: .utf8) {
-            inputPipe.fileHandleForWriting.write(data)
-        }
-
-        Thread.sleep(forTimeInterval: keepAliveSeconds)
-        try? inputPipe.fileHandleForWriting.close()
-
-        var forceTerminated = false
-        let waitResult = terminated.wait(timeout: .now() + max(14.0, keepAliveSeconds + 8.0))
-        if waitResult == .timedOut {
-            forceTerminated = true
-            process.terminate()
-            if terminated.wait(timeout: .now() + 1.0) == .timedOut {
-                process.interrupt()
-                _ = terminated.wait(timeout: .now() + 1.0)
-            }
-        }
-
-        let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
-        let errData = errorPipe.fileHandleForReading.readDataToEndOfFile()
-
-        guard let outputText = String(data: outputData, encoding: .utf8) else {
-            throw ProviderError.invalidResponse("stdout is not UTF-8")
-        }
-
-        var resultsByID: [String: [String: Any]] = [:]
-
-        for line in outputText.split(separator: "\n") {
-            guard line.first == "{" else { continue }
-            guard let data = String(line).data(using: .utf8) else { continue }
-            guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
-
-            if let error = json["error"] as? [String: Any],
-               let message = error["message"] as? String {
-                throw ProviderError.invalidResponse(message)
-            }
-
-            let id: String?
-            if let stringID = json["id"] as? String {
-                id = stringID
-            } else if let intID = json["id"] as? Int {
-                id = String(intID)
-            } else if let numericID = json["id"] as? NSNumber {
-                id = numericID.stringValue
-            } else {
-                id = nil
-            }
-
-            guard let id,
-                  let result = json["result"] as? [String: Any] else {
-                continue
-            }
-
-            resultsByID[id] = result
-        }
-
-        if process.terminationStatus != 0 && !forceTerminated {
-            let stderr = String(data: errData, encoding: .utf8) ?? "unknown stderr"
-            throw ProviderError.commandFailed(stderr)
-        }
-
-        if resultsByID["2"] == nil || resultsByID["3"] == nil {
-            if forceTerminated {
-                throw ProviderError.timeout("codex app-server timeout")
-            }
-            throw ProviderError.invalidResponse("missing account/read or account/rateLimits/read response")
-        }
-
-        return resultsByID
     }
 
     private func resolveCodexExecutablePath() -> String? {
