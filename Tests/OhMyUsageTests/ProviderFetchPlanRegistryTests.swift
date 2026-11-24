@@ -34,6 +34,7 @@ final class ProviderFetchPlanRegistryTests: XCTestCase {
         XCTAssertEqual(registry.plan(for: .codex).activeTTL, 120)
         XCTAssertEqual(registry.plan(for: .claude).activeTTL, 120)
         XCTAssertEqual(registry.plan(for: .gemini).activeTTL, 60)
+        XCTAssertEqual(registry.plan(for: .antigravity).activeTTL, 120)
         XCTAssertEqual(registry.plan(for: .copilot).activeTTL, 60)
         XCTAssertEqual(registry.plan(for: .microsoftCopilot).activeTTL, 120)
         XCTAssertEqual(registry.plan(for: .zai).activeTTL, 60)
@@ -107,7 +108,7 @@ final class ProviderFetchPlanRegistryTests: XCTestCase {
 
     func testWebOverlaySupportMatchesProviderBehavior() {
         let overlayTypes: Set<ProviderType> = [
-            .codex, .claude, // OAuth usage + web overlay merge
+            .codex, .claude, .gemini, // OAuth usage + web session/overlay
             .relay, .open, .dragon, // browser credential recovery fallback
             .kimi, // legacy browser token fallback
             .trae, // browser JWT recovery fallback

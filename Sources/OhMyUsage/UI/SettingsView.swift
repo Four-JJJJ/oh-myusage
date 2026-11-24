@@ -124,7 +124,7 @@ struct SettingsView: View {
 
 }
 
-#if DEBUG
+#if DEBUG && canImport(PreviewsMacros)
 #Preview("Settings / General") {
     SettingsView(viewModel: {
         let root = FileManager.default.temporaryDirectory

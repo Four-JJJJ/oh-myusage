@@ -4,6 +4,7 @@ public enum ProviderType: String, Codable, CaseIterable, Sendable {
     case codex
     case claude
     case gemini
+    case antigravity
     case copilot
     case microsoftCopilot
     case zai

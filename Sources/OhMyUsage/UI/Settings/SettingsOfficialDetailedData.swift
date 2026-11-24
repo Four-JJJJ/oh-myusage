@@ -17,7 +17,7 @@ extension SettingsView {
     func shouldShowOfficialDetailedDataCard(for provider: ProviderDescriptor) -> Bool {
         guard provider.family == .official else { return false }
         switch provider.type {
-        case .codex, .claude, .gemini, .kimi:
+        case .codex, .claude, .gemini, .antigravity, .kimi:
             return true
         default:
             return false
@@ -129,13 +129,6 @@ extension SettingsView {
         provider: ProviderDescriptor,
         snapshot: UsageSnapshot?
     ) -> String {
-        guard provider.type != .gemini else {
-            return viewModel.localizedText(
-                "本地趋势数据源暂不可用",
-                "Local trend source unavailable"
-            )
-        }
-
         let scope = localUsageTrendScope(for: provider)
         let accountOptions = localUsageTrendAccountOptions(for: provider, snapshot: snapshot)
         let selectedAccountKey = localUsageTrendSelectedAccountKey(

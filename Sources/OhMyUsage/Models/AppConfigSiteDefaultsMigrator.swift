@@ -205,6 +205,11 @@ enum AppConfigSiteDefaultsMigrator {
             } else {
                 if var official = copy.officialConfig {
                     let manualCookieAccount = official.manualCookieAccount
+                    if copy.type == .gemini,
+                       (manualCookieAccount?.isEmpty ?? true),
+                       official.webMode == .disabled {
+                        official.webMode = defaults.officialConfig?.webMode ?? .autoImport
+                    }
                     official.manualCookieAccount = manualCookieAccount ?? defaults.officialConfig?.manualCookieAccount
                     copy.officialConfig = official
                 }

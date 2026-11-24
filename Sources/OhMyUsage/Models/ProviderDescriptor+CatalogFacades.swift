@@ -16,6 +16,10 @@ extension ProviderDescriptor {
         OfficialProviderDefaultCatalog.descriptor(for: .gemini)
     }
 
+    static func defaultOfficialAntigravity() -> ProviderDescriptor {
+        OfficialProviderDefaultCatalog.descriptor(for: .antigravity)
+    }
+
     static func defaultOfficialCopilot() -> ProviderDescriptor {
         OfficialProviderDefaultCatalog.descriptor(for: .copilot)
     }

@@ -314,6 +314,235 @@ final class GeminiProviderTests: XCTestCase {
         XCTAssertEqual(counter.value("loadCodeAssist"), 1)
     }
 
+    // MARK: - Modern Gemini CLI Keychain & JSONC settings
+
+    func testModernKeychainCredentialsWorkWithoutSettingsOrOAuthFiles() async throws {
+        let home = temporaryDirectory.appendingPathComponent("keychain-only-\(UUID().uuidString)", isDirectory: true)
+        let geminiDir = home.appendingPathComponent(".gemini", isDirectory: true)
+        try FileManager.default.createDirectory(at: geminiDir, withIntermediateDirectories: true)
+        try writeText(
+            #"{"active":"keychain-user@example.com","old":[]}"#,
+            to: geminiDir.appendingPathComponent("google_accounts.json")
+        )
+
+        let keychainPayload = """
+        {
+          "serverName": "main-account",
+          "token": {
+            "accessToken": "keychain-access-token",
+            "refreshToken": "keychain-refresh-token",
+            "tokenType": "Bearer",
+            "expiresAt": 4102444800000
+          }
+        }
+        """
+
+        OfficialMockURLProtocol.requestHandler = { request in
+            let url = try XCTUnwrap(request.url)
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer keychain-access-token")
+            switch url.absoluteString {
+            case "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist":
+                return (Self.httpOK(url), Data(#"{"currentTier":{"id":"pro"}}"#.utf8))
+            case "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota":
+                return (Self.httpOK(url), Data(Self.quotaBody(percent: 25).utf8))
+            default:
+                XCTFail("unexpected request: \(url.absoluteString)")
+                return (Self.httpOK(url), Data())
+            }
+        }
+        defer { OfficialMockURLProtocol.requestHandler = nil }
+
+        var descriptor = ProviderDescriptor.defaultOfficialGemini()
+        descriptor.officialConfig?.sourceMode = .cli
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [OfficialMockURLProtocol.self]
+
+        let provider = GeminiProvider(
+            descriptor: descriptor,
+            session: URLSession(configuration: configuration),
+            cache: SnapshotTimestampOfficialSnapshotCache(),
+            gate: PassthroughOfficialFetchGate(),
+            homeDirectory: { home.path },
+            environment: { [:] },
+            contextCache: GeminiCodeAssistContextCache(),
+            externalKeychainReader: { service, account, _ in
+                guard service == GeminiProvider.cliKeychainServiceName,
+                      account == GeminiProvider.cliKeychainMainAccount else {
+                    return nil
+                }
+                return keychainPayload
+            },
+            cacheTTL: 0
+        )
+
+        let snapshot = try await provider.fetch()
+        XCTAssertEqual(snapshot.remaining ?? -1, 75, accuracy: 0.001)
+        XCTAssertEqual(snapshot.accountLabel, "keychain-user@example.com")
+        XCTAssertEqual(snapshot.extras["planType"], "pro")
+    }
+
+    func testJSONCSettingsWithCommentsAndTrailingCommasParseCleanly() {
+        let jsonc = """
+        {
+          // Comment with "quotes" and // slashes
+          "security": {
+            /* Block comment */
+            "auth": {
+              "selectedType": "oauth-personal",
+            },
+          },
+        }
+        """
+        let cleaned = GeminiProvider.stripJSONCommentsAndTrailingCommas(jsonc)
+        let parsed = try? JSONSerialization.jsonObject(with: Data(cleaned.utf8)) as? [String: Any]
+        let security = parsed?["security"] as? [String: Any]
+        let auth = security?["auth"] as? [String: Any]
+        XCTAssertEqual(auth?["selectedType"] as? String, "oauth-personal")
+    }
+
+    // MARK: - Gemini Web (`gemini.google.com/usage`) & Auto Fallback
+
+    func testParseWebUsageSnapshotExtractsFiveHourWeeklyAndTier() throws {
+        let rawBody = """
+        )]}'
+        [
+          {
+            "data": {
+              "viewer": {
+                "email": "web-pro@example.com",
+                "rpcs": {
+                  "getUsageInfo": {
+                    "subscriptionTier": "TIER1",
+                    "pools": [
+                      {
+                        "poolType": "GXU_FIVE_HOURLY",
+                        "percentageUsed": 0.35,
+                        "gxu": { "windowRefreshesAt": "2026-11-24T06:00:00Z" }
+                      },
+                      {
+                        "poolType": "GXU_WEEKLY",
+                        "percentageUsed": 0.60,
+                        "gxu": { "windowRefreshesAt": "2026-11-28T00:00:00Z" }
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        ]
+        """
+
+        let snapshot = try GeminiProvider.parseWebUsageSnapshot(
+            rawBody: rawBody,
+            descriptor: .defaultOfficialGemini(),
+            cookieSource: "Auto:Chrome"
+        )
+
+        XCTAssertEqual(snapshot.sourceLabel, "Web")
+        XCTAssertEqual(snapshot.accountLabel, "web-pro@example.com")
+        XCTAssertEqual(snapshot.extras["planType"], "pro")
+        XCTAssertEqual(snapshot.extras["webCookieSource"], "Auto:Chrome")
+        XCTAssertEqual(snapshot.remaining ?? -1, 40, accuracy: 0.001)
+        XCTAssertEqual(snapshot.quotaWindows.count, 2)
+        XCTAssertEqual(snapshot.quotaWindows.first(where: { $0.kind == .session })?.remainingPercent ?? -1, 65, accuracy: 0.001)
+        XCTAssertEqual(snapshot.quotaWindows.first(where: { $0.kind == .weekly })?.remainingPercent ?? -1, 40, accuracy: 0.001)
+    }
+
+    func testAutoModeFallsBackToGeminiWebAndSkipsSignedOutBrowserProfiles() async throws {
+        let emptyHome = temporaryDirectory.appendingPathComponent("auto-web-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: emptyHome, withIntermediateDirectories: true)
+
+        OfficialMockURLProtocol.requestHandler = { request in
+            let url = try XCTUnwrap(request.url)
+            XCTAssertEqual(url.host, "gemini.google.com")
+            let cookie = request.value(forHTTPHeaderField: "Cookie") ?? ""
+            if cookie.contains("__Secure-1PSID=signed-out-profile") {
+                return (Self.httpOK(url), Data(#")]}'[{"data":{"viewer":null}}]"#.utf8))
+            }
+            XCTAssertTrue(cookie.contains("__Secure-1PSID=active-pro-profile"))
+            let payload = """
+            )]}'
+            [{"data":{"viewer":{"rpcs":{"getUsageInfo":{"subscriptionTier":"TIER1","pools":[
+              {"poolType":"GXU_FIVE_HOURLY","percentageUsed":0.2,"gxu":{"windowRefreshesAt":"2026-11-24T08:00:00Z"}},
+              {"poolType":"GXU_WEEKLY","percentageUsed":0.5,"gxu":{"windowRefreshesAt":"2026-11-29T00:00:00Z"}}
+            ]}}}}}]
+            """
+            return (Self.httpOK(url), Data(payload.utf8))
+        }
+        defer { OfficialMockURLProtocol.requestHandler = nil }
+
+        let keychain = RecordingTokenCredentialStore()
+        let cookieDetector = MultiSessionStubBrowserCookieDetector(candidates: [
+            BrowserCookieHeader(header: "NID=anonymous-only", source: "Auto:Arc"),
+            BrowserCookieHeader(header: "__Secure-1PSID=signed-out-profile; SID=old", source: "Auto:Chrome#1"),
+            BrowserCookieHeader(header: "__Secure-1PSID=active-pro-profile; SID=live", source: "Auto:Chrome#2")
+        ])
+
+        var descriptor = ProviderDescriptor.defaultOfficialGemini()
+        descriptor.officialConfig?.sourceMode = .auto
+        descriptor.officialConfig?.webMode = .autoImport
+
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [OfficialMockURLProtocol.self]
+
+        let provider = GeminiProvider(
+            descriptor: descriptor,
+            session: URLSession(configuration: configuration),
+            cache: SnapshotTimestampOfficialSnapshotCache(),
+            gate: PassthroughOfficialFetchGate(),
+            homeDirectory: { emptyHome.path },
+            environment: { [:] },
+            contextCache: GeminiCodeAssistContextCache(),
+            keychain: keychain,
+            browserCookieService: cookieDetector,
+            externalKeychainReader: { _, _, _ in nil },
+            webReadBackoff: WebOverlayRetryBackoff(),
+            cacheTTL: 0
+        )
+
+        let snapshot = try await provider.fetch(forceRefresh: true)
+        XCTAssertEqual(snapshot.sourceLabel, "Web")
+        XCTAssertEqual(snapshot.remaining ?? -1, 50, accuracy: 0.001)
+        XCTAssertEqual(snapshot.extras["webCookieSource"], "Auto:Chrome#2")
+        XCTAssertEqual(
+            keychain.readToken(service: GeminiProvider.credentialServiceName, account: GeminiProvider.manualCookieAccount),
+            "__Secure-1PSID=active-pro-profile; SID=live"
+        )
+    }
+
+    func testLegacyGeminiConfigMigratesDisabledWebModeOnceWhilePreservingExplicitDisable() {
+        var legacy = ProviderDescriptor(
+            id: "gemini-official",
+            name: "Official Gemini",
+            family: .official,
+            type: .gemini,
+            enabled: false,
+            pollIntervalSec: 60,
+            threshold: AlertRule(lowRemaining: 20, maxConsecutiveFailures: 2, notifyOnAuthError: true),
+            auth: .none,
+            baseURL: "https://cloudcode-pa.googleapis.com",
+            officialConfig: OfficialProviderConfig(
+                sourceMode: .auto,
+                webMode: .disabled,
+                manualCookieAccount: nil,
+                autoDiscoveryEnabled: true
+            )
+        )
+
+        let migrated = AppConfig(language: .zhHans, providers: [legacy]).migratedWithSiteDefaults()
+        let upgradedGemini = migrated.providers.first(where: { $0.id == "gemini-official" })
+        XCTAssertEqual(upgradedGemini?.officialConfig?.webMode, .autoImport)
+        XCTAssertEqual(upgradedGemini?.officialConfig?.manualCookieAccount, GeminiProvider.manualCookieAccount)
+
+        // If user explicitly disables webMode after migration (`manualCookieAccount` already set), keep `.disabled`.
+        legacy.officialConfig?.manualCookieAccount = GeminiProvider.manualCookieAccount
+        legacy.officialConfig?.webMode = .disabled
+        let reMigrated = AppConfig(language: .zhHans, providers: [legacy]).migratedWithSiteDefaults()
+        let preservedGemini = reMigrated.providers.first(where: { $0.id == "gemini-official" })
+        XCTAssertEqual(preservedGemini?.officialConfig?.webMode, .disabled)
+    }
+
     // MARK: - Helpers
 
     private func makeProvider(
@@ -507,4 +736,38 @@ private final class OfficialMockURLProtocol: URLProtocol {
     }
 
     override func stopLoading() {}
+}
+
+private final class MultiSessionStubBrowserCookieDetector: BrowserCookieDetecting {
+    let candidates: [BrowserCookieHeader]
+
+    init(candidates: [BrowserCookieHeader]) {
+        self.candidates = candidates
+    }
+
+    func detectCookieHeader(
+        hostContains: String,
+        order: [KimiBrowserKind]?,
+        accessIntent: BrowserCredentialAccessIntent
+    ) -> BrowserCookieHeader? {
+        candidates.first
+    }
+
+    func detectNamedCookie(
+        name: String,
+        hostContains: String,
+        order: [KimiBrowserKind]?,
+        accessIntent: BrowserCredentialAccessIntent
+    ) -> BrowserCookieHeader? {
+        nil
+    }
+
+    func detectCookieHeaders(
+        matchingHosts: [String],
+        fallbackHostContains: String,
+        order: [KimiBrowserKind]?,
+        accessIntent: BrowserCredentialAccessIntent
+    ) -> [BrowserCookieHeader] {
+        candidates
+    }
 }

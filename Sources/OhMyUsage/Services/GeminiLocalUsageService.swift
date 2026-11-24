@@ -18,7 +18,7 @@ final class GeminiLocalUsageService {
         self.fileManager = fileManager
         self.calendar = calendar
         self.nowProvider = nowProvider
-        self.tmpRootPath = tmpRootPath ?? "\(NSHomeDirectory())/.gemini/tmp"
+        self.tmpRootPath = tmpRootPath ?? "\(AntigravityLocalUsageService.resolvedGeminiRoot(homeDirectory: NSHomeDirectory(), environment: ProcessInfo.processInfo.environment))/tmp"
     }
 
     func fetchSummary() throws -> LocalUsageSummary {

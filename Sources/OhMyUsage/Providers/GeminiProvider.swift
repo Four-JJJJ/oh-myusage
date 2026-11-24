@@ -4,9 +4,12 @@ import Foundation
 import OhMyUsageProviders
 
 final class GeminiProvider: UsageProvider, @unchecked Sendable {
+    typealias ExternalKeychainReader = @Sendable (_ service: String, _ account: String?, _ interactive: Bool) -> String?
+
     private static let cache = SnapshotTimestampOfficialSnapshotCache()
     private static let gate = PassthroughOfficialFetchGate()
     private static let contextCache = GeminiCodeAssistContextCache()
+    static let sharedWebReadBackoff = WebOverlayRetryBackoff()
 
     /// Account/project context from `loadCodeAssist`. Deliberately much longer
     /// than the quota snapshot TTL (§8.4): repeated refreshes re-issue only
@@ -20,18 +23,41 @@ final class GeminiProvider: UsageProvider, @unchecked Sendable {
     /// `official/<provider>/oauth-json` convention.
     static let oauthVaultAccount = "official/gemini/oauth-json"
     static let credentialServiceName = TokenCredentialStoreServiceNames.defaultServiceName
+    /// Native macOS Keychain namespace written by modern `@google/gemini-cli`
+    /// (`OAuthCredentialStorage` / `HybridTokenStorage`).
+    static let cliKeychainServiceName = "gemini-cli-oauth"
+    static let cliKeychainMainAccount = "main-account"
+
+    static let defaultExternalKeychainReader: ExternalKeychainReader = { service, account, interactive in
+        let env = ProcessInfo.processInfo.environment
+        if env["XCTestConfigurationFilePath"] != nil ||
+            env["XCTest_SESSION_IDENTIFIER"] != nil ||
+            ProcessInfo.processInfo.processName.lowercased().contains("xctest") ||
+            Bundle.main.bundlePath.lowercased().contains(".xctest") {
+            return nil
+        }
+        return SecurityCredentialReader.readGenericPassword(
+            service: service,
+            account: account,
+            interactive: interactive
+        )
+    }
 
     private let cacheTTL: TimeInterval
     private let refreshBuffer: TimeInterval = 5 * 60
-    private let session: URLSession
+    let session: URLSession
     private let cache: any OfficialSnapshotCaching
     private let gate: any OfficialFetchGating
     private let contextCache: GeminiCodeAssistContextCache
     /// internal 以便测试确认 ProviderFactoryRegistry 已注入共享凭证存储
     /// （防止 8.4 要求的 refresh 持久化在生产接线中被漏接）。
     let keychain: (any TokenCredentialStoring)?
+    let browserCookieService: (any BrowserCookieDetecting)?
+    let webReadBackoff: WebOverlayRetryBackoff
     private let homeDirectory: () -> String
+    private let environment: () -> [String: String]
     private let shell: any ShellCommandRunning
+    private let externalKeychainReader: ExternalKeychainReader
 
     let descriptor: ProviderDescriptor
 
@@ -41,9 +67,13 @@ final class GeminiProvider: UsageProvider, @unchecked Sendable {
         cache: any OfficialSnapshotCaching = GeminiProvider.cache,
         gate: any OfficialFetchGating = GeminiProvider.gate,
         homeDirectory: @escaping () -> String = { NSHomeDirectory() },
+        environment: @escaping () -> [String: String] = { ProcessInfo.processInfo.environment },
         shell: any ShellCommandRunning = DefaultShellCommandRunner(),
         contextCache: GeminiCodeAssistContextCache = GeminiProvider.contextCache,
         keychain: (any TokenCredentialStoring)? = nil,
+        browserCookieService: (any BrowserCookieDetecting)? = nil,
+        externalKeychainReader: @escaping ExternalKeychainReader = GeminiProvider.defaultExternalKeychainReader,
+        webReadBackoff: WebOverlayRetryBackoff = GeminiProvider.sharedWebReadBackoff,
         cacheTTL: TimeInterval = 15
     ) {
         self.descriptor = descriptor
@@ -51,9 +81,13 @@ final class GeminiProvider: UsageProvider, @unchecked Sendable {
         self.cache = cache
         self.gate = gate
         self.homeDirectory = homeDirectory
+        self.environment = environment
         self.shell = shell
         self.contextCache = contextCache
         self.keychain = keychain
+        self.browserCookieService = browserCookieService
+        self.externalKeychainReader = externalKeychainReader
+        self.webReadBackoff = webReadBackoff
         self.cacheTTL = cacheTTL
     }
 
@@ -72,17 +106,31 @@ final class GeminiProvider: UsageProvider, @unchecked Sendable {
         )
     }
 
-    /// Snapshot cache key scoped to the discovered account identity so cached
-    /// snapshots are never reused across accounts (§8.2 / §8.5).
+    /// Snapshot cache key scoped to the discovered account identity and source
+    /// mode so cached snapshots are never reused across accounts or between CLI
+    /// and Web quotas (§8.2 / §8.5).
     private func snapshotCacheKey() -> String {
-        guard let credentials = try? loadCredentials() else {
+        let official = descriptor.officialConfig ?? ProviderDescriptor.defaultOfficialConfig(type: .gemini)
+        if official.sourceMode == .web {
+            if let webIdentity = webCookieCacheIdentity() {
+                return "\(descriptor.id)|web|\(webIdentity)"
+            }
+            return "\(descriptor.id)|web"
+        }
+
+        if let credentials = try? loadCredentials(allowInteractiveKeychain: false) {
+            if let accountLabel = credentials.accountLabel, !accountLabel.isEmpty {
+                return "\(descriptor.id)|account=\(accountLabel)"
+            }
+            if let fingerprint = Self.credentialFingerprint(credentials.refreshToken ?? credentials.accessToken) {
+                return "\(descriptor.id)|fingerprint=\(fingerprint)"
+            }
             return descriptor.id
         }
-        if let accountLabel = credentials.accountLabel, !accountLabel.isEmpty {
-            return "\(descriptor.id)|account=\(accountLabel)"
-        }
-        if let fingerprint = Self.credentialFingerprint(credentials.refreshToken ?? credentials.accessToken) {
-            return "\(descriptor.id)|fingerprint=\(fingerprint)"
+
+        if official.sourceMode == .auto,
+           let webIdentity = webCookieCacheIdentity() {
+            return "\(descriptor.id)|auto-web|\(webIdentity)"
         }
         return descriptor.id
     }
@@ -90,19 +138,146 @@ final class GeminiProvider: UsageProvider, @unchecked Sendable {
     private func loadSnapshot(forceRefresh: Bool) async throws -> UsageSnapshot {
         let official = descriptor.officialConfig ?? ProviderDescriptor.defaultOfficialConfig(type: .gemini)
         switch official.sourceMode {
-        case .api, .auto:
+        case .api:
             return try await loadFromAPI(forceRefresh: forceRefresh)
         case .cli:
-            throw ProviderError.unavailable("Gemini 官方来源当前仅支持 API 凭证发现")
+            do {
+                return try await loadFromAPI(forceRefresh: forceRefresh)
+            } catch let apiError as ProviderError {
+                if case .missingCredential = apiError,
+                   let cliSnapshot = try? await loadFromDesktopHelperCLI(forceRefresh: forceRefresh) {
+                    return cliSnapshot
+                }
+                throw apiError
+            }
         case .web:
-            throw ProviderError.unavailable("Gemini 官方来源当前不支持网页 Cookie 检测")
+            return try await loadFromWeb(forceRefresh: forceRefresh)
+        case .auto:
+            do {
+                return try await loadFromAPI(forceRefresh: forceRefresh)
+            } catch let apiError as ProviderError {
+                guard Self.shouldFallbackToWebInAutoMode(after: apiError) else {
+                    throw apiError
+                }
+
+                var webError: Error?
+                if official.webMode != .disabled, hasConfiguredWebCookieCandidate() {
+                    do {
+                        return try await loadFromWeb(forceRefresh: forceRefresh)
+                    } catch {
+                        webError = error
+                    }
+                }
+
+                if let cliSnapshot = try? await loadFromDesktopHelperCLI(forceRefresh: forceRefresh) {
+                    return cliSnapshot
+                }
+
+                if case .missingCredential = apiError, let webError {
+                    throw webError
+                }
+                throw apiError
+            }
+        }
+    }
+
+    private func loadFromDesktopHelperCLI(forceRefresh: Bool) async throws -> UsageSnapshot {
+        let env = environment()
+        let home = homeDirectory()
+        guard let executablePath = AgyCLIUsageService.resolveExecutablePath(
+            environment: env,
+            homeDirectory: home,
+            shell: shell
+        ) else {
+            throw ProviderError.missingCredential("Gemini.app / agy CLI not found")
+        }
+
+        let report: AgyCLIUsageReport
+        if cacheTTL > 0 {
+            report = try await AgyCLIUsageCoordinator.shared.fetchReport(
+                executablePath: executablePath,
+                forceRefresh: forceRefresh,
+                environment: env,
+                homeDirectory: home,
+                shell: shell
+            )
+        } else {
+            report = try AgyCLIUsageService.executeUsageCommand(
+                executablePath: executablePath,
+                environment: env,
+                homeDirectory: home,
+                shell: shell
+            )
+        }
+
+        let geminiBuckets = report.buckets.filter { $0.family == .gemini }
+        guard !geminiBuckets.isEmpty else {
+            throw ProviderError.unavailable(Localizer.systemText(.geminiDesktopBucketsUnavailable))
+        }
+
+        var windows: [UsageQuotaWindow] = []
+        for bucket in geminiBuckets {
+            let title: String
+            let kind: UsageQuotaKind
+            switch bucket.cadence {
+            case .fiveHour:
+                title = "5h"
+                kind = .session
+            case .weekly:
+                title = "Weekly"
+                kind = .weekly
+            case .other:
+                title = bucket.bucketName.isEmpty ? "Gemini" : bucket.bucketName
+                kind = .custom
+            }
+            windows.append(
+                UsageQuotaWindow(
+                    id: "\(descriptor.id)-\(bucket.id)",
+                    title: title,
+                    remainingPercent: bucket.remainingPercent,
+                    usedPercent: bucket.usedPercent,
+                    resetAt: bucket.resetAt,
+                    kind: kind
+                )
+            )
+        }
+
+        let remaining = windows.map(\.remainingPercent).min() ?? 0
+        var extras: [String: String] = [:]
+        if let plan = report.planType, !plan.isEmpty {
+            extras["planType"] = plan
+        }
+
+        return UsageSnapshot(
+            source: descriptor.id,
+            status: remaining <= descriptor.threshold.lowRemaining ? .warning : .ok,
+            remaining: remaining,
+            used: max(0, 100 - remaining),
+            limit: 100,
+            unit: "%",
+            updatedAt: report.fetchedAt,
+            note: Self.buildNote(plan: report.planType, windows: windows, projectLabel: nil),
+            quotaWindows: windows,
+            sourceLabel: report.executableSource,
+            accountLabel: report.accountLabel,
+            extras: extras,
+            rawMeta: ["gemini.source": "desktop-agy-cli"]
+        )
+    }
+
+    private static func shouldFallbackToWebInAutoMode(after error: ProviderError) -> Bool {
+        switch error {
+        case .missingCredential, .unauthorized, .unauthorizedDetail, .unavailable:
+            return true
+        default:
+            return false
         }
     }
 
     private func loadFromAPI(forceRefresh: Bool) async throws -> UsageSnapshot {
         let settings = try loadSettings()
         switch settings.authType {
-        case "api-key":
+        case "api-key", "gemini-api-key":
             throw ProviderError.unavailable("Gemini API key 模式无法稳定获取官方订阅配额")
         case "vertex-ai":
             throw ProviderError.unavailable("Gemini Vertex AI 模式不属于个人官方订阅配额")
@@ -110,8 +285,9 @@ final class GeminiProvider: UsageProvider, @unchecked Sendable {
             break
         }
 
+        let initialCredentials = try loadCredentials(allowInteractiveKeychain: forceRefresh)
         let result = try await OfficialProviderAuthRuntime.requestWithExpiringCredentialRefresh(
-            initialState: try loadCredentials(),
+            initialState: initialCredentials,
             shouldRefresh: { [self] credentials in
                 needsRefresh(credentials.expiresAt)
             },
@@ -162,6 +338,12 @@ final class GeminiProvider: UsageProvider, @unchecked Sendable {
             accessToken: accessToken,
             body: loadCodeAssistBody(projectID: settings.selectedProject)
         )
+        if Self.hasUnsupportedConsumerClientSignal(codeAssistRoot: codeAssist, credentials: credentials) {
+            throw ProviderError.unavailable(
+                Localizer.systemText(.geminiPersonalOAuthDeprecated)
+            )
+        }
+
         let resolvedProjectID = resolveProjectID(settings: settings, codeAssistRoot: codeAssist)
         let plan = Self.parsePlan(from: codeAssist) ?? ""
 
@@ -190,6 +372,36 @@ final class GeminiProvider: UsageProvider, @unchecked Sendable {
         )
     }
 
+    private static func hasUnsupportedConsumerClientSignal(
+        codeAssistRoot: [String: Any],
+        credentials: GeminiCredentials
+    ) -> Bool {
+        if codeAssistRoot["currentTier"] is [String: Any] {
+            return false
+        }
+        if let paidTier = codeAssistRoot["paidTier"] as? [String: Any],
+           let name = OfficialValueParser.string(paidTier["name"] ?? paidTier["id"]),
+           !name.isEmpty {
+            return false
+        }
+        if credentials.hasHostedDomainClaim {
+            return false
+        }
+        guard let ineligibleTiers = codeAssistRoot["ineligibleTiers"] as? [Any] else {
+            return false
+        }
+        for item in ineligibleTiers {
+            guard let dict = item as? [String: Any],
+                  let reason = OfficialValueParser.string(dict["reasonCode"] ?? dict["reason_code"]) else {
+                continue
+            }
+            if reason.uppercased() == "UNSUPPORTED_CLIENT" {
+                return true
+            }
+        }
+        return false
+    }
+
     private func requestQuotaSnapshot(
         accessToken: String,
         credentials: GeminiCredentials,
@@ -212,13 +424,31 @@ final class GeminiProvider: UsageProvider, @unchecked Sendable {
         )
     }
 
-    private func loadSettings() throws -> GeminiSettings {
-        let path = "\(homeDirectory())/.gemini/settings.json"
-        guard FileManager.default.fileExists(atPath: path) else {
-            throw ProviderError.missingCredential(path)
+    private func geminiConfigDirectoryPath() -> String {
+        let home = homeDirectory()
+        let env = environment()
+        if home == NSHomeDirectory() {
+            return AntigravityLocalUsageService.resolvedGeminiRoot(homeDirectory: home, environment: env)
         }
-        let data = try Data(contentsOf: URL(fileURLWithPath: path))
-        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+        return "\(home)/.gemini"
+    }
+
+    private func loadSettings() throws -> GeminiSettings {
+        let env = environment()
+        let envProject = Self.firstNonEmptyString([
+            env["GOOGLE_CLOUD_PROJECT"],
+            env["GOOGLE_CLOUD_PROJECT_ID"],
+        ])
+        let path = "\(geminiConfigDirectoryPath())/settings.json"
+        guard FileManager.default.fileExists(atPath: path) else {
+            // Modern `@google/gemini-cli` only writes `settings.json` when the
+            // user customizes settings; personal Google OAuth is the default.
+            return GeminiSettings(authType: "oauth-personal", selectedProject: envProject)
+        }
+        let rawText = try String(contentsOfFile: path, encoding: .utf8)
+        let normalizedJSON = Self.stripJSONCommentsAndTrailingCommas(rawText)
+        guard let data = normalizedJSON.data(using: .utf8),
+              let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
             throw ProviderError.invalidResponse("Gemini settings decode failed")
         }
         let security = json["security"] as? [String: Any]
@@ -243,6 +473,7 @@ final class GeminiProvider: UsageProvider, @unchecked Sendable {
             auth?["projectId"],
             auth?["project_id"],
             auth?["cloudaicompanionProject"],
+            envProject,
         ])
         return GeminiSettings(
             authType: authType,
@@ -252,7 +483,7 @@ final class GeminiProvider: UsageProvider, @unchecked Sendable {
 
     private func loadCodeAssistBody(projectID: String?) -> [String: Any] {
         var metadata: [String: Any] = [
-            "ideType": "IDE_UNSPECIFIED",
+            "ideType": "GEMINI_CLI",
             "platform": "PLATFORM_UNSPECIFIED",
             "pluginType": "GEMINI",
         ]
@@ -293,23 +524,80 @@ final class GeminiProvider: UsageProvider, @unchecked Sendable {
     }
 
     /// Fixed read priority: app vault (refreshed copy of the same OAuth grant)
-    /// → local credential file. The vaulted copy is only trusted when its
-    /// refresh token matches the file, so a CLI re-login always wins.
-    private func loadCredentials() throws -> GeminiCredentials {
-        let fileCredentials = try loadFileCredentials()
-        guard let keychain else { return fileCredentials }
+    /// → modern Gemini CLI Keychain (`gemini-cli-oauth` / `main-account`)
+    /// → legacy local credential file (`~/.gemini/oauth_creds.json`).
+    /// The vaulted copy is only trusted when its refresh token matches the
+    /// active CLI source, so a CLI re-login always wins.
+    private func loadCredentials(allowInteractiveKeychain: Bool) throws -> GeminiCredentials {
+        let sourceCredentials = try loadSourceCredentials(allowInteractiveKeychain: allowInteractiveKeychain)
+        guard let keychain else { return sourceCredentials }
         guard let raw = keychain.readToken(service: Self.credentialServiceName, account: Self.oauthVaultAccount),
-              let vaulted = Self.parseCredentialsJSON(raw, filePath: fileCredentials.filePath),
+              var vaulted = Self.parseCredentialsJSON(
+                  raw,
+                  filePath: sourceCredentials.filePath,
+                  fallbackEmail: sourceCredentials.fallbackEmail
+              ),
               let vaultRefreshToken = vaulted.refreshToken,
               !vaultRefreshToken.isEmpty,
-              vaultRefreshToken == fileCredentials.refreshToken else {
-            return fileCredentials
+              vaultRefreshToken == sourceCredentials.refreshToken else {
+            return sourceCredentials
+        }
+        if vaulted.idToken == nil {
+            vaulted.idToken = sourceCredentials.idToken
         }
         return vaulted
     }
 
-    private func loadFileCredentials() throws -> GeminiCredentials {
-        let path = "\(homeDirectory())/.gemini/oauth_creds.json"
+    private func loadSourceCredentials(allowInteractiveKeychain: Bool) throws -> GeminiCredentials {
+        let configDir = geminiConfigDirectoryPath()
+        let activeAccountEmail = loadActiveGoogleAccountEmail(inConfigDirectory: configDir)
+
+        if let keychainCredentials = loadExternalKeychainCredentials(
+            allowInteractive: allowInteractiveKeychain,
+            fallbackEmail: activeAccountEmail
+        ) {
+            return keychainCredentials
+        }
+
+        return try loadFileCredentials(configDirectory: configDir, fallbackEmail: activeAccountEmail)
+    }
+
+    private func loadExternalKeychainCredentials(
+        allowInteractive: Bool,
+        fallbackEmail: String?
+    ) -> GeminiCredentials? {
+        let nonInteractive = externalKeychainReader(Self.cliKeychainServiceName, Self.cliKeychainMainAccount, false)
+            ?? externalKeychainReader(Self.cliKeychainServiceName, nil, false)
+        if let nonInteractive,
+           let parsed = Self.parseCredentialsJSON(
+               nonInteractive,
+               filePath: "keychain://\(Self.cliKeychainServiceName)/\(Self.cliKeychainMainAccount)",
+               fallbackEmail: fallbackEmail
+           ) {
+            return parsed
+        }
+
+        guard allowInteractive else { return nil }
+        guard let interactiveRaw = externalKeychainReader(
+            Self.cliKeychainServiceName,
+            Self.cliKeychainMainAccount,
+            true
+        ),
+              let parsed = Self.parseCredentialsJSON(
+                  interactiveRaw,
+                  filePath: "keychain://\(Self.cliKeychainServiceName)/\(Self.cliKeychainMainAccount)",
+                  fallbackEmail: fallbackEmail
+              ) else {
+            return nil
+        }
+        return parsed
+    }
+
+    private func loadFileCredentials(
+        configDirectory: String,
+        fallbackEmail: String?
+    ) throws -> GeminiCredentials {
+        let path = "\(configDirectory)/oauth_creds.json"
         guard FileManager.default.fileExists(atPath: path) else {
             throw ProviderError.missingCredential(path)
         }
@@ -317,35 +605,91 @@ final class GeminiProvider: UsageProvider, @unchecked Sendable {
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw ProviderError.invalidResponse("Gemini oauth credentials decode failed")
         }
-        guard let credentials = Self.parseCredentialsJSON(json: json, filePath: path) else {
+        guard let credentials = Self.parseCredentialsJSON(
+            json: json,
+            filePath: path,
+            fallbackEmail: fallbackEmail
+        ) else {
             throw ProviderError.invalidResponse("missing Gemini access_token")
         }
         return credentials
     }
 
-    private static func parseCredentialsJSON(json: [String: Any], filePath: String) -> GeminiCredentials? {
-        guard let accessToken = OfficialValueParser.string(json["access_token"] ?? json["accessToken"]),
+    private func loadActiveGoogleAccountEmail(inConfigDirectory configDirectory: String) -> String? {
+        let path = "\(configDirectory)/google_accounts.json"
+        guard FileManager.default.fileExists(atPath: path),
+              let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
+              let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+            return nil
+        }
+        return Self.firstNonEmptyString([
+            json["active"],
+            json["activeAccount"],
+            json["email"],
+        ])
+    }
+
+    internal static func parseCredentialsJSON(
+        json: [String: Any],
+        filePath: String,
+        fallbackEmail: String? = nil
+    ) -> GeminiCredentials? {
+        // Modern `HybridTokenStorage` wraps tokens inside `{"serverName":"main-account","token":{...}}`.
+        let nestedToken = json["token"] as? [String: Any]
+        let primary = nestedToken ?? json
+
+        guard let accessToken = OfficialValueParser.string(
+            primary["access_token"]
+                ?? primary["accessToken"]
+                ?? json["access_token"]
+                ?? json["accessToken"]
+        ),
               !accessToken.isEmpty else {
             return nil
         }
+
+        let refreshToken = OfficialValueParser.string(
+            primary["refresh_token"]
+                ?? primary["refreshToken"]
+                ?? json["refresh_token"]
+                ?? json["refreshToken"]
+        )
+        let idToken = OfficialValueParser.string(
+            primary["id_token"]
+                ?? primary["idToken"]
+                ?? json["id_token"]
+                ?? json["idToken"]
+        )
+        let expiresAt = parseExpiry(json: primary) ?? parseExpiry(json: json)
+
         return GeminiCredentials(
             accessToken: accessToken,
-            refreshToken: OfficialValueParser.string(json["refresh_token"] ?? json["refreshToken"]),
-            expiresAt: parseExpiry(json: json),
-            idToken: OfficialValueParser.string(json["id_token"] ?? json["idToken"]),
+            refreshToken: refreshToken,
+            expiresAt: expiresAt,
+            idToken: idToken,
+            fallbackEmail: fallbackEmail,
             filePath: filePath
         )
     }
 
-    private static func parseCredentialsJSON(_ raw: String, filePath: String) -> GeminiCredentials? {
+    internal static func parseCredentialsJSON(
+        _ raw: String,
+        filePath: String,
+        fallbackEmail: String? = nil
+    ) -> GeminiCredentials? {
         guard let json = (try? JSONSerialization.jsonObject(with: Data(raw.utf8))) as? [String: Any] else {
             return nil
         }
-        return parseCredentialsJSON(json: json, filePath: filePath)
+        return parseCredentialsJSON(json: json, filePath: filePath, fallbackEmail: fallbackEmail)
     }
 
     private static func parseExpiry(json: [String: Any]) -> Date? {
-        if let raw = OfficialValueParser.double(json["expiry_date"] ?? json["expiryDate"]) {
+        if let raw = OfficialValueParser.double(
+            json["expiry_date"]
+                ?? json["expiryDate"]
+                ?? json["expiresAt"]
+                ?? json["expires_at"]
+        ) {
             return raw > 1_000_000_000_000
                 ? Date(timeIntervalSince1970: raw / 1000)
                 : Date(timeIntervalSince1970: raw)
@@ -441,7 +785,7 @@ final class GeminiProvider: UsageProvider, @unchecked Sendable {
         return components.joined(separator: "|")
     }
 
-    private static func credentialFingerprint(_ raw: String?) -> String? {
+    static func credentialFingerprint(_ raw: String?) -> String? {
         guard let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else {
             return nil
         }
@@ -450,6 +794,19 @@ final class GeminiProvider: UsageProvider, @unchecked Sendable {
     }
 
     private func resolveClientSecrets() -> (id: String, secret: String)? {
+        let env = environment()
+        if let envClientID = Self.firstNonEmptyString([env["GEMINI_OAUTH_CLIENT_ID"]]),
+           let envClientSecret = Self.firstNonEmptyString([env["GEMINI_OAUTH_CLIENT_SECRET"]]) {
+            return (envClientID, envClientSecret)
+        }
+
+        if let explicitOAuthJS = Self.firstNonEmptyString([env["GEMINI_OAUTH2_JS_PATH"]]),
+           FileManager.default.fileExists(atPath: explicitOAuthJS),
+           let source = try? String(contentsOfFile: explicitOAuthJS, encoding: .utf8),
+           let parsed = Self.parseClientSecrets(in: source) {
+            return parsed
+        }
+
         if let fromCredentials = loadClientSecretsFromOAuthCredentials() {
             return fromCredentials
         }
@@ -467,7 +824,7 @@ final class GeminiProvider: UsageProvider, @unchecked Sendable {
     }
 
     private func loadClientSecretsFromOAuthCredentials() -> (id: String, secret: String)? {
-        let path = "\(homeDirectory())/.gemini/oauth_creds.json"
+        let path = "\(geminiConfigDirectoryPath())/oauth_creds.json"
         guard FileManager.default.fileExists(atPath: path),
               let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
               let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
@@ -476,6 +833,7 @@ final class GeminiProvider: UsageProvider, @unchecked Sendable {
 
         let candidateRoots: [[String: Any]] = [
             json,
+            json["token"] as? [String: Any],
             json["installed"] as? [String: Any],
             json["web"] as? [String: Any],
             json["oauth"] as? [String: Any],
@@ -506,6 +864,20 @@ final class GeminiProvider: UsageProvider, @unchecked Sendable {
             }
         }
 
+        func appendPackageSources(packageRoot: URL) {
+            appendUnique(
+                packageRoot
+                    .appendingPathComponent("node_modules/@google/gemini-cli-core/dist/src/code_assist/oauth2.js")
+                    .standardizedFileURL.path
+            )
+            appendUnique(
+                packageRoot
+                    .appendingPathComponent("../@google/gemini-cli-core/dist/src/code_assist/oauth2.js")
+                    .standardizedFileURL.path
+            )
+            appendBundleSources(in: packageRoot.appendingPathComponent("bundle", isDirectory: true))
+        }
+
         func appendBundleSources(in bundleDirectory: URL) {
             let bundlePath = bundleDirectory.path
             appendUnique(bundleDirectory.appendingPathComponent("gemini.js").path)
@@ -523,8 +895,18 @@ final class GeminiProvider: UsageProvider, @unchecked Sendable {
            !discovered.isEmpty {
             executableCandidates.append(discovered)
         }
+        if let rawPath = environment()["PATH"] {
+            for segment in rawPath.split(separator: ":") where !segment.isEmpty {
+                executableCandidates.append("\(segment)/gemini")
+            }
+        }
         executableCandidates.append("/opt/homebrew/bin/gemini")
         executableCandidates.append("/usr/local/bin/gemini")
+        let home = homeDirectory()
+        executableCandidates.append("\(home)/.local/bin/gemini")
+        executableCandidates.append("\(home)/.npm-global/bin/gemini")
+        executableCandidates.append("\(home)/.bun/bin/gemini")
+        executableCandidates.append("\(home)/.volta/bin/gemini")
 
         for executablePath in executableCandidates {
             guard FileManager.default.fileExists(atPath: executablePath) else { continue }
@@ -537,11 +919,41 @@ final class GeminiProvider: UsageProvider, @unchecked Sendable {
             appendUnique(binaryDirectory.appendingPathComponent("../build/auth/oauth2.js").standardizedFileURL.path)
             appendUnique(binaryDirectory.appendingPathComponent("oauth2.js").standardizedFileURL.path)
             appendBundleSources(in: binaryDirectory)
+            appendPackageSources(packageRoot: binaryDirectory.deletingLastPathComponent())
         }
 
-        appendBundleSources(in: URL(fileURLWithPath: "/opt/homebrew/lib/node_modules/@google/gemini-cli/bundle", isDirectory: true))
-        appendBundleSources(in: URL(fileURLWithPath: "/usr/local/lib/node_modules/@google/gemini-cli/bundle", isDirectory: true))
-        appendBundleSources(in: URL(fileURLWithPath: "\(NSHomeDirectory())/.npm-global/lib/node_modules/@google/gemini-cli/bundle", isDirectory: true))
+        let staticPackageRoots = [
+            "/opt/homebrew/lib/node_modules/@google/gemini-cli",
+            "/opt/homebrew/opt/gemini-cli/libexec/lib/node_modules/@google/gemini-cli",
+            "/usr/local/lib/node_modules/@google/gemini-cli",
+            "/usr/local/opt/gemini-cli/libexec/lib/node_modules/@google/gemini-cli",
+            "\(home)/.npm-global/lib/node_modules/@google/gemini-cli",
+            "\(home)/.bun/install/global/node_modules/@google/gemini-cli",
+            "\(home)/.volta/tools/image/packages/@google/gemini-cli/lib/node_modules/@google/gemini-cli",
+        ]
+        for root in staticPackageRoots {
+            appendPackageSources(packageRoot: URL(fileURLWithPath: root, isDirectory: true))
+        }
+
+        // Scan versioned Node manager installations (NVM / FNM / Mise / Homebrew Cellar).
+        let versionedParents: [(base: String, suffix: String)] = [
+            ("\(home)/.nvm/versions/node", "lib/node_modules/@google/gemini-cli"),
+            ("\(home)/.local/share/fnm/node-versions", "installation/lib/node_modules/@google/gemini-cli"),
+            ("\(home)/.local/share/mise/installs/node", "lib/node_modules/@google/gemini-cli"),
+            ("/opt/homebrew/Cellar/gemini-cli", "libexec/lib/node_modules/@google/gemini-cli"),
+            ("/usr/local/Cellar/gemini-cli", "libexec/lib/node_modules/@google/gemini-cli"),
+        ]
+        for item in versionedParents {
+            guard let versions = try? FileManager.default.contentsOfDirectory(atPath: item.base) else {
+                continue
+            }
+            for version in versions.sorted().reversed() where !version.hasPrefix(".") {
+                let pkgURL = URL(fileURLWithPath: item.base, isDirectory: true)
+                    .appendingPathComponent(version, isDirectory: true)
+                    .appendingPathComponent(item.suffix, isDirectory: true)
+                appendPackageSources(packageRoot: pkgURL)
+            }
+        }
 
         return paths
     }
@@ -706,6 +1118,9 @@ final class GeminiProvider: UsageProvider, @unchecked Sendable {
         let currentTier = root["currentTier"] as? [String: Any]
         let paidTier = root["paidTier"] as? [String: Any]
         let raw = OfficialValueParser.firstPlanLabel([
+            paidTier?["name"],
+            paidTier?["displayName"],
+            paidTier?["id"],
             root["tierId"],
             root["tier"],
             root["plan"],
@@ -714,12 +1129,11 @@ final class GeminiProvider: UsageProvider, @unchecked Sendable {
             currentTier?["id"],
             currentTier?["name"],
             currentTier?["displayName"],
-            paidTier?["id"],
-            paidTier?["name"],
-            paidTier?["displayName"],
         ])
         guard let raw else { return nil }
         switch raw.lowercased() {
+        case let value where value.contains("ultra"):
+            return "ultra"
         case let value where value.contains("pro"):
             return "pro"
         case let value where value.contains("standard"):
@@ -875,7 +1289,7 @@ final class GeminiProvider: UsageProvider, @unchecked Sendable {
         return OfficialValueParser.epochDate(seconds: dict["reset_at"])
     }
 
-    private static func firstNonEmptyString(_ values: [Any?]) -> String? {
+    static func firstNonEmptyString(_ values: [Any?]) -> String? {
         for value in values {
             guard let text = OfficialValueParser.string(value) else { continue }
             let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -886,7 +1300,7 @@ final class GeminiProvider: UsageProvider, @unchecked Sendable {
         return nil
     }
 
-    private static func buildNote(plan: String?, windows: [UsageQuotaWindow], projectLabel: String?) -> String {
+    static func buildNote(plan: String?, windows: [UsageQuotaWindow], projectLabel: String?) -> String {
         let details = windows
             .map { "\($0.title) \(Int($0.remainingPercent.rounded()))%" }
             .joined(separator: " | ")
@@ -923,6 +1337,99 @@ final class GeminiProvider: UsageProvider, @unchecked Sendable {
         }
         return output
     }
+
+    /// Strips `//` and `/* ... */` comments plus trailing commas outside string
+    /// literals so JSONC `settings.json` files written by modern Gemini CLI parse cleanly.
+    internal static func stripJSONCommentsAndTrailingCommas(_ input: String) -> String {
+        let chars = Array(input)
+        var out: [Character] = []
+        out.reserveCapacity(chars.count)
+        var i = 0
+        var inString = false
+
+        while i < chars.count {
+            let c = chars[i]
+            if inString {
+                out.append(c)
+                if c == "\\" && i + 1 < chars.count {
+                    i += 1
+                    out.append(chars[i])
+                } else if c == "\"" {
+                    inString = false
+                }
+                i += 1
+                continue
+            }
+
+            if c == "\"" {
+                inString = true
+                out.append(c)
+                i += 1
+                continue
+            }
+
+            if c == "/" && i + 1 < chars.count {
+                let next = chars[i + 1]
+                if next == "/" {
+                    i += 2
+                    while i < chars.count && chars[i] != "\n" {
+                        i += 1
+                    }
+                    continue
+                }
+                if next == "*" {
+                    i += 2
+                    while i + 1 < chars.count && !(chars[i] == "*" && chars[i + 1] == "/") {
+                        i += 1
+                    }
+                    i += 2
+                    continue
+                }
+            }
+
+            out.append(c)
+            i += 1
+        }
+
+        // Remove trailing commas before `}` or `]` outside strings.
+        var cleaned: [Character] = []
+        cleaned.reserveCapacity(out.count)
+        inString = false
+        i = 0
+        while i < out.count {
+            let c = out[i]
+            if inString {
+                cleaned.append(c)
+                if c == "\\" && i + 1 < out.count {
+                    i += 1
+                    cleaned.append(out[i])
+                } else if c == "\"" {
+                    inString = false
+                }
+                i += 1
+                continue
+            }
+            if c == "\"" {
+                inString = true
+                cleaned.append(c)
+                i += 1
+                continue
+            }
+            if c == "," {
+                var lookahead = i + 1
+                while lookahead < out.count && (out[lookahead].isWhitespace || out[lookahead].isNewline) {
+                    lookahead += 1
+                }
+                if lookahead < out.count && (out[lookahead] == "}" || out[lookahead] == "]") {
+                    i += 1
+                    continue
+                }
+            }
+            cleaned.append(c)
+            i += 1
+        }
+        return String(cleaned)
+    }
 }
 
 private struct GeminiSettings {
@@ -930,19 +1437,32 @@ private struct GeminiSettings {
     var selectedProject: String?
 }
 
-private struct GeminiCredentials {
+internal struct GeminiCredentials {
     var accessToken: String
     var refreshToken: String?
     var expiresAt: Date?
     var idToken: String?
+    var fallbackEmail: String?
     var filePath: String
 
     var accountLabel: String? {
-        guard let idToken else { return nil }
-        return decodeJWTEmail(idToken)
+        if let idToken, let email = decodeJWTClaim(idToken, key: "email") {
+            return email
+        }
+        if let fallbackEmail, !fallbackEmail.isEmpty {
+            return fallbackEmail
+        }
+        return nil
     }
 
-    private func decodeJWTEmail(_ token: String) -> String? {
+    var hasHostedDomainClaim: Bool {
+        guard let idToken, let hd = decodeJWTClaim(idToken, key: "hd") else {
+            return false
+        }
+        return !hd.isEmpty
+    }
+
+    private func decodeJWTClaim(_ token: String, key: String) -> String? {
         let parts = token.split(separator: ".")
         guard parts.count >= 2 else { return nil }
         var payload = String(parts[1])
@@ -954,7 +1474,7 @@ private struct GeminiCredentials {
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             return nil
         }
-        return OfficialValueParser.string(json["email"])
+        return OfficialValueParser.string(json[key])
     }
 }
 

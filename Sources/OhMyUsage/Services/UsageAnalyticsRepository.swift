@@ -15,6 +15,7 @@ final class UsageAnalyticsRepository: @unchecked Sendable {
         var cursor: UsageAnalyticsFileFingerprint = .empty
         var grok: UsageAnalyticsFileFingerprint = .empty
         var gemini: UsageAnalyticsFileFingerprint = .empty
+        var antigravity: UsageAnalyticsFileFingerprint = .empty
     }
 
     private final class LocalSourceFingerprintCache: @unchecked Sendable {
@@ -227,7 +228,8 @@ final class UsageAnalyticsRepository: @unchecked Sendable {
             kimi: localFingerprint.kimi,
             cursor: localFingerprint.cursor,
             grok: localFingerprint.grok,
-            gemini: localFingerprint.gemini
+            gemini: localFingerprint.gemini,
+            antigravity: localFingerprint.antigravity
         )
     }
 
@@ -344,6 +346,22 @@ final class UsageAnalyticsRepository: @unchecked Sendable {
             diagnostics.append("Gemini 本地日志读取失败")
         }
 
+        if Task.isCancelled { return (records, diagnostics, true) }
+        do {
+            let antigravityEvents = try AntigravityLocalUsageService(calendar: calendar, nowProvider: nowProvider)
+                .fetchEvents(since: since)
+            appendAnalyticsRecords(
+                antigravityEvents,
+                to: &records,
+                appType: "antigravity",
+                providerID: "ohmyusage-antigravity-local",
+                providerName: "Antigravity"
+            )
+        } catch {
+            isPartial = true
+            diagnostics.append(Localizer.systemText(.antigravityLocalLogReadFailed))
+        }
+
         return (records, diagnostics, isPartial)
     }
 
@@ -428,7 +446,8 @@ final class UsageAnalyticsRepository: @unchecked Sendable {
             kimi: usageAnalyticsFileFingerprint(from: LocalUsageSourceFingerprintBuilder.kimiFingerprint()),
             cursor: usageAnalyticsFileFingerprint(from: LocalUsageSourceFingerprintBuilder.cursorFingerprint()),
             grok: usageAnalyticsFileFingerprint(from: LocalUsageSourceFingerprintBuilder.grokFingerprint()),
-            gemini: usageAnalyticsFileFingerprint(from: LocalUsageSourceFingerprintBuilder.geminiFingerprint())
+            gemini: usageAnalyticsFileFingerprint(from: LocalUsageSourceFingerprintBuilder.geminiFingerprint()),
+            antigravity: usageAnalyticsFileFingerprint(from: LocalUsageSourceFingerprintBuilder.antigravityFingerprint())
         )
     }
 

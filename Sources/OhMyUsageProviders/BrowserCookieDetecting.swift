@@ -79,6 +79,13 @@ public protocol BrowserCookieDetecting {
         order: [KimiBrowserKind]?,
         accessIntent: BrowserCredentialAccessIntent
     ) -> BrowserCookieHeader?
+
+    func detectCookieHeaders(
+        matchingHosts: [String],
+        fallbackHostContains: String,
+        order: [KimiBrowserKind]?,
+        accessIntent: BrowserCredentialAccessIntent
+    ) -> [BrowserCookieHeader]
 }
 
 public extension BrowserCookieDetecting {
@@ -97,5 +104,22 @@ public extension BrowserCookieDetecting {
             order: order,
             accessIntent: .interactiveImport
         )
+    }
+
+    func detectCookieHeaders(
+        matchingHosts: [String],
+        fallbackHostContains: String,
+        order: [KimiBrowserKind]? = nil,
+        accessIntent: BrowserCredentialAccessIntent = .interactiveImport
+    ) -> [BrowserCookieHeader] {
+        _ = matchingHosts
+        guard let single = detectCookieHeader(
+            hostContains: fallbackHostContains,
+            order: order,
+            accessIntent: accessIntent
+        ) else {
+            return []
+        }
+        return [single]
     }
 }

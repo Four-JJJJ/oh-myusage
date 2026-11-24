@@ -312,6 +312,18 @@ enum L10nKey {
     case officialOpenRouterKeyHint
     case officialTraeTokenHint
     case officialQwenCookieHint
+    case officialGeminiCookieHint
+    case agyCLITimeout
+    case agyCLINotSignedIn
+    case agyCLIErrorStatus
+    case antigravitySourceUnsupported
+    case antigravityCLINotFound
+    case geminiDesktopBucketsUnavailable
+    case geminiPersonalOAuthDeprecated
+    case geminiWebDisabled
+    case geminiWebSessionExpired
+    case geminiWebPoolsUnavailable
+    case antigravityLocalLogReadFailed
     case officialClaudeCodeImportSucceeded
     case officialClaudeCodeImportNotFound
     case officialImportFromClaudeCode
@@ -651,6 +663,18 @@ enum Localizer {
             case .officialOpenRouterKeyHint: return "获取说明：登录 OpenRouter（openrouter.ai），在 Settings → Keys 页面创建密钥，复制后粘贴到上方。"
             case .officialTraeTokenHint: return "获取说明：登录 trae.ai 后打开开发者工具 Network，刷新页面，复制 /trae/api/v1/pay/ide_user_ent_usage 请求头 Authorization（Cloud-IDE-JWT ...）粘贴到上方。"
             case .officialQwenCookieHint: return "获取说明：浏览器登录千问AI平台（platform.qianwenai.com）后，手动刷新会自动导入登录 Cookie；也可打开开发者工具 Network，刷新页面，复制任意 platform.qianwenai.com 请求的 Cookie 请求头粘贴到上方。「Qwen」与「Qwen (API)」共用同一份 Cookie，填一次即可。"
+            case .officialGeminiCookieHint: return "获取说明：若本机已安装登录 Gemini.app（或 agy CLI / Gemini CLI），自动模式可直接读取 5 小时与每周百分比限额；也可在授予完全磁盘访问权限后从浏览器自动导入 gemini.google.com/usage 登录态，或将 Cookie 手动粘贴到上方以显示套餐等级（如 Pro / Ultra）。"
+            case .agyCLITimeout: return "Antigravity CLI (/usage) 执行超时或未能启动"
+            case .agyCLINotSignedIn: return "尚未登录，请在 Gemini.app / Antigravity 或终端 `agy` 中完成登录"
+            case .agyCLIErrorStatus: return "CLI 返回错误状态"
+            case .antigravitySourceUnsupported: return "Antigravity 当前通过官方 CLI (agy / Gemini.app) 获取实时百分比限额"
+            case .antigravityCLINotFound: return "未检测到 agy 配额工具（安装 Gemini.app 或运行 `brew install --cask antigravity-cli` 后可显示实时百分比限额）"
+            case .geminiDesktopBucketsUnavailable: return "未从桌面端 CLI 返回 Gemini 模型额度窗口"
+            case .geminiPersonalOAuthDeprecated: return "当前 Google 个人账号已不再支持 Gemini CLI OAuth 配额查询，请切换至网页来源（gemini.google.com/usage）或使用 Gemini.app / Antigravity"
+            case .geminiWebDisabled: return "Gemini 网页来源已在设置中停用"
+            case .geminiWebSessionExpired: return "Gemini 网页登录态已失效，请在浏览器重新登录 gemini.google.com/usage"
+            case .geminiWebPoolsUnavailable: return "当前 Google 账号未返回可用的 Gemini 网页额度窗口"
+            case .antigravityLocalLogReadFailed: return "Antigravity 本地日志读取失败"
             case .officialClaudeCodeImportSucceeded: return "已从本机 Claude Code 配置导入密钥。"
             case .officialClaudeCodeImportNotFound: return "未在 Claude Code 配置或环境变量中找到智谱密钥。"
             case .officialImportFromClaudeCode: return "从 Claude Code 导入"
@@ -984,6 +1008,18 @@ enum Localizer {
             case .officialOpenRouterKeyHint: return "How to get key: sign in to OpenRouter (openrouter.ai), create a key under Settings → Keys, then paste it above."
             case .officialTraeTokenHint: return "How to get token: sign in to trae.ai, open DevTools Network, refresh, then copy Authorization from /trae/api/v1/pay/ide_user_ent_usage (Cloud-IDE-JWT ...) and paste above."
             case .officialQwenCookieHint: return "How to get cookie: sign in to platform.qianwenai.com in your browser — a manual refresh imports the session cookie automatically; or open DevTools Network, refresh the page, and paste the Cookie header of any platform.qianwenai.com request above. The same cookie is shared between the Qwen and Qwen (API) cards."
+            case .officialGeminiCookieHint: return "How to get quota: if Gemini.app, agy CLI, or Gemini CLI is signed in locally, Auto mode reads 5h & weekly percentage quotas directly; you can also grant Full Disk Access to auto-import your gemini.google.com/usage browser session, or paste a gemini.google.com Cookie header above to include plan tier (Pro / Ultra)."
+            case .agyCLITimeout: return "Antigravity CLI (/usage) timed out or failed to launch"
+            case .agyCLINotSignedIn: return "Not signed in — please sign in via Gemini.app, Antigravity, or `agy` in Terminal"
+            case .agyCLIErrorStatus: return "CLI returned an error status"
+            case .antigravitySourceUnsupported: return "Antigravity reads live percentage quotas via the official CLI (agy / Gemini.app)"
+            case .antigravityCLINotFound: return "agy quota helper not found (install Gemini.app or `brew install --cask antigravity-cli`)"
+            case .geminiDesktopBucketsUnavailable: return "Desktop CLI did not return Gemini quota buckets"
+            case .geminiPersonalOAuthDeprecated: return "Personal Google accounts no longer return Gemini CLI OAuth quotas; use Web (gemini.google.com/usage) or Gemini.app"
+            case .geminiWebDisabled: return "Gemini Web source is disabled in Settings"
+            case .geminiWebSessionExpired: return "Gemini Web session expired; please sign in again at gemini.google.com/usage"
+            case .geminiWebPoolsUnavailable: return "No Gemini Web quota windows were returned for this Google account"
+            case .antigravityLocalLogReadFailed: return "Failed to read local Antigravity logs"
             case .officialClaudeCodeImportSucceeded: return "Imported the key from the local Claude Code config."
             case .officialClaudeCodeImportNotFound: return "No Zhipu key found in Claude Code config or environment variables."
             case .officialImportFromClaudeCode: return "Import from Claude Code"
@@ -1092,6 +1128,24 @@ enum Localizer {
         case .en:
             let joined = providerNames.joined(separator: ", ")
             return "Automatically discovered: \(joined)"
+        }
+    }
+
+    static func preferredSystemLanguage() -> AppLanguage {
+        let preferred = Locale.preferredLanguages.first?.lowercased() ?? ""
+        return preferred.hasPrefix("zh") ? .zhHans : .en
+    }
+
+    static func systemText(_ key: L10nKey) -> String {
+        text(key, language: preferredSystemLanguage())
+    }
+
+    static func agyExitFailureBody(status: Int32) -> String {
+        switch preferredSystemLanguage() {
+        case .zhHans:
+            return "配额查询失败（退出码 \(status)）"
+        case .en:
+            return "Quota query failed (exit code \(status))"
         }
     }
 }

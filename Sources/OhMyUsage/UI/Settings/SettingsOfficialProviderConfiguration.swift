@@ -399,6 +399,8 @@ extension SettingsView {
             switch provider.type {
             case .qwen, .qwenBalance:
                 return viewModel.text(.officialQwenCookieHint)
+            case .gemini:
+                return viewModel.text(.officialGeminiCookieHint)
             default:
                 return nil
             }

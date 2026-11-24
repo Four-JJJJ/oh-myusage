@@ -267,17 +267,91 @@ final class BrowserCookieDatabaseReader {
         }
     }
 
+    func cookieHeader(
+        fromDatabaseAt path: String,
+        browser: KimiBrowserKind,
+        matchingHosts: [String],
+        accessIntent: BrowserCredentialAccessIntent = .interactiveImport
+    ) -> String? {
+        var sanitizedHosts: [String] = []
+        for rawHost in matchingHosts {
+            guard let clean = CookieQuerySanitizer.hostContains(rawHost) else {
+                return nil
+            }
+            if !sanitizedHosts.contains(clean) {
+                sanitizedHosts.append(clean)
+            }
+        }
+        guard !sanitizedHosts.isEmpty else {
+            return nil
+        }
+
+        let hostLiteralList = sanitizedHosts.map { "'\($0)'" }.joined(separator: ", ")
+        let queries = [
+            "SELECT name, value, hex(encrypted_value) FROM cookies WHERE LOWER(host_key) IN (\(hostLiteralList)) ORDER BY LENGTH(host_key) DESC, name;",
+            "SELECT name, value, hex(encrypted_value) FROM cookies WHERE LOWER(domain) IN (\(hostLiteralList)) ORDER BY LENGTH(domain) DESC, name;",
+            "SELECT name, value, hex(encrypted_value) FROM Cookies WHERE LOWER(host) IN (\(hostLiteralList)) ORDER BY LENGTH(host) DESC, name;",
+            "SELECT name, value, hex(encrypted_value) FROM Cookies WHERE LOWER(domain) IN (\(hostLiteralList)) ORDER BY LENGTH(domain) DESC, name;",
+            "SELECT name, value, '' FROM moz_cookies WHERE LOWER(host) IN (\(hostLiteralList)) ORDER BY LENGTH(host) DESC, name;",
+            "SELECT name, value, '' FROM cookies WHERE LOWER(host) IN (\(hostLiteralList)) ORDER BY LENGTH(host) DESC, name;",
+        ]
+
+        return withTemporaryDatabaseCopy(path: path, prefix: "browser_cookie_exact") { tempDB, sqlite in
+            for query in queries {
+                guard let raw = runSQLite(executable: sqlite, databasePath: tempDB, query: query) else {
+                    continue
+                }
+                var pairs: [String] = []
+                var seenNames: Set<String> = []
+                for lineSub in raw.split(separator: "\n") {
+                    let line = String(lineSub)
+                    let parts = line.components(separatedBy: "\t")
+                    guard parts.count >= 3 else { continue }
+                    let name = parts[0].trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !name.isEmpty, !seenNames.contains(name) else { continue }
+                    let plain = parts[1].trimmingCharacters(in: .whitespacesAndNewlines)
+                    let encryptedHex = parts[2].trimmingCharacters(in: .whitespacesAndNewlines)
+                    let value: String
+                    if !plain.isEmpty {
+                        value = plain
+                    } else if let decrypted = decryptChromiumCookieHex(
+                        encryptedHex,
+                        browser: browser,
+                        accessIntent: accessIntent
+                    ), !decrypted.isEmpty {
+                        value = decrypted
+                    } else {
+                        continue
+                    }
+                    seenNames.insert(name)
+                    pairs.append("\(name)=\(value)")
+                }
+                if !pairs.isEmpty {
+                    return pairs.joined(separator: "; ")
+                }
+            }
+
+            return nil
+        }
+    }
+
     private func chromiumCookiePaths(base: String) -> [String] {
         guard fileManager.fileExists(atPath: base) else { return [] }
+        guard let entries = try? fileManager.contentsOfDirectory(atPath: base) else { return [] }
+
         var candidates: [String] = []
-        let baseURL = URL(fileURLWithPath: base)
-        let keys: [URLResourceKey] = [.isDirectoryKey]
-        if let enumerator = fileManager.enumerator(at: baseURL, includingPropertiesForKeys: keys) {
-            for case let url as URL in enumerator {
-                let path = url.path
-                if path.hasSuffix("/Cookies") &&
-                    (path.contains("/Network/") || path.contains("/Default/") || path.contains("/Profile ")) {
-                    candidates.append(path)
+        for entry in entries {
+            let isProfileDir = entry == "Default"
+                || entry.hasPrefix("Profile ")
+                || entry == "Guest Profile"
+                || entry == "System Profile"
+            guard isProfileDir else { continue }
+
+            let profileRoot = "\(base)/\(entry)"
+            for relative in ["Network/Cookies", "Cookies"] {
+                let candidate = "\(profileRoot)/\(relative)"
+                if fileManager.fileExists(atPath: candidate) {
+                    candidates.append(candidate)
                 }
             }
         }
