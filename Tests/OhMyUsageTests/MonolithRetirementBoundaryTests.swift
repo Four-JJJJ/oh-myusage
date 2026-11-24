@@ -412,6 +412,7 @@ final class MonolithRetirementBoundaryTests: XCTestCase {
                 "codex-official",
                 "claude-official",
                 "gemini-official",
+                "antigravity-official",
                 "copilot-official",
                 "microsoft-copilot-official",
                 "zai-official",
