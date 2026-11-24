@@ -15,6 +15,7 @@ enum ProviderModuleRegistry {
         .codex,
         .claude,
         .gemini,
+        .antigravity,
         .copilot,
         .microsoftCopilot,
         .zai,

@@ -25,7 +25,7 @@ extension SettingsView {
     func shouldShowOfficialLocalTrendCard(for provider: ProviderDescriptor) -> Bool {
         guard provider.family == .official else { return false }
         switch provider.type {
-        case .codex, .claude, .gemini, .kimi, .cursor, .grok:
+        case .codex, .claude, .gemini, .antigravity, .kimi, .cursor, .grok:
             return true
         default:
             return false

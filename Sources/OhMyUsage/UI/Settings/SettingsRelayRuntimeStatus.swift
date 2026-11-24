@@ -148,7 +148,7 @@ extension SettingsView {
                         }
                         .frame(height: 24)
 
-                        quotaMetricLayout(metrics: metrics, twoByTwo: false)
+                        quotaMetricLayout(metrics: metrics, twoByTwo: metrics.count > 2)
                             .padding(.top, 8)
 
                         if let error, !error.isEmpty {

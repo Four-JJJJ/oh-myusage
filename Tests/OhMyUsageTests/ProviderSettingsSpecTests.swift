@@ -49,10 +49,19 @@ final class ProviderSettingsSpecTests: XCTestCase {
         XCTAssertEqual(spec.credentialFields.first?.storageTarget, .officialManualCookie)
     }
 
-    func testAutoAPIProviderSpecHasNoCredentialFields() {
+    func testGeminiSpecSupportsLocalAndWebModesWithManualCookieField() {
         let spec = ProviderSettingsSpec.resolve(for: ProviderDescriptor.defaultOfficialGemini())
 
-        XCTAssertEqual(spec.supportedSourceModes, [.auto, .api])
+        XCTAssertEqual(spec.supportedSourceModes, [.auto, .api, .cli, .web])
+        XCTAssertEqual(spec.supportedWebModes, [.disabled, .autoImport, .manual])
+        XCTAssertEqual(spec.credentialFields.map(\.kind), [.manualCookie])
+        XCTAssertEqual(spec.credentialFields.first?.storageTarget, .officialManualCookie)
+    }
+
+    func testAntigravitySpecUsesCLISourceModesWithoutManualCredentials() {
+        let spec = ProviderSettingsSpec.resolve(for: ProviderDescriptor.defaultOfficialAntigravity())
+
+        XCTAssertEqual(spec.supportedSourceModes, [.auto, .cli])
         XCTAssertEqual(spec.supportedWebModes, [.disabled])
         XCTAssertTrue(spec.credentialFields.isEmpty)
     }

@@ -101,15 +101,17 @@ enum MenuQuotaPresenter {
         }
 
         return windows.map { window in
-            MenuQuotaMetric(
+            let valueOverride = snapshot.extras["windowValue.\(window.id)"]
+            let isNeutralTone = snapshot.extras["windowTone.\(window.id)"] == "neutral"
+            return MenuQuotaMetric(
                 id: window.id,
                 title: metricTitle(for: window, provider: provider, language: language, localization: localization),
-                displayPercent: provider.displaysUsedQuota ? clamp(window.usedPercent) : clamp(window.remainingPercent),
-                healthPercent: clamp(window.remainingPercent),
+                displayPercent: isNeutralTone ? 0 : (provider.displaysUsedQuota ? clamp(window.usedPercent) : clamp(window.remainingPercent)),
+                healthPercent: isNeutralTone ? nil : clamp(window.remainingPercent),
                 resetAt: provider.showsExpirationTimeInMenuBar ? window.resetAt : nil,
                 isAvailable: true,
-                valueTextOverride: nil,
-                detailTextOverride: nil,
+                valueTextOverride: valueOverride,
+                detailTextOverride: snapshot.extras["windowDetail.\(window.id)"],
                 kind: quotaMetricKind(for: window, provider: provider),
                 resetIsExpiry: resetIsExpiry
             )
@@ -221,6 +223,50 @@ enum MenuQuotaPresenter {
                 MenuQuotaMetric(
                     id: "\(provider.id)-placeholder-weekly",
                     title: placeholderMetricTitle(localization.quotaWeekly, provider: provider, language: language),
+                    displayPercent: 0,
+                    healthPercent: 0,
+                    resetAt: nil,
+                    isAvailable: true,
+                    valueTextOverride: nil,
+                    kind: nil
+                )
+            ]
+        case .antigravity:
+            let weeklySuffix = localization.quotaWeekly
+            return [
+                MenuQuotaMetric(
+                    id: "\(provider.id)-placeholder-gemini-5h",
+                    title: placeholderMetricTitle("Gemini 5h", provider: provider, language: language),
+                    displayPercent: 0,
+                    healthPercent: 0,
+                    resetAt: nil,
+                    isAvailable: true,
+                    valueTextOverride: nil,
+                    kind: nil
+                ),
+                MenuQuotaMetric(
+                    id: "\(provider.id)-placeholder-gemini-weekly",
+                    title: placeholderMetricTitle("Gemini \(weeklySuffix)", provider: provider, language: language),
+                    displayPercent: 0,
+                    healthPercent: 0,
+                    resetAt: nil,
+                    isAvailable: true,
+                    valueTextOverride: nil,
+                    kind: nil
+                ),
+                MenuQuotaMetric(
+                    id: "\(provider.id)-placeholder-3p-5h",
+                    title: placeholderMetricTitle("Claude/GPT 5h", provider: provider, language: language),
+                    displayPercent: 0,
+                    healthPercent: 0,
+                    resetAt: nil,
+                    isAvailable: true,
+                    valueTextOverride: nil,
+                    kind: nil
+                ),
+                MenuQuotaMetric(
+                    id: "\(provider.id)-placeholder-3p-weekly",
+                    title: placeholderMetricTitle("Claude/GPT \(weeklySuffix)", provider: provider, language: language),
                     displayPercent: 0,
                     healthPercent: 0,
                     resetAt: nil,
@@ -505,7 +551,9 @@ enum MenuQuotaPresenter {
         case .weekly:
             baseTitle = localization.quotaWeekly
         default:
-            if provider.type == .kimi,
+            if provider.type == .antigravity {
+                baseTitle = localizedAntigravityMetricTitle(window.title, language: language, localization: localization)
+            } else if provider.type == .kimi,
                window.kind == .custom,
                window.title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "overall" {
                 baseTitle = localization.quotaWeekly
@@ -515,6 +563,15 @@ enum MenuQuotaPresenter {
         }
 
         return placeholderMetricTitle(baseTitle, provider: provider, language: language)
+    }
+
+    private static func localizedAntigravityMetricTitle(
+        _ rawTitle: String,
+        language: AppLanguage,
+        localization: MenuQuotaLocalization
+    ) -> String {
+        guard language == .zhHans else { return rawTitle }
+        return rawTitle.replacingOccurrences(of: " Weekly", with: " \(localization.quotaWeekly)")
     }
 
     private static func relayTokenPlanMetricTitle(

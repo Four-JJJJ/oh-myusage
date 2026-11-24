@@ -10,7 +10,8 @@ For extension and integration paths after the refactor, see [EXTENDING.md](./EXT
 | --- | --- | --- |
 | Codex | local desktop auth + web/API overlays | Supports multiple desktop accounts and local switching |
 | Claude | API, CLI, or web session depending on mode | Web overlays can enrich usage windows |
-| Gemini | official API/web quota data | Supports model-specific windows; local history from `~/.gemini/tmp/*/chats` |
+| Gemini | Gemini CLI Keychain/OAuth + `gemini.google.com/usage` web session + `Gemini.app` helper | Supports modern Gemini CLI Keychain (`gemini-cli-oauth`), legacy `oauth_creds.json`, web 5h/weekly quotas (`GXU_FIVE_HOURLY` / `GXU_WEEKLY`), and `Gemini.app` bundled `agy` helper fallback; local history from `~/.gemini/tmp/*/chats` |
+| Antigravity | `agy` CLI / `Gemini.app` `/usage` report + local desktop analytics | Reads live Gemini & Claude/GPT 5h and weekly percentage quotas via `agy -p /usage --output-format json` (standalone `agy` or `/Applications/Gemini.app/Contents/Helpers/agy`), with local token trend analytics from `~/.gemini/antigravity/brain/*/.system_generated/logs/transcript.jsonl` |
 | GitHub Copilot | local GitHub auth | Reads Copilot usage and quota state |
 | Microsoft Copilot | Microsoft Graph API | D7/D30 usage summaries; token from `MS_GRAPH_TOKEN` / `MICROSOFT_GRAPH_TOKEN` env, keychain, or Azure CLI; separate from the GitHub Copilot card |
 | Cursor | official/local session data | Legacy plans: monthly Cursor Models and Other Models, plus on-demand. The X Subscription: one shared weekly pool (same number as Grok and Grok Bot); reads both plaintext and safeStorage-encrypted (`cursor-safe-storage:v1:`) Cursor IDE tokens, the latter through the `Cursor Safe Storage` keychain item; local history prefers dashboard events, then `state.vscdb` |

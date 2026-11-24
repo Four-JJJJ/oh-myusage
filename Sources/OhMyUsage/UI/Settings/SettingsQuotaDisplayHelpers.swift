@@ -393,6 +393,41 @@ extension SettingsView {
                         kind: .custom
                     )
                 ]
+            case .antigravity:
+                windows = [
+                    UsageQuotaWindow(
+                        id: "\(provider.id)-placeholder-gemini-5h",
+                        title: "Gemini 5h",
+                        remainingPercent: 0,
+                        usedPercent: 100,
+                        resetAt: nil,
+                        kind: .custom
+                    ),
+                    UsageQuotaWindow(
+                        id: "\(provider.id)-placeholder-gemini-weekly",
+                        title: "Gemini Weekly",
+                        remainingPercent: 0,
+                        usedPercent: 100,
+                        resetAt: nil,
+                        kind: .custom
+                    ),
+                    UsageQuotaWindow(
+                        id: "\(provider.id)-placeholder-3p-5h",
+                        title: "Claude/GPT 5h",
+                        remainingPercent: 0,
+                        usedPercent: 100,
+                        resetAt: nil,
+                        kind: .custom
+                    ),
+                    UsageQuotaWindow(
+                        id: "\(provider.id)-placeholder-3p-weekly",
+                        title: "Claude/GPT Weekly",
+                        remainingPercent: 0,
+                        usedPercent: 100,
+                        resetAt: nil,
+                        kind: .custom
+                    )
+                ]
             default:
                 windows = [
                     UsageQuotaWindow(
@@ -415,11 +450,15 @@ extension SettingsView {
             }
         }
 
-        return windows.prefix(2).map { window in
+        let maxMetrics = max(2, QuotaMetricDisplayFactory.preferredMetricCount(for: provider))
+        return windows.prefix(maxMetrics).map { window in
             let percents = Self.quotaMetricPercents(
                 for: window,
                 displaysUsedQuota: provider.displaysUsedQuota
             )
+            let isNeutralTone = snapshot?.extras["windowTone.\(window.id)"] == "neutral"
+            let effectiveHealth = isNeutralTone ? nil : percents.healthPercent
+            let effectivePercent = isNeutralTone ? 0 : percents.displayPercent
             return CodexQuotaMetricDisplay(
                 id: window.id,
                 title: codexQuotaDisplayTitle(window, provider: provider),
@@ -427,14 +466,14 @@ extension SettingsView {
                     window: window,
                     provider: provider,
                     snapshot: snapshot,
-                    displayPercent: percents.displayPercent
+                    displayPercent: effectivePercent
                 ),
                 resetText: provider.showsExpirationTimeInMenuBar
                     ? codexResetCountdownText(for: window, snapshot: snapshot)
                     : "-",
-                percent: percents.displayPercent,
-                barColor: codexQuotaBarColor(remainingPercent: percents.healthPercent),
-                healthPercent: percents.healthPercent,
+                percent: effectivePercent,
+                barColor: codexQuotaBarColor(remainingPercent: effectiveHealth),
+                healthPercent: effectiveHealth,
                 isBlockedByDepletedQuota: QuotaBlockagePresenter.isBlockedByDepletedWeeklyQuota(
                     window: window,
                     in: windows,
@@ -622,7 +661,11 @@ extension SettingsView {
         case .weekly, .modelWeekly:
             baseTitle = viewModel.text(.quotaWeekly)
         default:
-            baseTitle = relayTokenPlanMetricTitle(window.title, provider: provider)
+            if provider.type == .antigravity, viewModel.language == .zhHans {
+                baseTitle = window.title.replacingOccurrences(of: " Weekly", with: " \(viewModel.text(.quotaWeekly))")
+            } else {
+                baseTitle = relayTokenPlanMetricTitle(window.title, provider: provider)
+            }
         }
         return usagePreferredQuotaTitle(baseTitle, provider: provider)
     }
@@ -653,6 +696,9 @@ extension SettingsView {
         snapshot: UsageSnapshot?,
         displayPercent: Double
     ) -> String {
+        if let windowValue = snapshot?.extras["windowValue.\(window.id)"], !windowValue.isEmpty {
+            return windowValue
+        }
         // 纯余额卡片（Z.ai / Kimi / Qwen 的 API 卡）显示金额而非百分比，与菜单金额卡一致。
         if Self.isPureBalanceProvider(provider.type) {
             return Self.pureBalanceValueText(provider: provider, snapshot: snapshot)

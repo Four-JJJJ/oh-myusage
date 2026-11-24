@@ -34,6 +34,10 @@ enum ProviderDescriptorNormalizer {
         if copy.officialConfig == nil {
             copy.officialConfig = ProviderDescriptor.defaultOfficialConfig(type: copy.type)
         } else if copy.officialConfig?.manualCookieAccount?.isEmpty ?? true {
+            if copy.type == .gemini, copy.officialConfig?.webMode == .disabled {
+                // Historical Gemini descriptors were saved before web support existed (`manualCookieAccount == nil`, `webMode == .disabled`).
+                copy.officialConfig?.webMode = .autoImport
+            }
             copy.officialConfig?.manualCookieAccount = ProviderDescriptor.defaultOfficialConfig(type: copy.type).manualCookieAccount
         }
         if copy.officialConfig?.oauthAccountImportEnabled == nil {

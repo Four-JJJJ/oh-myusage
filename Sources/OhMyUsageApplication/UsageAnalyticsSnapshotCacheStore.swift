@@ -37,6 +37,7 @@ public struct UsageAnalyticsSourceFingerprint: Codable, Equatable, Sendable {
     public var cursor: UsageAnalyticsFileFingerprint
     public var grok: UsageAnalyticsFileFingerprint
     public var gemini: UsageAnalyticsFileFingerprint
+    public var antigravity: UsageAnalyticsFileFingerprint
 
     public init(
         ccSwitch: UsageAnalyticsFileFingerprint,
@@ -45,7 +46,8 @@ public struct UsageAnalyticsSourceFingerprint: Codable, Equatable, Sendable {
         kimi: UsageAnalyticsFileFingerprint,
         cursor: UsageAnalyticsFileFingerprint = .empty,
         grok: UsageAnalyticsFileFingerprint = .empty,
-        gemini: UsageAnalyticsFileFingerprint = .empty
+        gemini: UsageAnalyticsFileFingerprint = .empty,
+        antigravity: UsageAnalyticsFileFingerprint = .empty
     ) {
         self.ccSwitch = ccSwitch
         self.codex = codex
@@ -54,10 +56,11 @@ public struct UsageAnalyticsSourceFingerprint: Codable, Equatable, Sendable {
         self.cursor = cursor
         self.grok = grok
         self.gemini = gemini
+        self.antigravity = antigravity
     }
 
     enum CodingKeys: String, CodingKey {
-        case ccSwitch, codex, claude, kimi, cursor, grok, gemini
+        case ccSwitch, codex, claude, kimi, cursor, grok, gemini, antigravity
     }
 
     public init(from decoder: Decoder) throws {
@@ -69,6 +72,7 @@ public struct UsageAnalyticsSourceFingerprint: Codable, Equatable, Sendable {
         cursor = try container.decodeIfPresent(UsageAnalyticsFileFingerprint.self, forKey: .cursor) ?? .empty
         grok = try container.decodeIfPresent(UsageAnalyticsFileFingerprint.self, forKey: .grok) ?? .empty
         gemini = try container.decodeIfPresent(UsageAnalyticsFileFingerprint.self, forKey: .gemini) ?? .empty
+        antigravity = try container.decodeIfPresent(UsageAnalyticsFileFingerprint.self, forKey: .antigravity) ?? .empty
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -80,6 +84,7 @@ public struct UsageAnalyticsSourceFingerprint: Codable, Equatable, Sendable {
         try container.encode(cursor, forKey: .cursor)
         try container.encode(grok, forKey: .grok)
         try container.encode(gemini, forKey: .gemini)
+        try container.encode(antigravity, forKey: .antigravity)
     }
 }
 

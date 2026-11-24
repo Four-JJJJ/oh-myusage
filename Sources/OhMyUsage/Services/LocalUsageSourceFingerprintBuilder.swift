@@ -89,12 +89,40 @@ enum LocalUsageSourceFingerprintBuilder {
     }
 
     static func geminiFingerprint() -> LocalUsageSourceFingerprint {
-        fingerprint(
-            roots: ["\(NSHomeDirectory())/.gemini/tmp"],
+        let geminiRoot = AntigravityLocalUsageService.resolvedGeminiRoot(
+            homeDirectory: NSHomeDirectory(),
+            environment: ProcessInfo.processInfo.environment
+        )
+        return fingerprint(
+            roots: ["\(geminiRoot)/tmp"],
             includeFile: { url in
                 let name = url.lastPathComponent.lowercased()
                 return name.hasPrefix("session-") && (name.hasSuffix(".jsonl") || name.hasSuffix(".json"))
             }
+        )
+    }
+
+    static func antigravityFingerprint(
+        brainRoots: [String]? = nil,
+        fileManager: FileManager = .default
+    ) -> LocalUsageSourceFingerprint {
+        let roots = (brainRoots ?? AntigravityLocalUsageService.resolvedBrainRoots(
+            homeDirectory: NSHomeDirectory(),
+            environment: ProcessInfo.processInfo.environment
+        ))
+        .map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath).standardizedFileURL.path }
+        .sorted()
+        var accumulator = FingerprintAccumulator()
+        for fileURL in AntigravityLocalUsageService.transcriptFileURLs(in: roots, fileManager: fileManager) {
+            if Task.isCancelled { break }
+            accumulator.add(fileURL, fileManager: fileManager)
+        }
+        return LocalUsageSourceFingerprint(
+            roots: roots,
+            fileCount: accumulator.fileCount,
+            totalSize: accumulator.totalSize,
+            latestModificationTime: accumulator.latestModificationTime,
+            metadataDigest: accumulator.digest
         )
     }
 

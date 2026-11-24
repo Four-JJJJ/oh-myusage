@@ -60,6 +60,8 @@ final class LocalUsageHistoryRefreshCoordinator {
                 return LocalUsageSourceFingerprintBuilder.grokFingerprint()
             case .gemini:
                 return LocalUsageSourceFingerprintBuilder.geminiFingerprint()
+            case .antigravity:
+                return LocalUsageSourceFingerprintBuilder.antigravityFingerprint()
             default:
                 return LocalUsageSourceFingerprint(
                     roots: [],
@@ -118,6 +120,12 @@ final class LocalUsageHistoryRefreshCoordinator {
                     summary: summary,
                     sourceFingerprint: sourceFingerprint
                 )
+            case .antigravity:
+                let summary = try AntigravityLocalUsageService().fetchSummary()
+                return LocalUsageHistoryLoadResult(
+                    summary: summary,
+                    sourceFingerprint: sourceFingerprint
+                )
             default:
                 throw LocalUsageHistoryRefreshCoordinatorError.unsupportedProvider(providerType.rawValue)
             }
@@ -154,6 +162,6 @@ final class LocalUsageHistoryRefreshCoordinator {
     }
 
     private static let supportedProviderTypes: Set<ProviderType> = [
-        .codex, .claude, .kimi, .cursor, .grok, .gemini
+        .codex, .claude, .kimi, .cursor, .grok, .gemini, .antigravity
     ]
 }

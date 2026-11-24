@@ -10,6 +10,7 @@ final class ProviderFactoryTests: XCTestCase {
             (.defaultOfficialCodex(), CodexProvider.self),
             (.defaultOfficialClaude(), ClaudeProvider.self),
             (.defaultOfficialGemini(), GeminiProvider.self),
+            (.defaultOfficialAntigravity(), AntigravityProvider.self),
             (.defaultOfficialCopilot(), CopilotProvider.self),
             (.defaultOfficialMicrosoftCopilot(), MicrosoftCopilotProvider.self),
             (.defaultOfficialZai(), ZaiProvider.self),

@@ -106,6 +106,46 @@ final class BrowserCookieService: BrowserCookieDetecting {
         return nil
     }
 
+    func detectCookieHeaders(
+        matchingHosts: [String],
+        fallbackHostContains: String,
+        order: [KimiBrowserKind]?,
+        accessIntent: BrowserCredentialAccessIntent
+    ) -> [BrowserCookieHeader] {
+        _ = fallbackHostContains
+        guard accessIntent.allowsLiveLookup else { return [] }
+        let actualOrder = order ?? browserOrderDefault
+        var results: [BrowserCookieHeader] = []
+        for browser in actualOrder {
+            let paths = cookieReader.candidateCookiePaths(
+                for: browser,
+                includeSafariBinaryCookies: true,
+                bypassCache: false
+            )
+            for (index, path) in paths.enumerated() {
+                guard let header = cookieReader.cookieHeader(
+                    fromDatabaseAt: path,
+                    browser: browser,
+                    matchingHosts: matchingHosts,
+                    accessIntent: accessIntent
+                ),
+                      !header.isEmpty else {
+                    continue
+                }
+                let baseLabel = browserLabel(browser)
+                let source = paths.count > 1 ? "\(baseLabel)#\(index + 1)" : baseLabel
+                results.append(
+                    BrowserCookieHeader(
+                        header: header,
+                        source: source,
+                        readBrowserDuringResolution: true
+                    )
+                )
+            }
+        }
+        return results
+    }
+
     private func browserLabel(_ browser: KimiBrowserKind) -> String {
         switch browser {
         case .arc:
